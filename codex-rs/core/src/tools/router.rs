@@ -9,6 +9,7 @@ use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ConfiguredToolSpec;
+use crate::tools::registry::ExternalToolRegistration;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::build_specs;
@@ -30,11 +31,19 @@ pub struct ToolRouter {
 }
 
 impl ToolRouter {
-    pub fn from_config(
+    pub(crate) fn from_config(
         config: &ToolsConfig,
         mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
+        external_tools: &[ExternalToolRegistration],
     ) -> Self {
-        let builder = build_specs(config, mcp_tools);
+        let mut builder = build_specs(config, mcp_tools);
+        for tool in external_tools {
+            builder.push_spec_with_parallel_support(
+                tool.spec.clone(),
+                tool.supports_parallel_tool_calls,
+            );
+            builder.register_handler(tool.spec.name(), Arc::clone(&tool.handler));
+        }
         let (specs, registry) = builder.build();
 
         Self { registry, specs }
@@ -54,7 +63,7 @@ impl ToolRouter {
             .any(|config| config.spec.name() == tool_name)
     }
 
-    pub fn build_tool_call(
+    pub(crate) fn build_tool_call(
         session: &Session,
         item: ResponseItem,
     ) -> Result<Option<ToolCall>, FunctionCallError> {
@@ -129,7 +138,7 @@ impl ToolRouter {
         }
     }
 
-    pub async fn dispatch_tool_call(
+    pub(crate) async fn dispatch_tool_call(
         &self,
         session: Arc<Session>,
         turn: Arc<TurnContext>,

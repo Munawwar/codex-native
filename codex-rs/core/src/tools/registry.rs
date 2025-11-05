@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -16,6 +18,46 @@ use crate::tools::context::ToolPayload;
 pub enum ToolKind {
     Function,
     Mcp,
+}
+
+#[derive(Clone)]
+pub struct ExternalToolRegistration {
+    pub spec: ToolSpec,
+    pub handler: Arc<dyn ToolHandler>,
+    pub supports_parallel_tool_calls: bool,
+}
+
+impl std::fmt::Debug for ExternalToolRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalToolRegistration")
+            .field("name", &self.spec.name())
+            .field(
+                "supports_parallel_tool_calls",
+                &self.supports_parallel_tool_calls,
+            )
+            .finish()
+    }
+}
+
+fn pending_external_tools() -> &'static Mutex<Vec<ExternalToolRegistration>> {
+    static PENDING: OnceLock<Mutex<Vec<ExternalToolRegistration>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn set_pending_external_tools(tools: Vec<ExternalToolRegistration>) {
+    let mut guard = pending_external_tools()
+        .lock()
+        .expect("pending external tools mutex poisoned");
+    *guard = tools;
+}
+
+pub fn take_pending_external_tools() -> Vec<ExternalToolRegistration> {
+    let mut guard = pending_external_tools()
+        .lock()
+        .expect("pending external tools mutex poisoned");
+    let tools = guard.clone();
+    guard.clear();
+    tools
 }
 
 #[async_trait]

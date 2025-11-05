@@ -102,6 +102,10 @@ impl EventProcessorWithJsonOutput {
         }
     }
 
+    pub fn last_message_path(&self) -> Option<&PathBuf> {
+        self.last_message_path.as_ref()
+    }
+
     pub fn collect_thread_events(&mut self, event: &Event) -> Vec<ThreadEvent> {
         match &event.msg {
             EventMsg::SessionConfigured(ev) => self.handle_session_configured(ev),

@@ -6,11 +6,16 @@
 
 mod cli;
 mod event_processor;
+mod event_processor_bridge;
 mod event_processor_with_human_output;
 pub mod event_processor_with_jsonl_output;
 pub mod exec_events;
 
+use anyhow::anyhow;
 pub use cli::Cli;
+pub use cli::Color;
+pub use cli::Command;
+pub use cli::ResumeArgs;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::ConversationManager;
@@ -34,6 +39,8 @@ use serde_json::Value;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use supports_color::Stream;
 use tracing::debug;
 use tracing::error;
@@ -44,10 +51,27 @@ use tracing_subscriber::prelude::*;
 use crate::cli::Command as ExecCommand;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
+use crate::event_processor_bridge::callback_event_processor;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_conversation_path_by_id_str;
 
-pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+type EventProcessorBuilder =
+    Box<dyn Fn(bool, bool, &Config, Option<PathBuf>) -> Box<dyn EventProcessor> + Send>;
+
+fn exit_or_error<T>(exit_on_error: bool, message: impl Into<String>) -> anyhow::Result<T> {
+    if exit_on_error {
+        std::process::exit(1);
+    } else {
+        Err(anyhow!(message.into()))
+    }
+}
+
+async fn run_internal(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    event_processor_builder: EventProcessorBuilder,
+    exit_on_error: bool,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -91,7 +115,10 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                 eprintln!(
                     "No prompt provided. Either specify one as an argument or pipe the prompt into stdin."
                 );
-                std::process::exit(1);
+                return exit_or_error(
+                    exit_on_error,
+                    "No prompt provided. Either specify one as an argument or pipe the prompt into stdin.",
+                );
             }
 
             // Ensure the user knows we are waiting on stdin, as they may
@@ -104,16 +131,19 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             let mut buffer = String::new();
             if let Err(e) = std::io::stdin().read_to_string(&mut buffer) {
                 eprintln!("Failed to read prompt from stdin: {e}");
-                std::process::exit(1);
+                return exit_or_error(
+                    exit_on_error,
+                    format!("Failed to read prompt from stdin: {e}"),
+                );
             } else if buffer.trim().is_empty() {
                 eprintln!("No prompt provided via stdin.");
-                std::process::exit(1);
+                return exit_or_error(exit_on_error, "No prompt provided via stdin.");
             }
             buffer
         }
     };
 
-    let output_schema = load_output_schema(output_schema_path);
+    let output_schema = load_output_schema(output_schema_path, exit_on_error)?;
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -187,7 +217,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error parsing -c overrides: {e}");
-            std::process::exit(1);
+            return exit_or_error(exit_on_error, format!("Error parsing -c overrides: {e}"));
         }
     };
 
@@ -195,7 +225,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     if let Err(err) = enforce_login_restrictions(&config).await {
         eprintln!("{err}");
-        std::process::exit(1);
+        return exit_or_error(exit_on_error, err.to_string());
     }
 
     let otel = codex_core::otel_init::build_provider(&config, env!("CARGO_PKG_VERSION"));
@@ -205,7 +235,10 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         Ok(otel) => otel,
         Err(e) => {
             eprintln!("Could not create otel exporter: {e}");
-            std::process::exit(1);
+            return exit_or_error(
+                exit_on_error,
+                format!("Could not create otel exporter: {e}"),
+            );
         }
     };
 
@@ -222,14 +255,12 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
     }
 
-    let mut event_processor: Box<dyn EventProcessor> = match json_mode {
-        true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
-        _ => Box::new(EventProcessorWithHumanOutput::create_with_ansi(
-            stdout_with_ansi,
-            &config,
-            last_message_file.clone(),
-        )),
-    };
+    let mut event_processor = event_processor_builder(
+        json_mode,
+        stdout_with_ansi,
+        &config,
+        last_message_file.clone(),
+    );
 
     if oss {
         codex_ollama::ensure_oss_ready(&config)
@@ -246,7 +277,10 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
 
     if !skip_git_repo_check && get_git_repo_root(&default_cwd).is_none() {
         eprintln!("Not inside a trusted directory and --skip-git-repo-check was not specified.");
-        std::process::exit(1);
+        return exit_or_error(
+            exit_on_error,
+            "Not inside a trusted directory and --skip-git-repo-check was not specified.",
+        );
     }
 
     let auth_manager = AuthManager::shared(
@@ -364,10 +398,60 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     }
     event_processor.print_final_output();
     if error_seen {
-        std::process::exit(1);
+        return exit_or_error(exit_on_error, "Execution failed due to reported errors.");
     }
 
     Ok(())
+}
+
+pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+    run_internal(
+        cli,
+        codex_linux_sandbox_exe,
+        Box::new(|json_mode, stdout_with_ansi, config, last_message_file| {
+            if json_mode {
+                Box::new(EventProcessorWithJsonOutput::new(last_message_file))
+            } else {
+                Box::new(EventProcessorWithHumanOutput::create_with_ansi(
+                    stdout_with_ansi,
+                    config,
+                    last_message_file,
+                ))
+            }
+        }),
+        true,
+    )
+    .await
+}
+
+pub async fn run_with_thread_event_callback<F>(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    callback: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(exec_events::ThreadEvent) + Send + 'static,
+{
+    let shared_callback = Arc::new(StdMutex::new(callback));
+    run_internal(
+        cli,
+        codex_linux_sandbox_exe,
+        Box::new(
+            move |_json_mode, _stdout_with_ansi, _config, last_message_file| {
+                let cb_clone = Arc::clone(&shared_callback);
+                callback_event_processor(
+                    Box::new(move |event| {
+                        if let Ok(mut cb) = cb_clone.lock() {
+                            (*cb)(event);
+                        }
+                    }),
+                    last_message_file,
+                )
+            },
+        ),
+        false,
+    )
+    .await
 }
 
 async fn resolve_resume_path(
@@ -400,8 +484,11 @@ async fn resolve_resume_path(
     }
 }
 
-fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
-    let path = path?;
+fn load_output_schema(path: Option<PathBuf>, exit_on_error: bool) -> anyhow::Result<Option<Value>> {
+    let path = match path {
+        Some(p) => p,
+        None => return Ok(None),
+    };
 
     let schema_str = match std::fs::read_to_string(&path) {
         Ok(contents) => contents,
@@ -410,18 +497,30 @@ fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
                 "Failed to read output schema file {}: {err}",
                 path.display()
             );
-            std::process::exit(1);
+            return exit_or_error(
+                exit_on_error,
+                format!(
+                    "Failed to read output schema file {}: {err}",
+                    path.display()
+                ),
+            );
         }
     };
 
     match serde_json::from_str::<Value>(&schema_str) {
-        Ok(value) => Some(value),
+        Ok(value) => Ok(Some(value)),
         Err(err) => {
             eprintln!(
                 "Output schema file {} is not valid JSON: {err}",
                 path.display()
             );
-            std::process::exit(1);
+            exit_or_error(
+                exit_on_error,
+                format!(
+                    "Output schema file {} is not valid JSON: {err}",
+                    path.display()
+                ),
+            )
         }
     }
 }
