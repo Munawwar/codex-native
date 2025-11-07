@@ -140,8 +140,8 @@ export interface Usage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-  inputTokensDetails?: Array<Record<string, number>>;
-  outputTokensDetails?: Array<Record<string, number>>;
+  inputTokensDetails?: Record<string, number>;
+  outputTokensDetails?: Record<string, number>;
 }
 
 // ============================================================================

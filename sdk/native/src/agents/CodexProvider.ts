@@ -628,7 +628,7 @@ class CodexModel implements Model {
     }
 
     const inputTokensDetails = usage.cached_input_tokens
-      ? [{ cachedTokens: usage.cached_input_tokens }]
+      ? { cachedTokens: usage.cached_input_tokens }
       : undefined;
 
     const converted: Usage = {
@@ -716,7 +716,10 @@ class CodexModel implements Model {
     items: ThreadItem[],
     lastMessage: string | null
   ): ModelResponse & { id: string } {
-    const output = this.convertItemsToOutput(items, lastMessage ?? "");
+    const messageItems = items.filter(
+      (item): item is Extract<ThreadItem, { type: "agent_message" }> => item.type === "agent_message"
+    );
+    const output = this.convertItemsToOutput(messageItems, lastMessage ?? "");
 
     return {
       id: responseId,

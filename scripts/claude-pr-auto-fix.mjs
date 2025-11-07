@@ -31,6 +31,57 @@ const CLAUDE_CMD = process.env.CLAUDE_PATH ?? "claude";
 const CONCURRENCY = Math.max(Number.parseInt(process.env.CHECK_CONCURRENCY ?? "", 10) || os.cpus().length, 1);
 const MAX_PROMPT_LOG_CHARS = 10_000;
 
+class AsyncQueue {
+  #items = [];
+  #resolvers = [];
+  #closed = false;
+
+  enqueue(value) {
+    if (this.#closed) {
+      throw new Error("Cannot enqueue into a closed queue");
+    }
+    if (this.#resolvers.length > 0) {
+      const resolve = this.#resolvers.shift();
+      resolve(value);
+      return;
+    }
+    this.#items.push(value);
+  }
+
+  close() {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    while (this.#resolvers.length > 0) {
+      const resolve = this.#resolvers.shift();
+      resolve(null);
+    }
+  }
+
+  async shift() {
+    if (this.#items.length > 0) {
+      return this.#items.shift();
+    }
+    if (this.#closed) {
+      return null;
+    }
+    return new Promise((resolve) => {
+      this.#resolvers.push(resolve);
+    });
+  }
+
+  async *[Symbol.asyncIterator]() {
+    while (true) {
+      const value = await this.shift();
+      if (value === null) {
+        break;
+      }
+      yield value;
+    }
+  }
+}
+
 async function runCommand(command, args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -92,10 +143,10 @@ async function fetchOpenPullRequests() {
   }
 }
 
-async function runChecksWithConcurrency(prs) {
+async function monitorPrChecks(prs, failureQueue) {
   const queue = [...prs];
-  const active = [];
-  const results = [];
+  const workers = [];
+  let failureCount = 0;
 
   async function worker() {
     while (queue.length > 0) {
@@ -105,17 +156,41 @@ async function runChecksWithConcurrency(prs) {
       }
       const watchArgs = ["pr", "checks", String(pr.number), "--watch"];
       const outcome = await runCommand(GH_CMD, watchArgs);
-      results.push({ pr, outcome });
       logCheckResult(pr, outcome);
+      if (outcome.exitCode !== 0) {
+        failureCount += 1;
+        failureQueue.enqueue({ pr, outcome });
+      }
     }
   }
 
   for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i += 1) {
-    active.push(worker());
+    workers.push(worker());
   }
 
-  await Promise.all(active);
-  return results;
+  await Promise.all(workers);
+  failureQueue.close();
+  return { total: prs.length, failures: failureCount };
+}
+
+async function processFailuresSequentially(queue) {
+  const issues = [];
+  let processed = 0;
+
+  for await (const failure of queue) {
+    processed += 1;
+    process.stdout.write(`\n🛠️ Remediating PR #${failure.pr.number} (${failure.pr.title})\n`);
+    try {
+      await processFailure(failure.pr, `${failure.outcome.stdout}\n${failure.outcome.stderr}`);
+    } catch (error) {
+      issues.push({ pr: failure.pr, error });
+      process.stderr.write(
+        `❌ Remediation failed for PR #${failure.pr.number}: ${(error && error.message) || error}\n`,
+      );
+    }
+  }
+
+  return { processed, issues };
 }
 
 function logCheckResult(pr, outcome) {
@@ -331,32 +406,25 @@ async function main() {
     }
     process.stdout.write(`🔍 Monitoring ${prs.length} open PR(s) with concurrency ${CONCURRENCY}\n`);
 
-    const checkResults = await runChecksWithConcurrency(prs);
-    const failures = checkResults.filter(({ outcome }) => outcome.exitCode !== 0);
+    const failureQueue = new AsyncQueue();
+    const remediationPromise = processFailuresSequentially(failureQueue);
+    const monitorSummary = await monitorPrChecks(prs, failureQueue);
+    const remediationSummary = await remediationPromise;
 
-    if (failures.length === 0) {
+    if (monitorSummary.failures === 0) {
       process.stdout.write("✅ All PR checks passed. No remediation needed.\n");
       return;
     }
 
-    process.stdout.write(`⚠️ ${failures.length} PR(s) require remediation. Beginning Claude-assisted fixes...\n`);
-
-    const remediationIssues = [];
-    for (const failure of failures) {
-      process.stdout.write(`\n🛠️ Remediating PR #${failure.pr.number} (${failure.pr.title})\n`);
-      try {
-        await processFailure(failure.pr, `${failure.outcome.stdout}\n${failure.outcome.stderr}`);
-      } catch (error) {
-        remediationIssues.push({ pr: failure.pr, error });
-        process.stderr.write(
-          `❌ Remediation failed for PR #${failure.pr.number}: ${(error && error.message) || error}\n`,
-        );
-      }
+    if (remediationSummary.processed === 0) {
+      process.stderr.write("⚠️ Failures detected, but remediation queue was empty. Please investigate manually.\n");
+      process.exitCode = 1;
+      return;
     }
 
-    if (remediationIssues.length > 0) {
+    if (remediationSummary.issues.length > 0) {
       process.stderr.write("\n❗ Summary of remediation failures:\n");
-      for (const { pr, error } of remediationIssues) {
+      for (const { pr, error } of remediationSummary.issues) {
         process.stderr.write(`   - PR #${pr.number} (${pr.title}): ${(error && error.message) || error}\n`);
       }
       process.exitCode = 1;
