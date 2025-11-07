@@ -28,9 +28,9 @@ async function main() {
   console.log(`Discovered ${prs.length} open pull request${prs.length === 1 ? "" : "s"}.`);
 
   const existingWorktrees = await getExistingWorktreePaths(config.repoRoot);
+  const createdWorktrees = new Set();
   const gitMutex = createMutex();
   const installMutex = createMutex();
-  const codex = new Codex();
 
   const results = await runWithConcurrency(prs, config.concurrency, async (pr) => {
     const safeSlug = slugifyRef(pr.headRefName) || `head-${pr.number}`;
@@ -66,6 +66,7 @@ async function main() {
             remoteRef,
           ], { cwd: config.repoRoot });
           existingWorktrees.add(worktreePath);
+          createdWorktrees.add(worktreePath);
           console.log(`[PR ${pr.number}] Created worktree at ${worktreePath}`);
           createdWorktree = true;
         } else {
@@ -73,6 +74,8 @@ async function main() {
           await runCommand("git", ["clean", "-fdx"], { cwd: worktreePath });
           console.log(`[PR ${pr.number}] Refreshed existing worktree at ${worktreePath}`);
         }
+
+        await runCommand("git", ["checkout", "-B", pr.headRefName, remoteRef], { cwd: worktreePath });
       });
     } catch (error) {
       console.error(`[PR ${pr.number}] Failed to prepare worktree:`, error);
@@ -95,10 +98,11 @@ async function main() {
 
     if (config.dryRun) {
       console.log(`[PR ${pr.number}] Dry run enabled; skipping Codex automation.`);
-      return { pr, worktreePath };
+      return { pr, worktreePath, dryRun: true };
     }
 
     try {
+      const codex = new Codex();
       const thread = codex.startThread({
         workingDirectory: worktreePath,
         sandboxMode: "workspace-write",
@@ -106,12 +110,13 @@ async function main() {
       });
 
       const prompt = buildAgentPrompt(pr, worktreePath);
-      console.log(`[PR ${pr.number}] Starting Codex turn...`);
+      const prefix = formatPrefix(pr);
+      logWithPrefix(prefix, "Starting Codex turn...");
 
-      const turn = await thread.run(prompt);
+      const turn = await runCodexTurnWithLogging(thread, prompt, prefix);
 
-      console.log(`[PR ${pr.number}] Codex summary:`);
-      console.log(turn.finalResponse.trim());
+      logWithPrefix(prefix, "Codex summary:");
+      logWithPrefix(prefix, turn.finalResponse.trim());
 
       return { pr, worktreePath, turn };
     } catch (error) {
@@ -120,7 +125,33 @@ async function main() {
     }
   });
 
-  summarizeResults(results);
+  const pushOutcomes = [];
+  for (const result of results) {
+    if (!result || result.error || result.dryRun) {
+      continue;
+    }
+
+    try {
+      await ensurePushed(result.pr, result.worktreePath, config.remote);
+      pushOutcomes.push({ pr: result.pr, success: true });
+    } catch (error) {
+      pushOutcomes.push({ pr: result.pr, success: false, error });
+      console.error(`[PR ${result.pr.number}] Post-run push failed:`, error);
+    }
+  }
+
+  const cleanupOutcomes = [];
+  for (const worktreePath of createdWorktrees) {
+    try {
+      await runCommand("git", ["worktree", "remove", "--force", worktreePath], { cwd: config.repoRoot });
+      cleanupOutcomes.push({ path: worktreePath, success: true });
+    } catch (error) {
+      cleanupOutcomes.push({ path: worktreePath, success: false, error });
+      console.error(`Failed to clean worktree ${worktreePath}:`, error);
+    }
+  }
+
+  summarizeResults(results, pushOutcomes, cleanupOutcomes);
 }
 
 async function buildConfig() {
@@ -307,12 +338,170 @@ function buildAgentPrompt(pr, worktreePath) {
     `You are an automated Codex maintainer responsible for validating pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
     `Tasks:`,
-    "1. Run 'gh pr checks " + pr.number + "' to gather CI status.",
-    "2. Investigate and fix any failures using the available repository tools.",
-    "3. Re-run 'gh pr checks " + pr.number + "' after applying fixes.",
-    "4. Summarize the resulting status and any manual follow-ups required.",
-    "Always operate from the repository root, use shell commands responsibly, and include test results in the summary.",
+    "1. Run 'gh pr checks --watch " + pr.number + "' from the repository root to monitor CI failures until they are resolved.",
+    "2. Investigate failing checks, apply fixes, and commit the necessary changes with clear messages.",
+    "3. Push your commits back to the PR branch (" + pr.headRefName + ") once checks succeed.",
+    "4. Provide a final summary including CI status, tests executed, and any remaining manual actions.",
+    "Use shell commands responsibly and ensure no failing checks remain before finishing.",
   ].join("\n");
+}
+
+async function ensurePushed(pr, worktreePath, remote) {
+  await runCommand("git", ["add", "-A"], { cwd: worktreePath });
+
+  try {
+    await runCommand("git", ["commit", "-m", `chore: codex fixes for PR #${pr.number}`], { cwd: worktreePath });
+  } catch (error) {
+    if (!isNothingToCommit(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    await runCommand("git", ["push", "--set-upstream", remote, pr.headRefName], { cwd: worktreePath });
+  } catch (error) {
+    const message = `${error.stderr ?? ""}${error.stdout ?? ""}`;
+    if (/set-upstream/.test(message) || /already exists/.test(message) || /set upstream/.test(message)) {
+      await runCommand("git", ["push", remote, pr.headRefName], { cwd: worktreePath });
+      return;
+    }
+    throw error;
+  }
+}
+
+function isNothingToCommit(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const text = `${error.stderr ?? ""}${error.stdout ?? ""}`;
+  return /nothing to commit/i.test(text);
+}
+
+function formatPrefix(pr) {
+  return `[PR ${pr.number} ${pr.headRefName}]`;
+}
+
+function logWithPrefix(prefix, message) {
+  for (const line of message.split("\n")) {
+    console.log(`${prefix} ${line}`);
+  }
+}
+
+async function runCodexTurnWithLogging(thread, prompt, prefix) {
+  const { events } = await thread.runStreamed(prompt);
+  const items = new Map();
+  let finalResponse = "";
+  let usage = null;
+
+  try {
+    for await (const event of events) {
+      handleEventLogging(event, prefix);
+
+      switch (event.type) {
+        case "item.started":
+        case "item.updated":
+        case "item.completed":
+          if (event.item) {
+            items.set(event.item.id, event.item);
+            if (event.item.type === "agent_message") {
+              finalResponse = event.item.text;
+            }
+          }
+          break;
+        case "turn.completed":
+          usage = event.usage ?? null;
+          break;
+        case "turn.failed":
+          throw new Error(event.error?.message ?? "Codex turn failed");
+        case "error":
+          throw new Error(event.message ?? "Codex stream error");
+        default:
+          break;
+      }
+    }
+  } catch (error) {
+    logWithPrefix(prefix, `Codex stream aborted: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+
+  return {
+    finalResponse,
+    items: Array.from(items.values()),
+    usage,
+  };
+}
+
+function handleEventLogging(event, prefix) {
+  switch (event.type) {
+    case "thread.started":
+      logWithPrefix(prefix, `Thread started (${event.thread_id})`);
+      break;
+    case "turn.started":
+      logWithPrefix(prefix, "Turn started");
+      break;
+    case "turn.completed":
+      logWithPrefix(prefix, formatUsage(event.usage));
+      break;
+    case "turn.failed":
+      logWithPrefix(prefix, `Turn failed: ${event.error?.message ?? "unknown error"}`);
+      break;
+    case "item.started":
+      logWithPrefix(prefix, formatItem("started", event.item));
+      break;
+    case "item.updated":
+      logWithPrefix(prefix, formatItem("updated", event.item));
+      break;
+    case "item.completed":
+      logWithPrefix(prefix, formatItem("completed", event.item));
+      break;
+    case "error":
+      logWithPrefix(prefix, `Stream error: ${event.message}`);
+      break;
+    case "exited_review_mode":
+      logWithPrefix(prefix, "Exited review mode");
+      break;
+    default:
+      break;
+  }
+}
+
+function formatUsage(usage) {
+  if (!usage) {
+    return "Turn completed";
+  }
+  return `Turn completed (usage: in=${usage.input_tokens ?? 0}, cached=${usage.cached_input_tokens ?? 0}, out=${usage.output_tokens ?? 0})`;
+}
+
+function formatItem(phase, item) {
+  if (!item) {
+    return `Item ${phase}`;
+  }
+
+  switch (item.type) {
+    case "agent_message":
+      return `Item ${phase} — agent_message: ${truncate(item.text, 200)}`;
+    case "command_execution":
+      return `Item ${phase} — command: ${item.command} [${item.status}]`;
+    case "file_change":
+      return `Item ${phase} — file_change: ${item.changes.length} files (${item.status})`;
+    case "mcp_tool_call":
+      return `Item ${phase} — mcp ${item.server}::${item.tool} [${item.status}]`;
+    case "todo_list":
+      return `Item ${phase} — todo_list (${item.items.length} entries)`;
+    case "error":
+      return `Item ${phase} — error: ${item.message}`;
+    case "web_search":
+      return `Item ${phase} — web_search: ${item.query}`;
+    default:
+      return `Item ${phase} — ${item.type}`;
+  }
+}
+
+function truncate(text, maxLength) {
+  if (!text || text.length <= maxLength) {
+    return text ?? "";
+  }
+  return `${text.slice(0, maxLength)}…`;
 }
 
 async function runCommand(command, args = [], options = {}) {
@@ -342,33 +531,58 @@ async function pathExists(target) {
   }
 }
 
-function summarizeResults(results) {
-  const successes = [];
-  const failures = [];
+function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
+  const agentSuccesses = [];
+  const agentFailures = [];
+  const dryRuns = [];
 
   for (const result of results) {
     if (!result) {
       continue;
     }
 
-    if (result.error) {
+    if (result.dryRun) {
+      dryRuns.push(result.pr.number);
+    } else if (result.error) {
       const message = result.error instanceof Error ? result.error.message : String(result.error);
-      failures.push({ number: result.pr.number, message });
+      agentFailures.push({ number: result.pr.number, message });
     } else {
-      successes.push(result.pr.number);
+      agentSuccesses.push(result.pr.number);
     }
   }
 
   console.log("\n=== Summary ===");
 
-  if (successes.length) {
-    console.log(`Codex processed PRs: ${successes.join(", ")}`);
+  if (agentSuccesses.length) {
+    console.log(`Codex processed PRs: ${agentSuccesses.join(", ")}`);
   }
 
-  if (failures.length) {
-    console.log("Failures:");
-    for (const failure of failures) {
+  if (dryRuns.length) {
+    console.log(`Dry run only (no Codex execution): ${dryRuns.join(", ")}`);
+  }
+
+  if (agentFailures.length) {
+    console.log("Codex failures:");
+    for (const failure of agentFailures) {
       console.log(`- PR ${failure.number}: ${failure.message}`);
+    }
+  }
+
+  const pushFailures = pushOutcomes.filter((outcome) => !outcome.success);
+  if (pushFailures.length) {
+    console.log("Push failures:");
+    for (const failure of pushFailures) {
+      const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+      console.log(`- PR ${failure.pr.number}: ${message}`);
+    }
+  }
+
+  const cleanupFailures = cleanupOutcomes.filter((outcome) => !outcome.success);
+  if (cleanupFailures.length) {
+    console.log("Cleanup failures:");
+    for (const failure of cleanupFailures) {
+      const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+      console.log(`- ${failure.path}: ${message}`);
     }
   }
 }
