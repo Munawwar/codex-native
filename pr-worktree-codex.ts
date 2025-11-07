@@ -1,30 +1,67 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import type { ChildProcess, ExecFileException, ExecFileOptions } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-let Codex;
-try {
-  ({ Codex } = await import("@codex-native/sdk"));
-} catch (error) {
-  try {
-    ({ Codex } = await import(new URL("./sdk/native/dist/index.mjs", import.meta.url).toString()));
-    console.warn("Falling back to local sdk/native build for Codex import");
-  } catch (fallbackError) {
-    console.error("Failed to load Codex SDK", fallbackError);
-    throw error;
-  }
+import { Codex, type SandboxMode, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions, type Usage } from "@codex-native/sdk";
+type CommandResult = { stdout: string; stderr: string };
+type CommandWithOutputResult = { stdout: string; stderr: string; exitCode: number };
+type CommandError = ExecFileException & {
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number | null;
+};
+
+interface RunCommandWithOutputOptions extends ExecFileOptions {
+  onStdout?: (chunk: Buffer | string) => void;
+  onStderr?: (chunk: Buffer | string) => void;
+}
+
+interface PushStatus {
+  success: boolean;
+  skipped: boolean;
+  reason: string;
+  source?: string;
+  error?: unknown;
+}
+
+interface GhChecksResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+
+interface RunConfig {
+  repoRoot: string;
+  worktreeRoot: string;
+  concurrency: number;
+  remote: string;
+  dryRun: boolean;
+  repoSlug: string | null;
+  repoOwner: string | null;
+  maxFixAttempts: number;
+}
+
+interface PullRequestInfo {
+  number: number;
+  title: string;
+  headRefName: string;
+  headRepositoryOwnerLogin: string | null;
+  headRepositoryName: string | null;
+  url: string;
 }
 
 const DEFAULT_REMOTE = "origin";
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_MAX_FIX_ATTEMPTS = 3;
 
-const activeProcesses = new Set();
+const activeProcesses = new Set<ChildProcess>();
 
-function registerProcess(child) {
+function registerProcess(child: ChildProcess) {
   activeProcesses.add(child);
   child.on("exit", () => activeProcesses.delete(child));
   return child;
@@ -41,7 +78,7 @@ function cleanupAllProcesses() {
   activeProcesses.clear();
 }
 
-function escapeForAppleScriptPath(value) {
+function escapeForAppleScriptPath(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
@@ -75,7 +112,7 @@ async function main() {
   console.log(`Discovered ${prs.length} open pull request${prs.length === 1 ? "" : "s"}.`);
 
   const existingWorktrees = await getExistingWorktreePaths(config.repoRoot);
-  const createdWorktrees = new Set();
+  const createdWorktrees = new Set<string>();
   const gitMutex = createMutex();
   const installMutex = createMutex();
 
@@ -133,7 +170,7 @@ async function main() {
     try {
       await runCommand("git", ["fetch", config.remote, "main"], { cwd: worktreePath });
     } catch (error) {
-      console.warn(`[PR ${pr.number}] Warning: failed to fetch ${config.remote}/main: ${error.stderr ?? error.stdout ?? error.message}`);
+      console.warn(`[PR ${pr.number}] Warning: failed to fetch ${config.remote}/main: ${formatCommandError(error)}`);
     }
 
     const needsInstall = createdWorktree || !(await pathExists(path.join(worktreePath, "node_modules")));
@@ -156,12 +193,13 @@ async function main() {
     }
 
     try {
-      const codex = new Codex({ skipGitRepoCheck: true });
+      const codex = new Codex();
       const basePrefix = formatPrefix(pr);
+      const sandboxMode: SandboxMode = "danger-full-access";
 
-      const makeThreadOptions = () => ({
+      const makeThreadOptions = (): ThreadOptions => ({
         workingDirectory: worktreePath,
-        sandboxMode: "danger-full-access",
+        sandboxMode,
         fullAuto: true,
         skipGitRepoCheck: true,
       });
@@ -182,7 +220,7 @@ async function main() {
       let ghChecksResult = await runGhPrChecks(pr, worktreePath, basePrefix);
 
       const pushAllowed = isPushAllowed(pr, config);
-      const pushStatuses = pushAllowed
+      const pushStatuses: PushStatus[] = pushAllowed
         ? []
         : [{ success: false, skipped: true, reason: "push-not-allowed", source: "pre" }];
       const fixTurns = [];
@@ -197,7 +235,7 @@ async function main() {
           logWithPrefix(basePrefix, "Post-merge push completed successfully.");
         } catch (pushError) {
           pushStatuses.push({ success: false, skipped: false, reason: "post-merge-failed", source: "merge", error: pushError });
-          logWithPrefix(basePrefix, `Post-merge push failed: ${pushError.stderr ?? pushError.stdout ?? pushError.message}`);
+          logWithPrefix(basePrefix, `Post-merge push failed: ${formatCommandError(pushError)}`);
           throw pushError;
         }
       } else {
@@ -227,7 +265,7 @@ async function main() {
             logWithPrefix(fixPrefix, "Post-fix push completed successfully.");
           } catch (pushError) {
             pushStatuses.push({ success: false, skipped: false, reason: `post-fix-${attempts}-failed`, source: "fix", error: pushError });
-            logWithPrefix(fixPrefix, `Post-fix push failed: ${pushError.stderr ?? pushError.stdout ?? pushError.message}`);
+            logWithPrefix(fixPrefix, `Post-fix push failed: ${formatCommandError(pushError)}`);
             throw pushError;
           }
         } else {
@@ -275,7 +313,7 @@ async function main() {
           }
         } catch (verifyError) {
           mergeVerification = { error: verifyError };
-          logWithPrefix(mergePrPrefix, `Failed to verify PR merge state: ${verifyError.stderr ?? verifyError.stdout ?? verifyError.message}`);
+          logWithPrefix(mergePrPrefix, `Failed to verify PR merge state: ${formatCommandError(verifyError)}`);
         }
       }
 
@@ -354,7 +392,7 @@ async function main() {
   summarizeResults(results, pushOutcomes, cleanupOutcomes);
 }
 
-async function buildConfig() {
+async function buildConfig(): Promise<RunConfig> {
   const args = process.argv.slice(2);
   let repoRoot = process.cwd();
   let worktreeRoot = path.resolve(repoRoot, "..", "codex-pr-worktrees");
@@ -431,7 +469,9 @@ async function buildConfig() {
 }
 
 function printUsage() {
-  console.log(`Usage: node pr-worktree-codex.mjs [options]
+  console.log(`Usage:
+  pnpm pr [options]
+  pnpm dlx tsx pr-worktree-codex.ts [options]
 
 Options:
   --repo <path>            Override repository root (default: current directory)
@@ -443,7 +483,7 @@ Options:
 `);
 }
 
-async function ensureBinaryAvailable(binary) {
+async function ensureBinaryAvailable(binary: string) {
   try {
     await runCommand(binary, ["--version"]);
   } catch (error) {
@@ -451,7 +491,7 @@ async function ensureBinaryAvailable(binary) {
   }
 }
 
-async function listOpenPullRequests(config) {
+async function listOpenPullRequests(config: RunConfig): Promise<PullRequestInfo[]> {
   const jsonFields = [
     "number",
     "title",
@@ -475,7 +515,7 @@ async function listOpenPullRequests(config) {
   const { stdout } = await runCommand("gh", args, { cwd: config.repoRoot });
   const parsed = JSON.parse(stdout);
 
-  return parsed.map((entry) => ({
+  return parsed.map((entry: any) => ({
     number: entry.number,
     title: entry.title,
     headRefName: entry.headRefName,
@@ -485,11 +525,11 @@ async function listOpenPullRequests(config) {
   }));
 }
 
-async function getExistingWorktreePaths(repoRoot) {
+async function getExistingWorktreePaths(repoRoot: string): Promise<Set<string>> {
   const { stdout } = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
 
   const blocks = stdout.split(/\n(?=worktree )/).map((block) => block.trim()).filter(Boolean);
-  const paths = new Set();
+  const paths = new Set<string>();
 
   for (const block of blocks) {
     for (const line of block.split("\n")) {
@@ -504,23 +544,26 @@ async function getExistingWorktreePaths(repoRoot) {
 }
 
 function createMutex() {
-  let chain = Promise.resolve();
+  let chain: Promise<void> = Promise.resolve();
   return {
-    run(fn) {
+    run<T>(fn: () => Promise<T> | T): Promise<T> {
       const next = chain.then(() => fn());
-      chain = next.catch(() => {});
+      chain = next.then(
+        () => undefined,
+        () => undefined,
+      );
       return next;
     },
   };
 }
 
-async function runWithConcurrency(items, concurrency, handler) {
+async function runWithConcurrency<T, R>(items: T[], concurrency: number, handler: (item: T, index: number) => Promise<R>): Promise<R[]> {
   if (items.length === 0) {
     return [];
   }
 
   const effectiveConcurrency = Math.max(1, Math.min(concurrency, items.length));
-  const results = new Array(items.length);
+  const results: R[] = new Array(items.length);
   let index = 0;
 
   async function worker() {
@@ -539,11 +582,11 @@ async function runWithConcurrency(items, concurrency, handler) {
   return results;
 }
 
-function slugifyRef(ref) {
+function slugifyRef(ref: string): string {
   return ref.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
-function buildMergePrompt(pr, worktreePath) {
+function buildMergePrompt(pr: PullRequestInfo, worktreePath: string): string {
   return [
     `You are a Codex automation agent working inside ${worktreePath}.`,
     "First, ensure the branch is fully up to date with the latest main branch.",
@@ -559,7 +602,13 @@ function buildMergePrompt(pr, worktreePath) {
   ].join("\n");
 }
 
-function buildFixPrompt(pr, worktreePath, examplePaths = [], ghChecksResult = null, attemptNumber = 1) {
+function buildFixPrompt(
+  pr: PullRequestInfo,
+  worktreePath: string,
+  examplePaths: string[] = [],
+  ghChecksResult: GhChecksResult | null = null,
+  attemptNumber = 1,
+): string {
   const instructions = [
     `You are an automated Codex maintainer responsible for validating pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
@@ -599,7 +648,7 @@ function buildFixPrompt(pr, worktreePath, examplePaths = [], ghChecksResult = nu
   return instructions.join("\n");
 }
 
-function buildPrMergePrompt(pr, worktreePath) {
+function buildPrMergePrompt(pr: PullRequestInfo, worktreePath: string): string {
   return [
     `You are an automated Codex maintainer finalizing pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
@@ -614,7 +663,7 @@ function buildPrMergePrompt(pr, worktreePath) {
   ].join("\n");
 }
 
-async function ensurePushed(pr, worktreePath, remote, localBranch) {
+async function ensurePushed(pr: PullRequestInfo, worktreePath: string, remote: string, localBranch: string): Promise<void> {
   await runCommand("git", ["add", "-A"], { cwd: worktreePath });
 
   try {
@@ -634,31 +683,65 @@ async function ensurePushed(pr, worktreePath, remote, localBranch) {
   }
 }
 
-function isNothingToCommit(error) {
+function isNothingToCommit(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
-  const text = `${error.stderr ?? ""}${error.stdout ?? ""}`;
-  return /nothing to commit/i.test(text);
+  const stdout = normalizeCommandOutput((error as Partial<CommandError>).stdout);
+  const stderr = normalizeCommandOutput((error as Partial<CommandError>).stderr);
+  return /nothing to commit/i.test(`${stderr}${stdout}`);
 }
 
-function formatPrefix(pr) {
+function formatPrefix(pr: PullRequestInfo): string {
   return `[PR ${pr.number} ${pr.headRefName}]`;
 }
 
-function logWithPrefix(prefix, message) {
+function logWithPrefix(prefix: string, message: string) {
   for (const line of message.split("\n")) {
     console.log(`${prefix} ${line}`);
   }
 }
 
-function logStream(prefix, data) {
-  const text = data.toString();
+function logStream(prefix: string, data: Buffer | string) {
+  const text = typeof data === "string" ? data : data.toString();
   for (const line of text.split(/\r?\n/)) {
     if (line.length > 0) {
       console.log(`${prefix} ${line}`);
     }
   }
+}
+
+function normalizeCommandOutput(output: unknown): string {
+  if (typeof output === "string") {
+    return output;
+  }
+  if (Buffer.isBuffer(output)) {
+    return output.toString("utf8");
+  }
+  if (output === null || output === undefined) {
+    return "";
+  }
+  if (typeof output === "object" && typeof (output as { toString: unknown }).toString === "function") {
+    try {
+      return (output as { toString: () => string }).toString();
+    } catch {
+      return String(output);
+    }
+  }
+  return String(output);
+}
+
+function formatCommandError(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return normalizeCommandOutput(error);
+  }
+
+  const commandError = error as Partial<CommandError> & { message?: string };
+  const stderr = normalizeCommandOutput(commandError.stderr);
+  const stdout = normalizeCommandOutput(commandError.stdout);
+  const message = commandError.message ?? (error instanceof Error ? error.message : "");
+
+  return [stderr, stdout, message].filter((part) => part.length > 0).join(" ") || "unknown error";
 }
 
 function isPushAllowed(pr, config) {
@@ -671,7 +754,7 @@ function isPushAllowed(pr, config) {
   return pr.headRepositoryOwnerLogin.toLowerCase() === config.repoOwner.toLowerCase();
 }
 
-async function detectNewExamples(worktreePath, remote) {
+async function detectNewExamples(worktreePath: string, remote: string): Promise<string[]> {
   try {
     const { stdout } = await runCommand("git", ["diff", "--name-status", `${remote}/main...HEAD`], { cwd: worktreePath });
     return stdout
@@ -682,16 +765,16 @@ async function detectNewExamples(worktreePath, remote) {
       .filter(([status, file]) => status === "A" && file?.startsWith("sdk/native/examples/"))
       .map(([, file]) => file);
   } catch (error) {
-    console.warn(`Failed to detect new examples: ${error.stderr ?? error.stdout ?? error.message}`);
+    console.warn(`Failed to detect new examples: ${formatCommandError(error)}`);
     return [];
   }
 }
 
-async function runCodexTurnWithLogging(thread, prompt, prefix) {
+async function runCodexTurnWithLogging(thread: Thread, prompt: string, prefix: string) {
   const { events } = await thread.runStreamed(prompt);
-  const items = new Map();
+  const items = new Map<string, ThreadItem>();
   let finalResponse = "";
-  let usage = null;
+  let usage: Usage | null = null;
 
   try {
     for await (const event of events) {
@@ -731,7 +814,7 @@ async function runCodexTurnWithLogging(thread, prompt, prefix) {
   };
 }
 
-function handleEventLogging(event, prefix) {
+function handleEventLogging(event: ThreadEvent, prefix: string) {
   switch (event.type) {
     case "thread.started":
       logWithPrefix(prefix, `Thread started (${event.thread_id})`);
@@ -765,14 +848,14 @@ function handleEventLogging(event, prefix) {
   }
 }
 
-function formatUsage(usage) {
+function formatUsage(usage: Usage | null) {
   if (!usage) {
     return "Turn completed";
   }
   return `Turn completed (usage: in=${usage.input_tokens ?? 0}, cached=${usage.cached_input_tokens ?? 0}, out=${usage.output_tokens ?? 0})`;
 }
 
-function formatItem(phase, item) {
+function formatItem(phase: string, item?: ThreadItem) {
   if (!item) {
     return `Item ${phase}`;
   }
@@ -797,62 +880,73 @@ function formatItem(phase, item) {
   }
 }
 
-function truncate(text, maxLength) {
+function truncate(text: string | undefined, maxLength: number) {
   if (!text || text.length <= maxLength) {
     return text ?? "";
   }
   return `${text.slice(0, maxLength)}…`;
 }
 
-async function runCommand(command, args = [], options = {}) {
+async function runCommand(command: string, args: string[] = [], options: ExecFileOptions = {}): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = execFile(command, args, {
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
       ...options,
     }, (error, stdout, stderr) => {
+      const stdoutText = normalizeCommandOutput(stdout);
+      const stderrText = normalizeCommandOutput(stderr);
       if (error) {
-        error.stdout = stdout;
-        error.stderr = stderr;
-        reject(error);
+        const commandError = error as CommandError;
+        commandError.stdout = stdoutText;
+        commandError.stderr = stderrText;
+        reject(commandError);
         return;
       }
-      resolve({ stdout, stderr });
+      resolve({ stdout: stdoutText, stderr: stderrText });
     });
     registerProcess(child);
   });
 }
 
-async function runCommandWithOutput(command, args = [], options = {}) {
+async function runCommandWithOutput(
+  command: string,
+  args: string[] = [],
+  options: RunCommandWithOutputOptions = {},
+): Promise<CommandWithOutputResult> {
   return new Promise((resolve, reject) => {
+    const { onStdout, onStderr, ...execOptions } = options;
     const child = execFile(command, args, {
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
-      ...options,
+      ...execOptions,
     }, (error, stdout, stderr) => {
+      const stdoutText = normalizeCommandOutput(stdout);
+      const stderrText = normalizeCommandOutput(stderr);
       if (error) {
-        error.stdout = stdout;
-        error.stderr = stderr;
-        error.exitCode = typeof error.code === "number" ? error.code : null;
-        reject(error);
+        const commandError = error as CommandError;
+        commandError.stdout = stdoutText;
+        commandError.stderr = stderrText;
+        commandError.exitCode = typeof error.code === "number" ? error.code : null;
+        reject(commandError);
         return;
       }
-      resolve({ stdout, stderr, exitCode: 0 });
+      resolve({ stdout: stdoutText, stderr: stderrText, exitCode: 0 });
     });
 
     registerProcess(child);
 
-    if (options.onStdout && child.stdout) {
-      child.stdout.on("data", options.onStdout);
+    if (onStdout && child.stdout) {
+      child.stdout.on("data", onStdout);
     }
 
-    if (options.onStderr && child.stderr) {
-      child.stderr.on("data", options.onStderr);
+    if (onStderr && child.stderr) {
+      child.stderr.on("data", onStderr);
     }
   });
 }
 
-async function pathExists(target) {
+async function pathExists(target: string): Promise<boolean> {
   try {
     await fs.access(target);
     return true;
@@ -861,7 +955,7 @@ async function pathExists(target) {
   }
 }
 
-async function runGhPrChecks(pr, worktreePath, basePrefix) {
+async function runGhPrChecks(pr: PullRequestInfo, worktreePath: string, basePrefix: string): Promise<GhChecksResult> {
   const prefix = `${basePrefix} [gh-checks]`;
   logWithPrefix(prefix, "Running gh pr checks --watch ...");
 
@@ -882,9 +976,10 @@ async function runGhPrChecks(pr, worktreePath, basePrefix) {
     logWithPrefix(prefix, "gh pr checks --watch exited successfully.");
     return { success: true, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
   } catch (error) {
-    const stdout = error.stdout ?? "";
-    const stderr = error.stderr ?? "";
-    const exitCode = typeof error.exitCode === "number" ? error.exitCode : error.code ?? null;
+    const commandError = error as Partial<CommandError> & { code?: number };
+    const stdout = normalizeCommandOutput(commandError.stdout);
+    const stderr = normalizeCommandOutput(commandError.stderr);
+    const exitCode = typeof commandError.exitCode === "number" ? commandError.exitCode : commandError.code ?? null;
     logWithPrefix(prefix, `gh pr checks --watch failed (exit ${exitCode ?? "unknown"}).`);
     if (stdout) {
       logWithPrefix(prefix, `stdout:\n${stdout.trimEnd()}`);
@@ -896,7 +991,7 @@ async function runGhPrChecks(pr, worktreePath, basePrefix) {
   }
 }
 
-async function resolveRepoSlug(repoRoot, remote) {
+async function resolveRepoSlug(repoRoot: string, remote: string): Promise<string | null> {
   try {
     const { stdout } = await runCommand("git", ["remote", "get-url", remote], { cwd: repoRoot });
     const url = stdout.trim();
@@ -905,7 +1000,7 @@ async function resolveRepoSlug(repoRoot, remote) {
       return slug;
     }
   } catch (error) {
-    console.warn(`Warning: failed to resolve remote URL for ${remote}: ${error.stderr ?? error.stdout ?? error.message}`);
+    console.warn(`Warning: failed to resolve remote URL for ${remote}: ${formatCommandError(error)}`);
   }
 
   try {
@@ -915,13 +1010,13 @@ async function resolveRepoSlug(repoRoot, remote) {
       return parsed.nameWithOwner;
     }
   } catch (error) {
-    console.warn(`Warning: failed to query repo slug via gh: ${error.stderr ?? error.stdout ?? error.message}`);
+    console.warn(`Warning: failed to query repo slug via gh: ${formatCommandError(error)}`);
   }
 
   return null;
 }
 
-function parseRepoSlug(url) {
+function parseRepoSlug(url: string | null | undefined): string | null {
   if (!url) {
     return null;
   }
@@ -1062,5 +1157,3 @@ main().catch((error) => {
   console.error("Fatal error:", error);
   process.exit(1);
 });
-
-
