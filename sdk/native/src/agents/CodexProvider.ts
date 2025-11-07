@@ -810,13 +810,9 @@ class CodexModel implements Model {
             const delta = currentText.slice(previousText.length);
             textAccumulator.set(itemKey, currentText);
 
-            // Use "model" type for custom reasoning events
             events.push({
-              type: "model",
-              event: {
-                type: "reasoning_delta",
-                delta,
-              },
+              type: "reasoning_delta",
+              delta,
             } as StreamEvent);
           }
         }
@@ -826,23 +822,16 @@ class CodexModel implements Model {
         this.streamedTurnItems.push(event.item);
 
         if (event.item.type === "agent_message") {
-          // Use "model" type for custom output_text_done events
           events.push({
-            type: "model",
-            event: {
-              type: "output_text_done",
-              text: event.item.text,
-            },
+            type: "output_text_done",
+            text: event.item.text,
           } as StreamEvent);
           textAccumulator.delete("agent_message");
           this.lastStreamedMessage = event.item.text;
         } else if (event.item.type === "reasoning") {
           events.push({
-            type: "model",
-            event: {
-              type: "reasoning_done",
-              reasoning: event.item.text,
-            },
+            type: "reasoning_done",
+            reasoning: event.item.text,
           } as StreamEvent);
           textAccumulator.delete("reasoning");
         }
@@ -869,24 +858,18 @@ class CodexModel implements Model {
 
       case "turn.failed":
         events.push({
-          type: "model",
-          event: {
-            type: "error",
-            error: {
-              message: event.error.message,
-            },
+          type: "error",
+          error: {
+            message: event.error.message,
           },
         } as StreamEvent);
         break;
 
       case "error":
         events.push({
-          type: "model",
-          event: {
-            type: "error",
-            error: {
-              message: event.message,
-            },
+          type: "error",
+          error: {
+            message: event.message,
           },
         } as StreamEvent);
         break;
