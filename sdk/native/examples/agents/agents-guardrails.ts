@@ -26,8 +26,8 @@
  * - Using CodexProvider as the model backend
  */
 
-import os from 'node:os';
-import path from 'node:path';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { z } from 'zod';
 import * as Agents from '@openai/agents';
@@ -108,7 +108,7 @@ async function main() {
     name: 'ValidatedAgent',
     instructions: 'You are a helpful assistant that only processes validated inputs.',
     guardrails: [inputValidationGuardrail],
-  });
+  } as any);
 
   console.log('\nTest 1: Valid input');
   console.log('Input: "This is a valid question that meets the length requirements."\n');
@@ -164,7 +164,7 @@ async function main() {
     name: 'FilteredAgent',
     instructions: 'You are a helpful assistant with content filtering enabled.',
     guardrails: [contentFilterGuardrail],
-  });
+  } as any);
 
   console.log('\nTest 1: Clean input');
   console.log('Input: "What is the weather today?"\n');
@@ -221,7 +221,7 @@ async function main() {
     name: 'SecureAgent',
     instructions: 'You are a helpful assistant with security checks enabled.',
     guardrails: [securityGuardrail],
-  });
+  } as any);
 
   console.log('\nTest 1: Safe input');
   console.log('Input: "List all files in the current directory"\n');
@@ -258,7 +258,7 @@ async function main() {
       contentFilterGuardrail,
       securityGuardrail,
     ],
-  });
+  } as any);
 
   console.log('\nTest: Input that passes all guardrails');
   console.log('Input: "Can you help me understand how to write better code?"\n');
