@@ -18,11 +18,11 @@ import type {
   StreamEvent,
   AgentInputItem,
   AgentOutputItem,
-  Usage,
   AssistantMessageItem,
   OutputText,
   SerializedTool,
 } from "./types";
+import { Usage } from "./types";
 
 /**
  * Options for creating a CodexProvider
@@ -624,22 +624,18 @@ class CodexModel implements Model {
    */
   private convertUsage(usage: CodexUsage | null): Usage {
     if (!usage) {
-      return { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+      return new Usage();
     }
 
-    const inputTokensDetails = usage.cached_input_tokens
-      ? { cachedTokens: usage.cached_input_tokens }
-      : undefined;
-
-    const converted: Usage = {
+    const converted = new Usage({
       requests: 1,
-      inputTokens: usage.input_tokens,
-      outputTokens: usage.output_tokens,
-      totalTokens: usage.input_tokens + usage.output_tokens,
-    };
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      total_tokens: usage.input_tokens + usage.output_tokens,
+    });
 
-    if (inputTokensDetails) {
-      converted.inputTokensDetails = inputTokensDetails;
+    if (usage.cached_input_tokens) {
+      converted.inputTokensDetails = [{ cachedTokens: usage.cached_input_tokens }];
     }
 
     return converted;

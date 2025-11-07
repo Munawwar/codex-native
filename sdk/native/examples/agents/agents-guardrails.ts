@@ -31,6 +31,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { z } from 'zod';
 import * as Agents from '@openai/agents';
+import { setDefaultModelProvider } from '@openai/agents-core';
 import { CodexProvider } from '../../src/index';
 
 const { Agent, run } = Agents;
@@ -66,7 +67,7 @@ async function main() {
     skipGitRepoCheck: true,
   });
 
-  const codexModel = await codexProvider.getModel();
+  setDefaultModelProvider(codexProvider);
 
   // ============================================================================
   // Example 1: Input Validation Guardrail
@@ -105,7 +106,6 @@ async function main() {
 
   const agentWithValidation = new Agent({
     name: 'ValidatedAgent',
-    model: codexModel,
     instructions: 'You are a helpful assistant that only processes validated inputs.',
     guardrails: [inputValidationGuardrail],
   });
@@ -162,7 +162,6 @@ async function main() {
 
   const filteredAgent = new Agent({
     name: 'FilteredAgent',
-    model: codexModel,
     instructions: 'You are a helpful assistant with content filtering enabled.',
     guardrails: [contentFilterGuardrail],
   });
@@ -220,7 +219,6 @@ async function main() {
 
   const secureAgent = new Agent({
     name: 'SecureAgent',
-    model: codexModel,
     instructions: 'You are a helpful assistant with security checks enabled.',
     guardrails: [securityGuardrail],
   });
@@ -254,7 +252,6 @@ async function main() {
 
   const multiGuardrailAgent = new Agent({
     name: 'MultiGuardrailAgent',
-    model: codexModel,
     instructions: 'You are a helpful assistant with multiple guardrails enabled.',
     guardrails: [
       inputValidationGuardrail,

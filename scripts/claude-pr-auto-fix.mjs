@@ -31,53 +31,71 @@ const CLAUDE_CMD = process.env.CLAUDE_PATH ?? "claude";
 const CONCURRENCY = Math.max(Number.parseInt(process.env.CHECK_CONCURRENCY ?? "", 10) || os.cpus().length, 1);
 const MAX_PROMPT_LOG_CHARS = 10_000;
 
-class AsyncQueue {
-  #items = [];
-  #resolvers = [];
+class FailureProcessor {
+  #queue = [];
+  #processing = false;
   #closed = false;
+  #resolveDone;
+  #donePromise;
 
-  enqueue(value) {
-    if (this.#closed) {
-      throw new Error("Cannot enqueue into a closed queue");
-    }
-    if (this.#resolvers.length > 0) {
-      const resolve = this.#resolvers.shift();
-      resolve(value);
-      return;
-    }
-    this.#items.push(value);
-  }
+  processed = 0;
+  issues = [];
 
-  close() {
-    if (this.#closed) {
-      return;
-    }
-    this.#closed = true;
-    while (this.#resolvers.length > 0) {
-      const resolve = this.#resolvers.shift();
-      resolve(null);
-    }
-  }
-
-  async shift() {
-    if (this.#items.length > 0) {
-      return this.#items.shift();
-    }
-    if (this.#closed) {
-      return null;
-    }
-    return new Promise((resolve) => {
-      this.#resolvers.push(resolve);
+  constructor() {
+    this.#donePromise = new Promise((resolve) => {
+      this.#resolveDone = resolve;
     });
   }
 
-  async *[Symbol.asyncIterator]() {
-    while (true) {
-      const value = await this.shift();
-      if (value === null) {
-        break;
+  enqueueFailure(failure) {
+    if (this.#closed) {
+      throw new Error("Cannot enqueue failures after processor has been closed");
+    }
+    this.#queue.push(failure);
+    if (!this.#processing) {
+      void this.#drain();
+    }
+  }
+
+  close() {
+    this.#closed = true;
+    if (!this.#processing && this.#queue.length === 0) {
+      this.#resolveDone();
+    }
+  }
+
+  async done() {
+    if (this.#closed && !this.#processing && this.#queue.length === 0) {
+      return { processed: this.processed, issues: this.issues };
+    }
+    await this.#donePromise;
+    return { processed: this.processed, issues: this.issues };
+  }
+
+  async #drain() {
+    if (this.#processing) {
+      return;
+    }
+    this.#processing = true;
+    while (this.#queue.length > 0) {
+      const failure = this.#queue.shift();
+      if (!failure) {
+        continue;
       }
-      yield value;
+      this.processed += 1;
+      process.stdout.write(`\n🛠️ Remediating PR #${failure.pr.number} (${failure.pr.title})\n`);
+      try {
+        await processFailure(failure.pr, `${failure.outcome.stdout}\n${failure.outcome.stderr}`);
+      } catch (error) {
+        this.issues.push({ pr: failure.pr, error });
+        process.stderr.write(
+          `❌ Remediation failed for PR #${failure.pr.number}: ${(error && error.message) || error}\n`,
+        );
+      }
+    }
+    this.#processing = false;
+    if (this.#closed && this.#queue.length === 0) {
+      this.#resolveDone();
     }
   }
 }
@@ -143,7 +161,7 @@ async function fetchOpenPullRequests() {
   }
 }
 
-async function monitorPrChecks(prs, failureQueue) {
+async function monitorPrChecks(prs, failureProcessor) {
   const queue = [...prs];
   const workers = [];
   let failureCount = 0;
@@ -159,7 +177,7 @@ async function monitorPrChecks(prs, failureQueue) {
       logCheckResult(pr, outcome);
       if (outcome.exitCode !== 0) {
         failureCount += 1;
-        failureQueue.enqueue({ pr, outcome });
+        failureProcessor.enqueueFailure({ pr, outcome });
       }
     }
   }
@@ -169,28 +187,8 @@ async function monitorPrChecks(prs, failureQueue) {
   }
 
   await Promise.all(workers);
-  failureQueue.close();
+  failureProcessor.close();
   return { total: prs.length, failures: failureCount };
-}
-
-async function processFailuresSequentially(queue) {
-  const issues = [];
-  let processed = 0;
-
-  for await (const failure of queue) {
-    processed += 1;
-    process.stdout.write(`\n🛠️ Remediating PR #${failure.pr.number} (${failure.pr.title})\n`);
-    try {
-      await processFailure(failure.pr, `${failure.outcome.stdout}\n${failure.outcome.stderr}`);
-    } catch (error) {
-      issues.push({ pr: failure.pr, error });
-      process.stderr.write(
-        `❌ Remediation failed for PR #${failure.pr.number}: ${(error && error.message) || error}\n`,
-      );
-    }
-  }
-
-  return { processed, issues };
 }
 
 function logCheckResult(pr, outcome) {
@@ -406,10 +404,9 @@ async function main() {
     }
     process.stdout.write(`🔍 Monitoring ${prs.length} open PR(s) with concurrency ${CONCURRENCY}\n`);
 
-    const failureQueue = new AsyncQueue();
-    const remediationPromise = processFailuresSequentially(failureQueue);
-    const monitorSummary = await monitorPrChecks(prs, failureQueue);
-    const remediationSummary = await remediationPromise;
+    const failureProcessor = new FailureProcessor();
+    const monitorSummary = await monitorPrChecks(prs, failureProcessor);
+    const remediationSummary = await failureProcessor.done();
 
     if (monitorSummary.failures === 0) {
       process.stdout.write("✅ All PR checks passed. No remediation needed.\n");
@@ -452,4 +449,5 @@ async function main() {
 }
 
 await main();
+
 
