@@ -103,22 +103,39 @@ async function main() {
 
     try {
       const codex = new Codex();
-      const thread = codex.startThread({
+      const basePrefix = formatPrefix(pr);
+
+      const mergeThread = codex.startThread({
         workingDirectory: worktreePath,
         sandboxMode: "workspace-write",
         fullAuto: true,
       });
 
-      const prompt = buildAgentPrompt(pr, worktreePath);
-      const prefix = formatPrefix(pr);
-      logWithPrefix(prefix, "Starting Codex turn...");
+      const mergePrefix = `${basePrefix} [merge]`;
+      const mergePrompt = buildMergePrompt(pr, worktreePath);
+      logWithPrefix(mergePrefix, "Starting Codex merge turn...");
 
-      const turn = await runCodexTurnWithLogging(thread, prompt, prefix);
+      const mergeTurn = await runCodexTurnWithLogging(mergeThread, mergePrompt, mergePrefix);
 
-      logWithPrefix(prefix, "Codex summary:");
-      logWithPrefix(prefix, turn.finalResponse.trim());
+      logWithPrefix(mergePrefix, "Merge summary:");
+      logWithPrefix(mergePrefix, mergeTurn.finalResponse.trim());
 
-      return { pr, worktreePath, turn };
+      const fixThread = codex.startThread({
+        workingDirectory: worktreePath,
+        sandboxMode: "workspace-write",
+        fullAuto: true,
+      });
+
+      const fixPrefix = `${basePrefix} [checks]`;
+      const fixPrompt = buildFixPrompt(pr, worktreePath);
+      logWithPrefix(fixPrefix, "Starting Codex checks turn...");
+
+      const fixTurn = await runCodexTurnWithLogging(fixThread, fixPrompt, fixPrefix);
+
+      logWithPrefix(fixPrefix, "Checks summary:");
+      logWithPrefix(fixPrefix, fixTurn.finalResponse.trim());
+
+      return { pr, worktreePath, mergeTurn, fixTurn };
     } catch (error) {
       console.error(`[PR ${pr.number}] Codex automation failed:`, error);
       return { pr, worktreePath, error };
@@ -333,7 +350,22 @@ function slugifyRef(ref) {
   return ref.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
-function buildAgentPrompt(pr, worktreePath) {
+function buildMergePrompt(pr, worktreePath) {
+  return [
+    `You are a Codex automation agent working inside ${worktreePath}.`,
+    "First, ensure the branch is fully up to date with the latest main branch.",
+    "Steps:",
+    "1. Run 'git status' to confirm the working tree is clean (resolve or stash anything unexpected).",
+    "2. Fetch the latest main branch with 'git fetch origin main'.",
+    "3. Merge main into this branch with 'git merge origin/main', resolving any conflicts. Prefer keeping the branch's intent while incorporating upstream fixes.",
+    "4. After resolving conflicts, run appropriate builds/tests if necessary to ensure the merge succeeded.",
+    "5. Commit the merge (or conflict resolutions) with a clear message if new commits are created.",
+    "6. Provide a brief summary of the merge result, noting any conflicts handled.",
+    "Do not push yet; that will happen after checks pass.",
+  ].join("\n");
+}
+
+function buildFixPrompt(pr, worktreePath) {
   return [
     `You are an automated Codex maintainer responsible for validating pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
