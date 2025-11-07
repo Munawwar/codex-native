@@ -46,6 +46,13 @@ interface RunConfig {
   maxFixAttempts: number;
 }
 
+type BuildErrorDetails = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  message: string;
+};
+
 interface PullRequestInfo {
   number: number;
   title: string;
@@ -58,6 +65,7 @@ interface PullRequestInfo {
 const DEFAULT_REMOTE = "origin";
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_MAX_FIX_ATTEMPTS = 3;
+const FULL_ACCESS_NOTICE = "You are running with sandbox mode `danger-full-access` and full-auto permissions. You may write to the repository, run destructive commands, and escalate without asking for approval.";
 
 const activeProcesses = new Set<ChildProcess>();
 
@@ -124,6 +132,13 @@ async function main() {
     const localBranch = `codex/pr-${pr.number}`;
     let createdWorktree = false;
 
+    const basePrefix = formatPrefix(pr);
+    const pushAllowed = isPushAllowed(pr, config);
+    const pushStatuses: PushStatus[] = pushAllowed
+      ? []
+      : [{ success: false, skipped: true, reason: "push-not-allowed", source: "pre" }];
+    const buildFixTurns = [];
+
     try {
       await gitMutex.run(async () => {
         await runCommand("git", [
@@ -174,6 +189,13 @@ async function main() {
     }
 
     const needsInstall = createdWorktree || !(await pathExists(path.join(worktreePath, "node_modules")));
+    let codexInstance: Codex | null = null;
+    const ensureCodexInstance = () => {
+      if (!codexInstance) {
+        codexInstance = new Codex();
+      }
+      return codexInstance;
+    };
 
     if (needsInstall) {
       try {
@@ -187,14 +209,81 @@ async function main() {
       }
     }
 
+    const runBuildAll = async (): Promise<BuildErrorDetails | null> => {
+      logWithPrefix(basePrefix, "Running pnpm run sdk:build...");
+      try {
+        await runCommand("pnpm", ["run", "sdk:build"], { cwd: worktreePath });
+        logWithPrefix(basePrefix, "pnpm run sdk:build completed successfully.");
+        return null;
+      } catch (error) {
+        const commandError = error as Partial<CommandError> & { code?: number };
+        const stdout = normalizeCommandOutput(commandError.stdout);
+        const stderr = normalizeCommandOutput(commandError.stderr);
+        const exitCode = typeof commandError.exitCode === "number"
+          ? commandError.exitCode
+          : commandError.code ?? null;
+        const message = commandError.message ?? (error instanceof Error ? error.message : String(error));
+        logWithPrefix(basePrefix, `pnpm run sdk:build failed (exit ${exitCode ?? "unknown"}).`);
+        if (stdout) {
+          logWithPrefix(basePrefix, `stdout:\n${stdout.trimEnd()}`);
+        }
+        if (stderr) {
+          logWithPrefix(basePrefix, `stderr:\n${stderr.trimEnd()}`);
+        }
+        return { stdout, stderr, exitCode, message };
+      }
+    };
+
+    let buildError = await runBuildAll();
+    let buildAttempts = 0;
+
+    while (buildError && !config.dryRun && buildAttempts < config.maxFixAttempts) {
+      buildAttempts += 1;
+      const codex = ensureCodexInstance();
+      const sandboxMode: SandboxMode = "danger-full-access";
+      const makeThreadOptions = (): ThreadOptions => ({
+        workingDirectory: worktreePath,
+        sandboxMode,
+        fullAuto: true,
+        skipGitRepoCheck: true,
+      });
+      const buildPrefix = `${basePrefix} [build#${buildAttempts}]`;
+      const buildThread = codex.startThread(makeThreadOptions());
+      const buildPrompt = buildBuildFailurePrompt(pr, worktreePath, buildError, buildAttempts);
+      logWithPrefix(buildPrefix, "Starting Codex build remediation turn...");
+      const buildFixTurn = await runCodexTurnWithLogging(buildThread, buildPrompt, buildPrefix);
+      buildFixTurns.push(buildFixTurn);
+      logWithPrefix(buildPrefix, "Build remediation summary:");
+      logWithPrefix(buildPrefix, buildFixTurn.finalResponse.trim());
+      logTurnHighlights(buildPrefix, buildFixTurn.items);
+
+      if (pushAllowed) {
+        try {
+          await ensurePushed(pr, worktreePath, config.remote, localBranch);
+          pushStatuses.push({ success: true, skipped: false, reason: `post-build-${buildAttempts}`, source: "build" });
+          logWithPrefix(buildPrefix, "Post-build push completed successfully.");
+        } catch (pushError) {
+          pushStatuses.push({ success: false, skipped: false, reason: `post-build-${buildAttempts}-failed`, source: "build", error: pushError });
+          logWithPrefix(buildPrefix, `Post-build push failed: ${formatCommandError(pushError)}`);
+        }
+      } else {
+        logWithPrefix(buildPrefix, "Push permissions unavailable; skipping automated push after build remediation.");
+      }
+
+      buildError = await runBuildAll();
+    }
+
+    if (buildError) {
+      logWithPrefix(basePrefix, `Build remains failing after ${buildAttempts} remediation attempt(s). Proceeding with remaining automation.`);
+    }
+
     if (config.dryRun) {
       console.log(`[PR ${pr.number}] Dry run enabled; skipping Codex automation.`);
       return { pr, worktreePath, dryRun: true };
     }
 
     try {
-      const codex = new Codex();
-      const basePrefix = formatPrefix(pr);
+      const codex = ensureCodexInstance();
       const sandboxMode: SandboxMode = "danger-full-access";
 
       const makeThreadOptions = (): ThreadOptions => ({
@@ -214,15 +303,12 @@ async function main() {
 
       logWithPrefix(mergePrefix, "Merge summary:");
       logWithPrefix(mergePrefix, mergeTurn.finalResponse.trim());
+      logTurnHighlights(mergePrefix, mergeTurn.items);
 
       const newExamples = await detectNewExamples(worktreePath, config.remote);
 
       let ghChecksResult = await runGhPrChecks(pr, worktreePath, basePrefix);
 
-      const pushAllowed = isPushAllowed(pr, config);
-      const pushStatuses: PushStatus[] = pushAllowed
-        ? []
-        : [{ success: false, skipped: true, reason: "push-not-allowed", source: "pre" }];
       const fixTurns = [];
       let mergePrTurn = null;
       let prMerged = false;
@@ -257,6 +343,7 @@ async function main() {
 
         logWithPrefix(fixPrefix, "Remediation summary:");
         logWithPrefix(fixPrefix, fixTurn.finalResponse.trim());
+        logTurnHighlights(fixPrefix, fixTurn.items);
 
         if (pushAllowed) {
           try {
@@ -292,6 +379,7 @@ async function main() {
 
         logWithPrefix(mergePrPrefix, "PR merge summary:");
         logWithPrefix(mergePrPrefix, mergePrTurn.finalResponse.trim());
+        logTurnHighlights(mergePrPrefix, mergePrTurn.items);
 
         try {
           const { stdout } = await runCommand("gh", [
@@ -329,10 +417,11 @@ async function main() {
         mergePrTurn,
         prMerged,
         mergeVerification,
+        buildFixTurns,
       };
     } catch (error) {
       console.error(`[PR ${pr.number}] Codex automation failed:`, error);
-      return { pr, worktreePath, error };
+      return { pr, worktreePath, error, buildFixTurns };
     }
   });
 
@@ -589,6 +678,7 @@ function slugifyRef(ref: string): string {
 function buildMergePrompt(pr: PullRequestInfo, worktreePath: string): string {
   return [
     `You are a Codex automation agent working inside ${worktreePath}.`,
+    FULL_ACCESS_NOTICE,
     "First, ensure the branch is fully up to date with the latest main branch.",
     "Steps:",
     "1. Run 'git status' to confirm the working tree is clean (resolve or stash anything unexpected).",
@@ -612,6 +702,7 @@ function buildFixPrompt(
   const instructions = [
     `You are an automated Codex maintainer responsible for validating pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
+    FULL_ACCESS_NOTICE,
     `Tasks:`,
     `Remediation attempt #${attemptNumber}: address any failing CI checks thoroughly.`,
     "1. Run 'gh pr checks --watch " + pr.number + "' from the repository root to monitor CI failures until they are resolved.",
@@ -648,10 +739,50 @@ function buildFixPrompt(
   return instructions.join("\n");
 }
 
+function buildBuildFailurePrompt(
+  pr: PullRequestInfo,
+  worktreePath: string,
+  error: BuildErrorDetails,
+  attemptNumber: number,
+): string {
+  const sections = [
+    `You are an automated Codex maintainer addressing a build failure for pull request #${pr.number}.`,
+    `Working directory: ${worktreePath}.`,
+    FULL_ACCESS_NOTICE,
+    `Command failing: pnpm run sdk:build`,
+    `Attempt #: ${attemptNumber}.`,
+    "Tasks:",
+    "1. Investigate why 'pnpm run sdk:build' failed.",
+    "2. Apply code changes or dependency updates necessary to fix the build.",
+    "3. Re-run 'pnpm run sdk:build' until it succeeds.",
+    "4. Commit the fixes with clear messages and ensure the working tree is clean.",
+    "5. Provide a concise summary of the fix, including tests or commands executed.",
+  ];
+
+  if (error.exitCode !== null) {
+    sections.push(`Previous run exit code: ${error.exitCode}.`);
+  }
+
+  if (error.stdout.trim()) {
+    sections.push("--- pnpm run sdk:build stdout ---");
+    sections.push(error.stdout.trim());
+  }
+
+  if (error.stderr.trim()) {
+    sections.push("--- pnpm run sdk:build stderr ---");
+    sections.push(error.stderr.trim());
+  }
+
+  sections.push("Do not skip rerunning the build; keep iterating until it passes.");
+
+  return sections.join("\n");
+}
+
 function buildPrMergePrompt(pr: PullRequestInfo, worktreePath: string): string {
   return [
     `You are an automated Codex maintainer finalizing pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
+    FULL_ACCESS_NOTICE,
     "All required checks have passed. Merge this pull request into the main branch using the GitHub CLI.",
     "Steps:",
     "1. Run 'git status -sb' to ensure there are no uncommitted changes left over from earlier automation.",
@@ -708,6 +839,126 @@ function logStream(prefix: string, data: Buffer | string) {
     if (line.length > 0) {
       console.log(`${prefix} ${line}`);
     }
+  }
+}
+
+function logTurnHighlights(prefix: string, items: ThreadItem[]) {
+  if (!items || items.length === 0) {
+    return;
+  }
+  const summary = summarizeTurnItems(items);
+  if (summary.commands.length > 0) {
+    logWithPrefix(prefix, formatCommandSummary(summary.commands));
+  }
+  if (summary.toolCalls.length > 0) {
+    logWithPrefix(prefix, formatToolSummary(summary.toolCalls));
+  }
+  if (summary.filesChanged > 0) {
+    logWithPrefix(prefix, `Files changed: ${summary.filesChanged}`);
+  }
+}
+
+type CommandExecutionSummary = {
+  command: string;
+  status?: string;
+};
+
+type ToolCallSummary = {
+  server?: string | null;
+  tool?: string | null;
+  status?: string | null;
+};
+
+type TurnItemsSummary = {
+  commands: CommandExecutionSummary[];
+  toolCalls: ToolCallSummary[];
+  filesChanged: number;
+};
+
+function summarizeTurnItems(items: ThreadItem[]): TurnItemsSummary {
+  const summary: TurnItemsSummary = { commands: [], toolCalls: [], filesChanged: 0 };
+  for (const item of items) {
+    switch (item.type) {
+      case "command_execution":
+        if (typeof item.command === "string") {
+          summary.commands.push({ command: item.command, status: item.status });
+        }
+        break;
+      case "mcp_tool_call":
+        summary.toolCalls.push({ server: item.server, tool: item.tool, status: item.status });
+        break;
+      case "file_change":
+        if (Array.isArray((item as { changes?: unknown[] }).changes)) {
+          summary.filesChanged += (item as { changes?: unknown[] }).changes?.length ?? 0;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return summary;
+}
+
+function formatCommandSummary(commands: CommandExecutionSummary[]): string {
+  const aggregate = new Map<string, { command: string; status?: string; priority: number }>();
+  for (const entry of commands) {
+    const command = entry.command.trim();
+    if (!command) {
+      continue;
+    }
+    const prioritized = aggregate.get(command);
+    const priority = statusPriority(entry.status);
+    if (!prioritized || priority > prioritized.priority) {
+      aggregate.set(command, { command, status: entry.status, priority });
+    }
+  }
+  const formatted = Array.from(aggregate.values())
+    .sort((a, b) => a.command.localeCompare(b.command))
+    .map((entry) => `${statusSymbol(entry.status)} ${entry.command}`);
+  return `Commands (${formatted.length}): ${formatted.join(', ')}`;
+}
+
+function formatToolSummary(toolCalls: ToolCallSummary[]): string {
+  const aggregate = new Map<string, { label: string; status?: string; priority: number }>();
+  for (const entry of toolCalls) {
+    const label = [entry.server, entry.tool].filter(Boolean).join("::") || "tool";
+    const priority = statusPriority(entry.status);
+    const existing = aggregate.get(label);
+    if (!existing || priority > existing.priority) {
+      aggregate.set(label, { label, status: entry.status ?? undefined, priority });
+    }
+  }
+  const formatted = Array.from(aggregate.values())
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((entry) => `${statusSymbol(entry.status)} ${entry.label}`);
+  return `Tools (${formatted.length}): ${formatted.join(', ')}`;
+}
+
+function statusPriority(status?: string): number {
+  switch (status) {
+    case "failed":
+    case "error":
+      return 3;
+    case "completed":
+      return 2;
+    case "in_progress":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function statusSymbol(status?: string): string {
+  switch (status) {
+    case "completed":
+      return "✓";
+    case "failed":
+    case "error":
+      return "✖";
+    case "in_progress":
+      return "…";
+    default:
+      return "•";
   }
 }
 
@@ -1042,6 +1293,7 @@ function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
   const mergedPrs = [];
   const mergeIssues = [];
   const remediationAttempts = [];
+  const buildAttempts = [];
 
   for (const result of results) {
     if (!result) {
@@ -1057,6 +1309,9 @@ function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
       agentSuccesses.push(result.pr.number);
       if (result.ghChecks && !result.ghChecks.success) {
         ghFailures.push({ number: result.pr.number, output: { stdout: result.ghChecks.stdout, stderr: result.ghChecks.stderr, exitCode: result.ghChecks.exitCode } });
+      }
+      if (Array.isArray(result.buildFixTurns) && result.buildFixTurns.length > 0) {
+        buildAttempts.push({ number: result.pr.number, attempts: result.buildFixTurns.length });
       }
       if (Array.isArray(result.fixTurns) && result.fixTurns.length > 0) {
         mergeIssues.push({
@@ -1109,6 +1364,13 @@ function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
 
   if (mergedPrs.length) {
     console.log(`PRs merged automatically: ${mergedPrs.join(", ")}`);
+  }
+
+  if (buildAttempts.length) {
+    console.log("PRs requiring build remediation attempts:");
+    for (const entry of buildAttempts) {
+      console.log(`- PR ${entry.number}: ${entry.attempts} attempt(s)`);
+    }
   }
 
   if (remediationAttempts.length) {
