@@ -126,6 +126,8 @@ class CodexModel implements Model {
   private registeredTools: Set<string> = new Set();
   private toolExecutors: Map<string, ToolExecutor> = new Map();
   private tempImageFiles: Set<string> = new Set();
+  private streamedTurnItems: ThreadItem[] = [];
+  private lastStreamedMessage: string | null = null;
 
   constructor(codex: Codex, modelName: string | undefined, options: CodexProviderOptions) {
     this.codex = codex;
@@ -708,6 +710,30 @@ class CodexModel implements Model {
     return output;
   }
 
+  private convertItemsToStreamOutput(items: ThreadItem[]): AgentOutputItem[] {
+    const output: AgentOutputItem[] = [];
+
+    for (const item of items) {
+      if (item.type !== "agent_message") {
+        continue;
+      }
+
+      output.push({
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [
+          {
+            type: "output_text",
+            text: item.text,
+          },
+        ],
+      });
+    }
+
+    return output;
+  }
+
   /**
    * Convert Codex ThreadEvent to OpenAI Agents StreamEvent
    */
@@ -724,6 +750,8 @@ class CodexModel implements Model {
 
       case "turn.started":
         // No equivalent in StreamEvent - skip
+        this.streamedTurnItems = [];
+        this.lastStreamedMessage = null;
         break;
 
       case "item.started":
@@ -774,6 +802,8 @@ class CodexModel implements Model {
         break;
 
       case "item.completed":
+        this.streamedTurnItems.push(event.item);
+
         if (event.item.type === "agent_message") {
           // Emit final text done event
           events.push({
@@ -781,6 +811,7 @@ class CodexModel implements Model {
             text: event.item.text,
           });
           textAccumulator.delete("agent_message");
+          this.lastStreamedMessage = event.item.text;
         } else if (event.item.type === "reasoning") {
           events.push({
             type: "reasoning_done",
@@ -793,24 +824,29 @@ class CodexModel implements Model {
       case "turn.completed":
         // Emit response done with full response
         const usage = this.convertUsage(event.usage);
-        const streamUsage: Usage = { ...usage };
-
-        if (Array.isArray(usage.inputTokensDetails)) {
-          const [details] = usage.inputTokensDetails;
-          if (details) {
-            streamUsage.inputTokensDetails = [details];
-          } else {
-            delete streamUsage.inputTokensDetails;
-          }
-        }
+        const streamUsage = {
+          requests: usage.requests,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.totalTokens,
+          ...(usage.inputTokensDetails?.[0]
+            ? { inputTokensDetails: usage.inputTokensDetails[0] }
+            : {}),
+          ...(usage.outputTokensDetails?.[0]
+            ? { outputTokensDetails: usage.outputTokensDetails[0] }
+            : {}),
+        } satisfies Record<string, unknown>;
 
         const responseId = this.thread?.id ?? "codex-stream-response";
+        const outputItems = this.convertItemsToStreamOutput(this.streamedTurnItems);
+        this.streamedTurnItems = [];
+        this.lastStreamedMessage = null;
 
         events.push({
           type: "response_done",
           response: {
-            usage: streamUsage,
-            output: [], // Items were already emitted as deltas
+            usage: streamUsage as unknown as Usage,
+            output: outputItems,
             responseId,
           },
         });

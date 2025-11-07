@@ -41,10 +41,15 @@ type GuardrailConfig = {
   validate: (input: string) => Promise<GuardrailValidationResult> | GuardrailValidationResult;
 };
 
-const guardrail: (config: GuardrailConfig) => GuardrailConfig =
-  typeof (Agents as { guardrail?: (config: GuardrailConfig) => GuardrailConfig }).guardrail === 'function'
-    ? (Agents as { guardrail: (config: GuardrailConfig) => GuardrailConfig }).guardrail
-    : (config: GuardrailConfig) => config; // Fallback for SDK versions without guardrail helper
+function hasGuardrail(
+  module: typeof Agents
+): module is typeof Agents & { guardrail: (config: GuardrailConfig) => GuardrailConfig } {
+  return typeof (module as { guardrail?: unknown }).guardrail === 'function';
+}
+
+const guardrail: (config: GuardrailConfig) => GuardrailConfig = hasGuardrail(Agents)
+  ? Agents.guardrail
+  : (config) => config; // Fallback for SDK versions without guardrail helper
 
 async function main() {
   console.log('🛡️  Input Guardrails with CodexProvider\n');
