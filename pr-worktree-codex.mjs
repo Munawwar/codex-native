@@ -5,10 +5,57 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Codex } from "@codex-native/sdk";
+let Codex;
+try {
+  ({ Codex } = await import("@codex-native/sdk"));
+} catch (error) {
+  try {
+    ({ Codex } = await import(new URL("./sdk/native/dist/index.mjs", import.meta.url).toString()));
+    console.warn("Falling back to local sdk/native build for Codex import");
+  } catch (fallbackError) {
+    console.error("Failed to load Codex SDK", fallbackError);
+    throw error;
+  }
+}
 
 const DEFAULT_REMOTE = "origin";
-const DEFAULT_CONCURRENCY = Math.max(os.cpus().length - 1, 1);
+const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_MAX_FIX_ATTEMPTS = 3;
+
+const activeProcesses = new Set();
+
+function registerProcess(child) {
+  activeProcesses.add(child);
+  child.on("exit", () => activeProcesses.delete(child));
+  return child;
+}
+
+function cleanupAllProcesses() {
+  for (const child of activeProcesses) {
+    try {
+      child.kill("SIGTERM");
+    } catch (error) {
+      // Ignore errors during cleanup
+    }
+  }
+  activeProcesses.clear();
+}
+
+function escapeForAppleScriptPath(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+process.on("SIGINT", () => {
+  console.log("\nReceived SIGINT, cleaning up...");
+  cleanupAllProcesses();
+  process.exit(130);
+});
+
+process.on("SIGTERM", () => {
+  console.log("\nReceived SIGTERM, cleaning up...");
+  cleanupAllProcesses();
+  process.exit(143);
+});
 
 async function main() {
   const config = await buildConfig();
@@ -37,6 +84,7 @@ async function main() {
     const worktreeDir = `pr-${pr.number}-${safeSlug}`;
     const worktreePath = path.join(config.worktreeRoot, worktreeDir);
     const remoteRef = `refs/remotes/${config.remote}/pr-worktree/${pr.number}`;
+    const localBranch = `codex/pr-${pr.number}`;
     let createdWorktree = false;
 
     try {
@@ -75,11 +123,17 @@ async function main() {
           console.log(`[PR ${pr.number}] Refreshed existing worktree at ${worktreePath}`);
         }
 
-        await runCommand("git", ["checkout", "-B", pr.headRefName, remoteRef], { cwd: worktreePath });
+        await runCommand("git", ["checkout", "-B", localBranch, remoteRef], { cwd: worktreePath });
       });
     } catch (error) {
       console.error(`[PR ${pr.number}] Failed to prepare worktree:`, error);
       return { pr, worktreePath, error };
+    }
+
+    try {
+      await runCommand("git", ["fetch", config.remote, "main"], { cwd: worktreePath });
+    } catch (error) {
+      console.warn(`[PR ${pr.number}] Warning: failed to fetch ${config.remote}/main: ${error.stderr ?? error.stdout ?? error.message}`);
     }
 
     const needsInstall = createdWorktree || !(await pathExists(path.join(worktreePath, "node_modules")));
@@ -102,14 +156,17 @@ async function main() {
     }
 
     try {
-      const codex = new Codex();
+      const codex = new Codex({ skipGitRepoCheck: true });
       const basePrefix = formatPrefix(pr);
 
-      const mergeThread = codex.startThread({
+      const makeThreadOptions = () => ({
         workingDirectory: worktreePath,
-        sandboxMode: "workspace-write",
+        sandboxMode: "danger-full-access",
         fullAuto: true,
+        skipGitRepoCheck: true,
       });
+
+      const mergeThread = codex.startThread(makeThreadOptions());
 
       const mergePrefix = `${basePrefix} [merge]`;
       const mergePrompt = buildMergePrompt(pr, worktreePath);
@@ -120,22 +177,121 @@ async function main() {
       logWithPrefix(mergePrefix, "Merge summary:");
       logWithPrefix(mergePrefix, mergeTurn.finalResponse.trim());
 
-      const fixThread = codex.startThread({
-        workingDirectory: worktreePath,
-        sandboxMode: "workspace-write",
-        fullAuto: true,
-      });
+      const newExamples = await detectNewExamples(worktreePath, config.remote);
 
-      const fixPrefix = `${basePrefix} [checks]`;
-      const fixPrompt = buildFixPrompt(pr, worktreePath);
-      logWithPrefix(fixPrefix, "Starting Codex checks turn...");
+      let ghChecksResult = await runGhPrChecks(pr, worktreePath, basePrefix);
 
-      const fixTurn = await runCodexTurnWithLogging(fixThread, fixPrompt, fixPrefix);
+      const pushAllowed = isPushAllowed(pr, config);
+      const pushStatuses = pushAllowed
+        ? []
+        : [{ success: false, skipped: true, reason: "push-not-allowed", source: "pre" }];
+      const fixTurns = [];
+      let mergePrTurn = null;
+      let prMerged = false;
+      let mergeVerification = null;
 
-      logWithPrefix(fixPrefix, "Checks summary:");
-      logWithPrefix(fixPrefix, fixTurn.finalResponse.trim());
+      if (pushAllowed) {
+        try {
+          await ensurePushed(pr, worktreePath, config.remote, localBranch);
+          pushStatuses.push({ success: true, skipped: false, reason: "post-merge", source: "merge" });
+          logWithPrefix(basePrefix, "Post-merge push completed successfully.");
+        } catch (pushError) {
+          pushStatuses.push({ success: false, skipped: false, reason: "post-merge-failed", source: "merge", error: pushError });
+          logWithPrefix(basePrefix, `Post-merge push failed: ${pushError.stderr ?? pushError.stdout ?? pushError.message}`);
+          throw pushError;
+        }
+      } else {
+        logWithPrefix(basePrefix, "Push permissions unavailable; skipping automated push before checks.");
+      }
 
-      return { pr, worktreePath, mergeTurn, fixTurn };
+      let attempts = 0;
+      while (!ghChecksResult.success && attempts < config.maxFixAttempts) {
+        attempts += 1;
+
+        const fixThread = codex.startThread(makeThreadOptions());
+
+        const fixPrefix = `${basePrefix} [checks#${attempts}]`;
+        const fixPrompt = buildFixPrompt(pr, worktreePath, newExamples, ghChecksResult, attempts);
+        logWithPrefix(fixPrefix, "Starting Codex remediation turn...");
+
+        const fixTurn = await runCodexTurnWithLogging(fixThread, fixPrompt, fixPrefix);
+        fixTurns.push(fixTurn);
+
+        logWithPrefix(fixPrefix, "Remediation summary:");
+        logWithPrefix(fixPrefix, fixTurn.finalResponse.trim());
+
+        if (pushAllowed) {
+          try {
+            await ensurePushed(pr, worktreePath, config.remote, localBranch);
+            pushStatuses.push({ success: true, skipped: false, reason: `post-fix-${attempts}`, source: "fix" });
+            logWithPrefix(fixPrefix, "Post-fix push completed successfully.");
+          } catch (pushError) {
+            pushStatuses.push({ success: false, skipped: false, reason: `post-fix-${attempts}-failed`, source: "fix", error: pushError });
+            logWithPrefix(fixPrefix, `Post-fix push failed: ${pushError.stderr ?? pushError.stdout ?? pushError.message}`);
+            throw pushError;
+          }
+        } else {
+          logWithPrefix(fixPrefix, "Push permissions unavailable; unable to push remediation changes.");
+        }
+
+        ghChecksResult = await runGhPrChecks(pr, worktreePath, basePrefix);
+      }
+
+      if (!ghChecksResult.success) {
+        logWithPrefix(basePrefix, `gh pr checks --watch is still failing after ${attempts} remediation attempt(s).`);
+      } else if (!pushAllowed) {
+        logWithPrefix(basePrefix, "gh pr checks --watch completed successfully, but push permissions are unavailable; skipping automated PR merge.");
+      } else {
+        logWithPrefix(basePrefix, "gh pr checks --watch completed successfully; preparing to merge the PR.");
+
+        const mergePrThread = codex.startThread(makeThreadOptions());
+
+        const mergePrPrefix = `${basePrefix} [pr-merge]`;
+        const mergePrPrompt = buildPrMergePrompt(pr, worktreePath);
+        logWithPrefix(mergePrPrefix, "Starting Codex PR merge turn...");
+
+        mergePrTurn = await runCodexTurnWithLogging(mergePrThread, mergePrPrompt, mergePrPrefix);
+
+        logWithPrefix(mergePrPrefix, "PR merge summary:");
+        logWithPrefix(mergePrPrefix, mergePrTurn.finalResponse.trim());
+
+        try {
+          const { stdout } = await runCommand("gh", [
+            "pr",
+            "view",
+            String(pr.number),
+            "--json",
+            "state",
+            "--jq",
+            ".state",
+          ], { cwd: worktreePath });
+          const state = stdout.trim();
+          mergeVerification = { state };
+          if (state && state.toUpperCase() === "MERGED") {
+            prMerged = true;
+            logWithPrefix(mergePrPrefix, "Verified: PR is merged.");
+          } else {
+            logWithPrefix(mergePrPrefix, `Post-merge PR state: ${state || "unknown"}`);
+          }
+        } catch (verifyError) {
+          mergeVerification = { error: verifyError };
+          logWithPrefix(mergePrPrefix, `Failed to verify PR merge state: ${verifyError.stderr ?? verifyError.stdout ?? verifyError.message}`);
+        }
+      }
+
+      return {
+        pr,
+        worktreePath,
+        localBranch,
+        mergeTurn,
+        fixTurns,
+        pushAllowed,
+        pushStatuses,
+        ghChecks: ghChecksResult,
+        mergePrTurn,
+        prMerged,
+        mergeVerification,
+      };
     } catch (error) {
       console.error(`[PR ${pr.number}] Codex automation failed:`, error);
       return { pr, worktreePath, error };
@@ -148,11 +304,27 @@ async function main() {
       continue;
     }
 
+    if (Array.isArray(result.pushStatuses) && result.pushStatuses.length > 0) {
+      for (const status of result.pushStatuses) {
+        if (status.reason === "push-not-allowed") {
+          console.log(`[PR ${result.pr.number}] Push skipped (head repository owner differs from ${config.repoOwner ?? "origin owner"}).`);
+        }
+        pushOutcomes.push({ pr: result.pr, ...status });
+      }
+      continue;
+    }
+
+    if (!result.pushAllowed) {
+      console.log(`[PR ${result.pr.number}] Push skipped (head repository owner differs from ${config.repoOwner ?? "origin owner"}).`);
+      pushOutcomes.push({ pr: result.pr, success: false, skipped: true, reason: "push-not-allowed" });
+      continue;
+    }
+
     try {
-      await ensurePushed(result.pr, result.worktreePath, config.remote);
-      pushOutcomes.push({ pr: result.pr, success: true });
+      await ensurePushed(result.pr, result.worktreePath, config.remote, result.localBranch);
+      pushOutcomes.push({ pr: result.pr, success: true, skipped: false, reason: "post-run", source: "post" });
     } catch (error) {
-      pushOutcomes.push({ pr: result.pr, success: false, error });
+      pushOutcomes.push({ pr: result.pr, success: false, skipped: false, reason: "post-run-failed", source: "post", error });
       console.error(`[PR ${result.pr.number}] Post-run push failed:`, error);
     }
   }
@@ -160,7 +332,18 @@ async function main() {
   const cleanupOutcomes = [];
   for (const worktreePath of createdWorktrees) {
     try {
-      await runCommand("git", ["worktree", "remove", "--force", worktreePath], { cwd: config.repoRoot });
+      if (process.platform === "darwin") {
+        const escapedPath = escapeForAppleScriptPath(worktreePath);
+        await runCommand("osascript", [
+          "-e",
+          `tell application "Finder" to delete POSIX file "${escapedPath}"`,
+        ]);
+      } else {
+        const trashPath = path.join(os.tmpdir(), `codex-worktree-trash-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        await fs.rename(worktreePath, trashPath);
+        fs.rm(trashPath, { recursive: true, force: true }).catch(() => {});
+      }
+      await runCommand("git", ["worktree", "prune"], { cwd: config.repoRoot });
       cleanupOutcomes.push({ path: worktreePath, success: true });
     } catch (error) {
       cleanupOutcomes.push({ path: worktreePath, success: false, error });
@@ -234,7 +417,17 @@ async function buildConfig() {
     }
   }
 
-  return { repoRoot, worktreeRoot, concurrency, remote, dryRun };
+  const repoSlug = await resolveRepoSlug(repoRoot, remote);
+  const repoOwner = repoSlug ? repoSlug.split("/")[0] : null;
+
+  const maxFixAttemptsEnv = process.env.CODEX_PR_WORKTREE_MAX_FIX_ATTEMPTS;
+  const maxFixAttempts = maxFixAttemptsEnv ? Number(maxFixAttemptsEnv) : DEFAULT_MAX_FIX_ATTEMPTS;
+
+  const resolvedMaxFixAttempts = Number.isFinite(maxFixAttempts) && maxFixAttempts > 0
+    ? Math.floor(maxFixAttempts)
+    : DEFAULT_MAX_FIX_ATTEMPTS;
+
+  return { repoRoot, worktreeRoot, concurrency, remote, dryRun, repoSlug, repoOwner, maxFixAttempts: resolvedMaxFixAttempts };
 }
 
 function printUsage() {
@@ -286,8 +479,8 @@ async function listOpenPullRequests(config) {
     number: entry.number,
     title: entry.title,
     headRefName: entry.headRefName,
-    headRepository: entry.headRepository ?? null,
-    headRepositoryOwner: entry.headRepositoryOwner ?? null,
+    headRepositoryOwnerLogin: entry.headRepositoryOwner?.login ?? null,
+    headRepositoryName: entry.headRepository?.name ?? null,
     url: entry.url,
   }));
 }
@@ -357,28 +550,71 @@ function buildMergePrompt(pr, worktreePath) {
     "Steps:",
     "1. Run 'git status' to confirm the working tree is clean (resolve or stash anything unexpected).",
     "2. Fetch the latest main branch with 'git fetch origin main'.",
-    "3. Merge main into this branch with 'git merge origin/main', resolving any conflicts. Prefer keeping the branch's intent while incorporating upstream fixes.",
-    "4. After resolving conflicts, run appropriate builds/tests if necessary to ensure the merge succeeded.",
+    "3. Merge main into this branch with 'git merge origin/main'. If conflicts arise, resolve them yourself: open the conflicting files, remove conflict markers, preserve both sides as appropriate, re-run 'git status' to verify all conflicts are cleared, and use 'git add' plus 'git merge --continue' to complete the merge.",
+    "4. After resolving conflicts, run appropriate builds/tests if necessary to ensure the merged result is healthy.",
     "5. Commit the merge (or conflict resolutions) with a clear message if new commits are created.",
-    "6. Provide a brief summary of the merge result, noting any conflicts handled.",
-    "Do not push yet; that will happen after checks pass.",
+    "6. Review 'git status' for any staged or unstaged files (even if they pre-existed the merge work); commit everything that should live on the branch so the tree is clean.",
+    "7. Push the branch back to its remote (git push) so that CI sees the latest work.",
+    "8. Provide a brief summary of the merge result, calling out any conflicts you resolved and tests you ran.",
   ].join("\n");
 }
 
-function buildFixPrompt(pr, worktreePath) {
-  return [
+function buildFixPrompt(pr, worktreePath, examplePaths = [], ghChecksResult = null, attemptNumber = 1) {
+  const instructions = [
     `You are an automated Codex maintainer responsible for validating pull request #${pr.number}.`,
     `The worktree directory is ${worktreePath}.`,
     `Tasks:`,
+    `Remediation attempt #${attemptNumber}: address any failing CI checks thoroughly.`,
     "1. Run 'gh pr checks --watch " + pr.number + "' from the repository root to monitor CI failures until they are resolved.",
     "2. Investigate failing checks, apply fixes, and commit the necessary changes with clear messages.",
     "3. Push your commits back to the PR branch (" + pr.headRefName + ") once checks succeed.",
     "4. Provide a final summary including CI status, tests executed, and any remaining manual actions.",
     "Use shell commands responsibly and ensure no failing checks remain before finishing.",
+    "If any 'package-lock.json' files (or other lockfiles from npm/yarn) are present, delete them so that pnpm stays the sole package manager.",
+  ];
+
+  if (examplePaths.length > 0) {
+    instructions.push("Detected new example files:");
+    for (const example of examplePaths) {
+      instructions.push(`- ${example}`);
+    }
+    instructions.push("Before running any examples, build the native SDK by executing 'pnpm run sdk:build'. If the build fails, fix the issues and rerun until it succeeds.");
+    instructions.push("For each new example, run it (e.g. 'pnpm exec tsx <path>' or the appropriate command) and fix any issues until it succeeds; do not mock or fake success.");
+    instructions.push("Ensure the example works without requiring users to set custom API keys or secrets; rely on the built-in Codex authentication that is already logged in.");
+  }
+
+  if (ghChecksResult && !ghChecksResult.success) {
+    instructions.push("Previous automated run of 'gh pr checks --watch " + pr.number + "' failed with the following output:");
+    if (ghChecksResult.stdout) {
+      instructions.push("--- stdout ---");
+      instructions.push(ghChecksResult.stdout.trim());
+    }
+    if (ghChecksResult.stderr) {
+      instructions.push("--- stderr ---");
+      instructions.push(ghChecksResult.stderr.trim());
+    }
+    instructions.push("Investigate these failures, apply the necessary fixes, rerun the checks, and confirm they pass.");
+  }
+
+  return instructions.join("\n");
+}
+
+function buildPrMergePrompt(pr, worktreePath) {
+  return [
+    `You are an automated Codex maintainer finalizing pull request #${pr.number}.`,
+    `The worktree directory is ${worktreePath}.`,
+    "All required checks have passed. Merge this pull request into the main branch using the GitHub CLI.",
+    "Steps:",
+    "1. Run 'git status -sb' to ensure there are no uncommitted changes left over from earlier automation.",
+    "2. Confirm the pull request is still open with 'gh pr view " + pr.number + " --json state --jq .state'. If it is already merged or closed, stop and report.",
+    "3. Merge the pull request using 'gh pr merge " + pr.number + " --merge --delete-branch --confirm'.",
+    "4. If the merge command fails, investigate, resolve the issue (for example by syncing main again), and retry until the merge succeeds or you can explain why it cannot be merged.",
+    "5. After merging, verify the PR state is MERGED and report the merge commit URL or number.",
+    "Provide a concise summary of the merge outcome and any follow-up actions.",
   ].join("\n");
 }
 
-async function ensurePushed(pr, worktreePath, remote) {
+async function ensurePushed(pr, worktreePath, remote, localBranch) {
   await runCommand("git", ["add", "-A"], { cwd: worktreePath });
 
   try {
@@ -389,14 +625,11 @@ async function ensurePushed(pr, worktreePath, remote) {
     }
   }
 
+  const pushTarget = `${localBranch ?? pr.headRefName}:${pr.headRefName}`;
+
   try {
-    await runCommand("git", ["push", "--set-upstream", remote, pr.headRefName], { cwd: worktreePath });
+    await runCommand("git", ["push", remote, pushTarget], { cwd: worktreePath });
   } catch (error) {
-    const message = `${error.stderr ?? ""}${error.stdout ?? ""}`;
-    if (/set-upstream/.test(message) || /already exists/.test(message) || /set upstream/.test(message)) {
-      await runCommand("git", ["push", remote, pr.headRefName], { cwd: worktreePath });
-      return;
-    }
     throw error;
   }
 }
@@ -416,6 +649,41 @@ function formatPrefix(pr) {
 function logWithPrefix(prefix, message) {
   for (const line of message.split("\n")) {
     console.log(`${prefix} ${line}`);
+  }
+}
+
+function logStream(prefix, data) {
+  const text = data.toString();
+  for (const line of text.split(/\r?\n/)) {
+    if (line.length > 0) {
+      console.log(`${prefix} ${line}`);
+    }
+  }
+}
+
+function isPushAllowed(pr, config) {
+  if (!config.repoOwner) {
+    return true;
+  }
+  if (!pr.headRepositoryOwnerLogin) {
+    return true;
+  }
+  return pr.headRepositoryOwnerLogin.toLowerCase() === config.repoOwner.toLowerCase();
+}
+
+async function detectNewExamples(worktreePath, remote) {
+  try {
+    const { stdout } = await runCommand("git", ["diff", "--name-status", `${remote}/main...HEAD`], { cwd: worktreePath });
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split(/\s+/))
+      .filter(([status, file]) => status === "A" && file?.startsWith("sdk/native/examples/"))
+      .map(([, file]) => file);
+  } catch (error) {
+    console.warn(`Failed to detect new examples: ${error.stderr ?? error.stdout ?? error.message}`);
+    return [];
   }
 }
 
@@ -538,7 +806,7 @@ function truncate(text, maxLength) {
 
 async function runCommand(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, {
+    const child = execFile(command, args, {
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
       ...options,
@@ -551,6 +819,36 @@ async function runCommand(command, args = [], options = {}) {
       }
       resolve({ stdout, stderr });
     });
+    registerProcess(child);
+  });
+}
+
+async function runCommandWithOutput(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(command, args, {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      ...options,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        error.exitCode = typeof error.code === "number" ? error.code : null;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr, exitCode: 0 });
+    });
+
+    registerProcess(child);
+
+    if (options.onStdout && child.stdout) {
+      child.stdout.on("data", options.onStdout);
+    }
+
+    if (options.onStderr && child.stderr) {
+      child.stderr.on("data", options.onStderr);
+    }
   });
 }
 
@@ -563,10 +861,92 @@ async function pathExists(target) {
   }
 }
 
+async function runGhPrChecks(pr, worktreePath, basePrefix) {
+  const prefix = `${basePrefix} [gh-checks]`;
+  logWithPrefix(prefix, "Running gh pr checks --watch ...");
+
+  try {
+      const result = await runCommandWithOutput("gh", [
+        "pr",
+        "checks",
+        "--watch",
+        "--interval",
+        "90",
+        String(pr.number),
+      ], {
+      cwd: worktreePath,
+      onStdout: (data) => logStream(prefix, data),
+      onStderr: (data) => logStream(prefix, data),
+    });
+
+    logWithPrefix(prefix, "gh pr checks --watch exited successfully.");
+    return { success: true, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+  } catch (error) {
+    const stdout = error.stdout ?? "";
+    const stderr = error.stderr ?? "";
+    const exitCode = typeof error.exitCode === "number" ? error.exitCode : error.code ?? null;
+    logWithPrefix(prefix, `gh pr checks --watch failed (exit ${exitCode ?? "unknown"}).`);
+    if (stdout) {
+      logWithPrefix(prefix, `stdout:\n${stdout.trimEnd()}`);
+    }
+    if (stderr) {
+      logWithPrefix(prefix, `stderr:\n${stderr.trimEnd()}`);
+    }
+    return { success: false, stdout, stderr, exitCode };
+  }
+}
+
+async function resolveRepoSlug(repoRoot, remote) {
+  try {
+    const { stdout } = await runCommand("git", ["remote", "get-url", remote], { cwd: repoRoot });
+    const url = stdout.trim();
+    const slug = parseRepoSlug(url);
+    if (slug) {
+      return slug;
+    }
+  } catch (error) {
+    console.warn(`Warning: failed to resolve remote URL for ${remote}: ${error.stderr ?? error.stdout ?? error.message}`);
+  }
+
+  try {
+    const { stdout } = await runCommand("gh", ["repo", "view", "--json", "nameWithOwner"], { cwd: repoRoot });
+    const parsed = JSON.parse(stdout);
+    if (parsed?.nameWithOwner) {
+      return parsed.nameWithOwner;
+    }
+  } catch (error) {
+    console.warn(`Warning: failed to query repo slug via gh: ${error.stderr ?? error.stdout ?? error.message}`);
+  }
+
+  return null;
+}
+
+function parseRepoSlug(url) {
+  if (!url) {
+    return null;
+  }
+
+  const sshMatch = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  return null;
+}
+
 function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
   const agentSuccesses = [];
   const agentFailures = [];
   const dryRuns = [];
+  const ghFailures = [];
+  const mergedPrs = [];
+  const mergeIssues = [];
+  const remediationAttempts = [];
 
   for (const result of results) {
     if (!result) {
@@ -580,6 +960,31 @@ function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
       agentFailures.push({ number: result.pr.number, message });
     } else {
       agentSuccesses.push(result.pr.number);
+      if (result.ghChecks && !result.ghChecks.success) {
+        ghFailures.push({ number: result.pr.number, output: { stdout: result.ghChecks.stdout, stderr: result.ghChecks.stderr, exitCode: result.ghChecks.exitCode } });
+      }
+      if (Array.isArray(result.fixTurns) && result.fixTurns.length > 0) {
+        mergeIssues.push({
+          number: result.pr.number,
+          message: `Remediation attempts: ${result.fixTurns.length}`,
+        });
+      }
+      if (Array.isArray(result.fixTurns) && result.fixTurns.length > 0) {
+        remediationAttempts.push({ number: result.pr.number, attempts: result.fixTurns.length });
+      }
+
+      if (result.mergePrTurn) {
+        if (result.prMerged) {
+          mergedPrs.push(result.pr.number);
+        } else {
+          const mergeMessage = result.mergeVerification?.error
+            ? (result.mergeVerification.error instanceof Error
+                ? result.mergeVerification.error.message
+                : String(result.mergeVerification.error))
+            : `state=${result.mergeVerification?.state ?? "unknown"}`;
+          mergeIssues.push({ number: result.pr.number, message: mergeMessage });
+        }
+      }
     }
   }
 
@@ -600,12 +1005,46 @@ function summarizeResults(results, pushOutcomes, cleanupOutcomes) {
     }
   }
 
-  const pushFailures = pushOutcomes.filter((outcome) => !outcome.success);
+  if (ghFailures.length) {
+    console.log("gh pr checks failures (before Codex remediation):");
+    for (const failure of ghFailures) {
+      console.log(`- PR ${failure.number}: exit ${failure.output.exitCode ?? "unknown"}`);
+    }
+  }
+
+  if (mergedPrs.length) {
+    console.log(`PRs merged automatically: ${mergedPrs.join(", ")}`);
+  }
+
+  if (remediationAttempts.length) {
+    console.log("PRs requiring remediation attempts:");
+    for (const entry of remediationAttempts) {
+      console.log(`- PR ${entry.number}: ${entry.attempts} attempt(s)`);
+    }
+  }
+
+  if (mergeIssues.length) {
+    console.log("PR merge verification issues:");
+    for (const issue of mergeIssues) {
+      console.log(`- PR ${issue.number}: ${issue.message}`);
+    }
+  }
+
+  const pushFailures = pushOutcomes.filter((outcome) => !outcome.success && !outcome.skipped);
+  const pushSkipped = pushOutcomes.filter((outcome) => outcome.skipped);
   if (pushFailures.length) {
     console.log("Push failures:");
     for (const failure of pushFailures) {
       const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
       console.log(`- PR ${failure.pr.number}: ${message}`);
+    }
+  }
+
+  if (pushSkipped.length) {
+    console.log("Push skipped:");
+    for (const skipped of pushSkipped) {
+      const reasonText = skipped.reason ? ` (${skipped.reason})` : "";
+      console.log(`- PR ${skipped.pr.number}${reasonText}`);
     }
   }
 
