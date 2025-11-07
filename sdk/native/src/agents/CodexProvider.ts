@@ -572,52 +572,58 @@ class CodexModel implements Model {
     } else {
       // Convert AgentInputItem[] to UserInput[]
       for (const item of request.input) {
-        switch (item.type) {
-          case "input_text":
-            parts.push({ type: "text", text: item.text });
-            break;
-          case "reasoning_text":
-            parts.push({ type: "text", text: `[Reasoning: ${item.text}]` });
-            break;
-          case "input_image": {
-            const imagePath = await this.handleImageInput(item as any);
-            if (imagePath) {
-              parts.push({ type: "local_image", path: imagePath });
+        // Handle different item types
+        if (item.type === "function_call_result") {
+          // Tool results - for now, convert to text describing the result
+          const result = item as any;
+          parts.push({
+            type: "text",
+            text: `[Tool ${result.name} returned: ${result.result}]`
+          });
+        } else if (item.type === "reasoning") {
+          // Reasoning content
+          const reasoning = item as any;
+          parts.push({
+            type: "text",
+            text: `[Reasoning: ${reasoning.content || reasoning.reasoning}]`
+          });
+        } else if ((item.type === "message" || item.type === undefined) && 'role' in item) {
+          // Message item - extract content
+          const messageItem = item as any;
+          const content = messageItem.content;
+
+          if (typeof content === "string") {
+            parts.push({ type: "text", text: content });
+          } else if (Array.isArray(content)) {
+            // Process content array
+            for (const contentItem of content) {
+              if (contentItem.type === "input_text") {
+                parts.push({ type: "text", text: contentItem.text });
+              } else if (contentItem.type === "input_image") {
+                const imagePath = await this.handleImageInput(contentItem);
+                if (imagePath) {
+                  parts.push({ type: "local_image", path: imagePath });
+                }
+              } else if (contentItem.type === "input_file") {
+                throw new Error(
+                  `CodexProvider does not yet support input_file type. ` +
+                  `File handling needs to be implemented based on file type and format.`
+                );
+              } else if (contentItem.type === "audio") {
+                throw new Error(
+                  `CodexProvider does not yet support audio type. ` +
+                  `Audio handling needs to be implemented.`
+                );
+              } else if (contentItem.type === "refusal") {
+                parts.push({
+                  type: "text",
+                  text: `[Refusal: ${contentItem.refusal}]`
+                });
+              } else if (contentItem.type === "output_text") {
+                parts.push({ type: "text", text: contentItem.text });
+              }
             }
-            break;
           }
-          case "input_file":
-            throw new Error(
-              `CodexProvider does not yet support input_file type. ` +
-              `File handling needs to be implemented based on file type and format.`
-            );
-          case "input_audio":
-            throw new Error(
-              `CodexProvider does not yet support input_audio type. ` +
-              `Audio handling needs to be implemented.`
-            );
-          case "function_call_result": {
-            const result = item as any;
-            parts.push({
-              type: "text",
-              text: `[Tool ${result.name} returned: ${result.result}]`
-            });
-            break;
-          }
-          case "input_refusal": {
-            const refusal = item as any;
-            parts.push({
-              type: "text",
-              text: `[Refusal: ${refusal.refusal}]`
-            });
-            break;
-          }
-          default:
-            // Fallback: if the item includes direct text content, include it
-            if ((item as any)?.text) {
-              parts.push({ type: "text", text: (item as any).text });
-            }
-            break;
         }
       }
     }
@@ -810,9 +816,13 @@ class CodexModel implements Model {
             const delta = currentText.slice(previousText.length);
             textAccumulator.set(itemKey, currentText);
 
+            // Use "model" type for custom reasoning events
             events.push({
-              type: "reasoning_delta",
-              delta,
+              type: "model",
+              event: {
+                type: "reasoning_delta",
+                delta,
+              },
             } as StreamEvent);
           }
         }
@@ -822,16 +832,23 @@ class CodexModel implements Model {
         this.streamedTurnItems.push(event.item);
 
         if (event.item.type === "agent_message") {
+          // Use "model" type for custom output_text_done events
           events.push({
-            type: "output_text_done",
-            text: event.item.text,
+            type: "model",
+            event: {
+              type: "output_text_done",
+              text: event.item.text,
+            },
           } as StreamEvent);
           textAccumulator.delete("agent_message");
           this.lastStreamedMessage = event.item.text;
         } else if (event.item.type === "reasoning") {
           events.push({
-            type: "reasoning_done",
-            reasoning: event.item.text,
+            type: "model",
+            event: {
+              type: "reasoning_done",
+              reasoning: event.item.text,
+            },
           } as StreamEvent);
           textAccumulator.delete("reasoning");
         }
@@ -858,18 +875,24 @@ class CodexModel implements Model {
 
       case "turn.failed":
         events.push({
-          type: "error",
-          error: {
-            message: event.error.message,
+          type: "model",
+          event: {
+            type: "error",
+            error: {
+              message: event.error.message,
+            },
           },
         } as StreamEvent);
         break;
 
       case "error":
         events.push({
-          type: "error",
-          error: {
-            message: event.message,
+          type: "model",
+          event: {
+            type: "error",
+            error: {
+              message: event.message,
+            },
           },
         } as StreamEvent);
         break;
