@@ -21,9 +21,11 @@
     "ci:shear": "cd codex-rs && cargo shear",
     "ci:clippy": "cd codex-rs && cargo clippy --all-features --tests --profile dev -- -D warnings",
     "ci:build": "cd codex-rs && cargo build",
-    "ci:test": "cd codex-rs && cargo test",
+    "ci:test": "cd codex-rs && cargo nextest run --no-fail-fast || cargo test",
+    "ci:test:fallback": "cd codex-rs && cargo test --lib --bins --tests",
     "ci:checks": "concurrently -n format,spell,mcp,shear \"pnpm run ci:format\" \"pnpm run ci:codespell\" \"pnpm run ci:mcp-types\" \"pnpm run ci:shear\"",
-    "ci": "pnpm run ci:checks && pnpm run ci:clippy && pnpm run ci:test"
+    "ci:verify": "concurrently -n clippy,test \"pnpm run ci:clippy\" \"pnpm run ci:test\"",
+    "ci": "pnpm run ci:checks && pnpm run ci:verify"
   },
   "devDependencies": {
     "@codex-native/sdk": "workspace:*",
