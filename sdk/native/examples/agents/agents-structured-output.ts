@@ -12,16 +12,16 @@ import { Agent, Runner } from '@openai/agents';
 import { CodexProvider } from '../../src/index';
 
 const releaseNoteSchema = {
-  type: 'object',
+  type: 'object' as const,
   properties: {
-    summary: { type: 'string', description: 'Single sentence summary of the release' },
+    summary: { type: 'string' as const, description: 'Single sentence summary of the release' },
     keyChanges: {
-      type: 'array',
+      type: 'array' as const,
       items: {
-        type: 'object',
+        type: 'object' as const,
         properties: {
-          title: { type: 'string' },
-          description: { type: 'string' },
+          title: { type: 'string' as const },
+          description: { type: 'string' as const },
         },
         required: ['title', 'description'],
         additionalProperties: false,
@@ -30,19 +30,19 @@ const releaseNoteSchema = {
       description: 'List of notable updates',
     },
     riskLevel: {
-      type: 'string',
+      type: 'string' as const,
       enum: ['low', 'medium', 'high'],
       description: 'Overall risk assessment',
     },
     followUpActions: {
-      type: 'array',
-      items: { type: 'string' },
+      type: 'array' as const,
+      items: { type: 'string' as const },
       description: 'Concrete next steps for the team',
     },
   },
   required: ['summary', 'keyChanges', 'riskLevel', 'followUpActions'],
   additionalProperties: false,
-} as const;
+};
 
 async function main() {
   console.log('🧾 Structured output with CodexProvider and OpenAI Agents\n');
@@ -59,7 +59,7 @@ async function main() {
     instructions: `You are a release notes assistant.
  Return answers that satisfy the provided JSON schema.
  Keep sentences short and actionable.`,
-    outputType: { type: 'json_schema', schema: releaseNoteSchema },
+    outputType: { type: 'json_schema', name: 'ReleaseNotes', strict: true, schema: releaseNoteSchema },
   });
 
   const runner = new Runner({ modelProvider: provider });

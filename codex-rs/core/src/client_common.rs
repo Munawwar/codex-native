@@ -365,11 +365,31 @@ pub(crate) fn create_text_param_for_request(
         return None;
     }
 
+    // Determine strictness based on the top-level schema. If the schema explicitly allows
+    // additional properties (boolean true or a nested schema), relax strict mode so callers
+    // can opt into permissive outputs. Otherwise, default to strict mode for better guarantees.
+    let strict = output_schema
+        .as_ref()
+        .map(|schema| {
+            match schema {
+                Value::Object(map) => match map.get("additionalProperties") {
+                    // additionalProperties: true (or an object schema) => non-strict
+                    Some(Value::Bool(true)) => false,
+                    Some(v) if !v.is_boolean() => false,
+                    // additionalProperties: false, or absent => strict
+                    _ => true,
+                },
+                // Non-object roots (e.g., arrays, strings) default to strict
+                _ => true,
+            }
+        })
+        .unwrap_or(true);
+
     Some(TextControls {
         verbosity: verbosity.map(std::convert::Into::into),
         format: output_schema.as_ref().map(|schema| TextFormat {
             r#type: TextFormatType::JsonSchema,
-            strict: true,
+            strict,
             schema: schema.clone(),
             name: "codex_output_schema".to_string(),
         }),

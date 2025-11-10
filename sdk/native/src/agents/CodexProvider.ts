@@ -1024,24 +1024,35 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function normalizeAgentsOutputType(outputType: unknown): unknown | undefined {
   if (!isObject(outputType)) return undefined;
   const outType = outputType as Record<string, unknown>;
-  // Wrapper form
+  // Wrapper form with explicit discriminator
   const t = typeof outType.type === "string" ? (outType.type as string) : undefined;
   if (t === "json_schema" || t === "json-schema") {
-    const js = outType.json_schema;
-    if (isObject(js)) {
-      const schema = (js as Record<string, unknown>).schema;
-      if (isObject(schema)) return outputType;
+    // Support both { type: 'json_schema', schema: {...} } and
+    // { type: 'json_schema', json_schema: { schema: {...} } }
+    const topLevelSchema = outType.schema;
+    if (isObject(topLevelSchema)) {
+      return topLevelSchema;
+    }
+    const nested = outType.json_schema;
+    if (isObject(nested)) {
+      const nestedSchema = (nested as Record<string, unknown>).schema;
+      if (isObject(nestedSchema)) {
+        return nestedSchema;
+      }
     }
     return undefined;
   }
-  // Plain JSON schema (must look like a schema)
-  if ("type" in outType || "properties" in outType || "required" in outType) {
-    return outputType;
-  }
   // Lenient wrapper { schema: {...} }
-  if ("schema" in outType) {
-    const schema = outType.schema;
-    if (isObject(schema)) return outputType;
+  if ("schema" in outType && isObject(outType.schema)) {
+    return outType.schema as Record<string, unknown>;
+  }
+  // Plain JSON schema (must look like a schema)
+  if (
+    ("type" in outType && outType.type === "object") ||
+    "properties" in outType ||
+    "required" in outType
+  ) {
+    return outType;
   }
   return undefined;
 }

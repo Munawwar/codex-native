@@ -32,16 +32,15 @@
  * ```
  */
 
-import type { AgentInputItem } from '@openai/agents';
-import {
-  Agent,
-  Runner,
-  InputGuardrailTripwireTriggered,
-  OutputGuardrailTripwireTriggered,
-  type InputGuardrail,
-  type OutputGuardrail,
-} from '@openai/agents';
+import * as Agents from '@openai/agents';
 import { CodexProvider } from '../../src/index';
+type AgentInputItem = Agents.AgentInputItem;
+const Agent = Agents.Agent;
+const Runner = Agents.Runner;
+const InputGuardrailTripwireTriggered = Agents.InputGuardrailTripwireTriggered;
+const OutputGuardrailTripwireTriggered = Agents.OutputGuardrailTripwireTriggered;
+type InputGuardrail = Agents.InputGuardrail;
+type OutputGuardrail = Agents.OutputGuardrail;
 
 type GuardrailInfo = Record<string, unknown> | undefined;
 
@@ -116,7 +115,7 @@ const shortSummaryOutputGuardrail: OutputGuardrail = {
   },
 };
 
-async function runSafePrompt(runner: Runner, agent: Agent) {
+async function runSafePrompt(runner: any, agent: any) {
   const safePrompt = 'Summarize the benefits of writing unit tests in one sentence.';
   console.log(`Safe prompt: ${safePrompt}\n`);
 
@@ -126,7 +125,7 @@ async function runSafePrompt(runner: Runner, agent: Agent) {
   console.log(result.finalOutput);
 }
 
-async function runGuardrailViolation(runner: Runner, agent: Agent) {
+async function runGuardrailViolation(runner: any, agent: any) {
   const riskyPrompt = 'My password is hunter2. Please rewrite it more securely.';
 
   console.log('\nRisky prompt (should trigger input guardrail) ...');
@@ -204,8 +203,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { z } from 'zod';
-import { Agent, run } from '@openai/agents';
-import { CodexProvider } from '../../src/index';
 
 type GuardrailInput = string | unknown[];
 
@@ -241,9 +238,7 @@ function guardrailFailure(reason: string) {
     outputInfo: { reason },
   };
 }
-import * as Agents from '@openai/agents';
 import { setDefaultModelProvider } from '@openai/agents-core';
-import { CodexProvider } from '../../src/index';
 
 const AgentNS = Agents.Agent;
 const runAgent = Agents.run;
@@ -260,7 +255,7 @@ function hasGuardrail(
   return typeof (module as { guardrail?: unknown }).guardrail === 'function';
 }
 
-const guardrail: (config: GuardrailConfig) => GuardrailConfig = hasGuardrail(Agents)
+  const guardrail: (config: GuardrailConfig) => GuardrailConfig = hasGuardrail(Agents)
   ? Agents.guardrail
   : (config) => config; // Fallback for SDK versions without guardrail helper
 

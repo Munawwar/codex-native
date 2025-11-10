@@ -161,12 +161,12 @@ Write clear, concise documentation for developers.`,
       console.log('\n[1/4] 📊 Analyzing code quality...');
       const analysisResult = await run(
         this.analyzerAgent,
-        `Analyze this code file and return a strict JSON object with fields: file, overallQuality (0-10), issues (array of {line, severity, category, issue, suggestion}), refactoringNeeded (boolean), summary.\n\nFilename: ${filename}\n\n${code}`
+        `Analyze this code file and return a strict JSON object with fields: file, overallQuality (0-10), issues (array of {line, severity, category, issue, suggestion}), refactoringNeeded (boolean), summary.\n\nFilename: ${filename}\n\n${code ?? ''}`
       );
 
       let analysis;
       try {
-        analysis = JSON.parse(analysisResult.finalOutput);
+        analysis = JSON.parse(analysisResult.finalOutput ?? '{}');
       } catch {
         console.log('Warning: Could not parse analysis result');
         analysis = { refactoringNeeded: false };
@@ -185,12 +185,12 @@ Write clear, concise documentation for developers.`,
       console.log('\n[2/4] 🔨 Applying refactoring...');
       const refactoringResult = await run(
         this.refactorerAgent,
-        `Refactor this code based on the analysis and return a strict JSON object with fields: success (boolean), changes (array of {description, before, after, reason}), newCode (string), risks (string[]).\n\nOriginal Code:\n${code}\n\nAnalysis:\n${JSON.stringify(analysis, null, 2)}`
+        `Refactor this code based on the analysis and return a strict JSON object with fields: success (boolean), changes (array of {description, before, after, reason}), newCode (string), risks (string[]).\n\nOriginal Code:\n${code ?? ''}\n\nAnalysis:\n${JSON.stringify(analysis ?? {}, null, 2)}`
       );
 
       let refactoring;
       try {
-        refactoring = JSON.parse(refactoringResult.finalOutput);
+        refactoring = JSON.parse(refactoringResult.finalOutput ?? '{}');
       } catch {
         console.log('Warning: Could not parse refactoring result');
         refactoring = { success: false };
@@ -207,12 +207,12 @@ Write clear, concise documentation for developers.`,
       console.log('\n[3/4] 🧪 Validating changes...');
       const testingResult = await run(
         this.testerAgent,
-        `Validate this refactoring and return a strict JSON object with fields: passed (boolean), testCases (array of {name, status: 'pass'|'fail', message?}), coverage (0-100), recommendation (string).\n\nOriginal:\n${code}\n\nRefactored:\n${refactoring.newCode}\n\nChanges:\n${JSON.stringify(refactoring.changes, null, 2)}`
+        `Validate this refactoring and return a strict JSON object with fields: passed (boolean), testCases (array of {name, status: 'pass'|'fail', message?}), coverage (0-100), recommendation (string).\n\nOriginal:\n${code ?? ''}\n\nRefactored:\n${refactoring?.newCode ?? ''}\n\nChanges:\n${JSON.stringify(refactoring?.changes ?? [], null, 2)}`
       );
 
       let testing;
       try {
-        testing = JSON.parse(testingResult.finalOutput);
+        testing = JSON.parse(testingResult.finalOutput ?? '{}');
       } catch {
         console.log('Warning: Could not parse testing result');
         testing = { passed: true };
@@ -246,7 +246,7 @@ Write clear, concise documentation for developers.`,
         analysis,
         refactoring,
         testing,
-        documentation: docResult.finalOutput,
+        documentation: docResult.finalOutput ?? '',
       };
     } catch (error) {
       return {

@@ -73,7 +73,8 @@ async function main() {
     let accumulatedText = '';
     let tokenCount = 0;
 
-    for await (const event of stream1) {
+    for await (const ev of stream1 as any) {
+      const event: any = ev;
       switch (event.type) {
         case 'response_started':
           console.log('📡 Response started...\n');
@@ -154,7 +155,8 @@ async function main() {
     let chunkCount = 0;
     let lastUpdate = Date.now();
 
-    for await (const event of stream2) {
+    for await (const ev of stream2 as any) {
+      const event: any = ev;
       switch (event.type) {
         case 'response_started':
           console.log('⏳ Starting response generation...\n');
@@ -220,7 +222,8 @@ async function main() {
     const lines: string[] = [];
     let currentLine = '';
 
-    for await (const event of stream3) {
+    for await (const ev of stream3 as any) {
+      const event: any = ev;
       switch (event.type) {
         case 'output_text_delta':
           currentLine += event.delta;
@@ -287,7 +290,8 @@ async function main() {
     let hasError = false;
 
     try {
-      for await (const event of stream4) {
+      for await (const ev of stream4 as any) {
+        const event: any = ev;
         switch (event.type) {
           case 'output_text_delta':
             process.stdout.write(event.delta);
