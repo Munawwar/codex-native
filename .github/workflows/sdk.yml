@@ -5,8 +5,43 @@ on:
     branches: [main]
   pull_request: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  sdks:
+  sdk-typescript:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install TypeScript SDK dependencies
+        run: pnpm -C sdk/typescript install --frozen-lockfile
+
+      - name: Build SDK packages
+        run: pnpm -C sdk/typescript run build
+
+      - name: Lint SDK packages
+        run: pnpm -C sdk/typescript run lint
+
+      - name: Test SDK packages
+        run: pnpm -C sdk/typescript run test
+
+  sdk-native:
+    name: Native SDK
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -23,7 +58,7 @@ jobs:
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -90,21 +125,9 @@ jobs:
         run: cargo build --bin codex
         working-directory: codex-rs
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build SDK packages
-        run: pnpm -r --filter ./sdk/typescript run build
-
-      - name: Lint SDK packages
-        run: pnpm -r --filter ./sdk/typescript run lint
-
-      - name: Test SDK packages
-        run: pnpm -r --filter ./sdk/typescript run test
-
       - name: Install native SDK dependencies
         working-directory: sdk/native
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build native SDK
         working-directory: sdk/native
@@ -146,3 +169,17 @@ jobs:
         with:
           path: codex-rs/target/
           key: cargo-target-${{ runner.os }}-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ github.run_id }}
+
+  sdks:
+    name: SDK results (required)
+    needs: [sdk-typescript, sdk-native]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize
+        shell: bash
+        run: |
+          echo "typescript: ${{ needs.sdk-typescript.result }}"
+          echo "native    : ${{ needs.sdk-native.result }}"
+          [[ '${{ needs.sdk-typescript.result }}' == 'success' ]] || { echo 'sdk-typescript failed'; exit 1; }
+          [[ '${{ needs.sdk-native.result }}' == 'success' ]] || { echo 'sdk-native failed'; exit 1; }
