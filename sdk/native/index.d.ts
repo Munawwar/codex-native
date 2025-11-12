@@ -32,6 +32,29 @@ export declare function evFunctionCall(callId: string, name: string, args: strin
 
 export declare function evResponseCreated(id: string): string
 
+export interface ForkRequest {
+  threadId: string
+  nthUserMessage?: number
+  model?: string
+  oss?: boolean
+  sandboxMode?: string
+  approvalMode?: string
+  workspaceWriteOptions?: WorkspaceWriteOptions
+  workingDirectory?: string
+  skipGitRepoCheck?: boolean
+  baseUrl?: string
+  apiKey?: string
+  linuxSandboxPath?: string
+  fullAuto?: boolean
+}
+
+export interface ForkResult {
+  threadId: string
+  rolloutPath: string
+}
+
+export declare function forkThread(req: ForkRequest): Promise<ForkResult>
+
 export interface JsApprovalRequest {
   type: string
   details?: JsonValue

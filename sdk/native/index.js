@@ -586,6 +586,7 @@ module.exports.evAssistantMessage = nativeBinding.evAssistantMessage
 module.exports.evCompleted = nativeBinding.evCompleted
 module.exports.evFunctionCall = nativeBinding.evFunctionCall
 module.exports.evResponseCreated = nativeBinding.evResponseCreated
+module.exports.forkThread = nativeBinding.forkThread
 module.exports.modifyPlan = nativeBinding.modifyPlan
 module.exports.registerApprovalCallback = nativeBinding.registerApprovalCallback
 module.exports.registerTool = nativeBinding.registerTool
