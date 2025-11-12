@@ -195,6 +195,28 @@ const thread = codex.resumeThread(savedThreadId);
 await thread.run("Implement the fix");
 ```
 
+### Forking a conversation
+
+Use `thread.fork()` to branch from an earlier user message and explore an alternate path without losing the original history. Provide the zero-based index of the user message you want to fork **before**.
+
+```typescript
+const codex = new Codex();
+const thread = codex.startThread({ skipGitRepoCheck: true });
+
+await thread.run("List flaky integration tests");
+await thread.run("Propose fixes for each flaky test");
+
+// Fork before the second user message (index 1)
+const branch = await thread.fork({
+  nthUserMessage: 1,
+  threadOptions: { model: "gpt-5-codex-mini" },
+});
+
+await branch.run("Focus on the payment suite instead");
+```
+
+The original `thread` continues unchanged while `branch` contains the forked history and a fresh thread id.
+
 ### Running code reviews
 
 Invoke the native review workflow without crafting prompts manually. The SDK provides presets that mirror the `/review` slash command:

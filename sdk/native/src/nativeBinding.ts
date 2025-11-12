@@ -25,6 +25,22 @@ export type NativeRunRequest = {
   reviewHint?: string;
 };
 
+export type NativeForkRequest = {
+  threadId: string;
+  nthUserMessage: number;
+  model?: string;
+  oss?: boolean;
+  sandboxMode?: SandboxMode;
+  approvalMode?: ApprovalMode;
+  workspaceWriteOptions?: WorkspaceWriteOptions;
+  workingDirectory?: string;
+  skipGitRepoCheck?: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+  linuxSandboxPath?: string;
+  fullAuto?: boolean;
+};
+
 export type NativeTuiRequest = {
   prompt?: string;
   images?: string[];
@@ -108,6 +124,7 @@ export type NativeBinding = {
     onEvent: (err: unknown, eventJson?: string) => void,
   ): Promise<void>;
   compactThread(request: NativeRunRequest): Promise<string[]>;
+  forkThread(request: NativeForkRequest): Promise<NativeForkResult>;
   runTui(request: NativeTuiRequest): Promise<NativeTuiExitInfo>;
   tuiTestRun?(request: {
     width: number;
@@ -176,6 +193,11 @@ export type NativeToolResult = {
   output?: string;
   success?: boolean;
   error?: string;
+};
+
+export type NativeForkResult = {
+  threadId: string;
+  rolloutPath: string;
 };
 
 export type ApprovalRequest = {

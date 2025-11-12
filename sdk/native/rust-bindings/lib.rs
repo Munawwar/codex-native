@@ -38,8 +38,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use codex_cloud_tasks_client as cloud;
 use codex_common::{ApprovalModeCliArg, CliConfigOverrides, SandboxModeCliArg};
+use codex_core::config::{Config, ConfigOverrides};
 use codex_core::default_client;
-use codex_core::protocol::TokenUsage;
+use codex_core::find_conversation_path_by_id_str;
+use codex_core::git_info::get_git_repo_root;
+use codex_core::protocol::{AskForApproval, Op, SessionSource, TokenUsage};
+use codex_core::{AuthManager, ConversationManager};
+use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::{
   ExternalInterceptorRegistration, ExternalToolRegistration, FunctionCallError, ToolHandler,
   ToolInterceptor, ToolInvocation, ToolKind, ToolOutput, ToolPayload,
@@ -52,6 +57,7 @@ use codex_exec::{Cli, Color, Command, ResumeArgs};
 use codex_tui::AppExitInfo;
 use codex_tui::Cli as TuiCli;
 use codex_tui::updates::UpdateAction;
+use codex_protocol::config_types::SandboxMode;
 use napi::bindgen_prelude::{Env, Function, Status};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
@@ -865,6 +871,51 @@ pub struct RunRequest {
   pub full_auto: Option<bool>,
 }
 
+#[napi(object)]
+pub struct ForkRequest {
+  #[napi(js_name = "threadId")]
+  pub thread_id: String,
+  #[napi(js_name = "nthUserMessage")]
+  pub nth_user_message: Option<u32>,
+  #[napi(js_name = "model")]
+  pub model: Option<String>,
+  #[napi(js_name = "oss")]
+  pub oss: Option<bool>,
+  #[napi(js_name = "sandboxMode")]
+  pub sandbox_mode: Option<String>,
+  #[napi(js_name = "approvalMode")]
+  pub approval_mode: Option<String>,
+  #[napi(js_name = "workspaceWriteOptions")]
+  pub workspace_write_options: Option<WorkspaceWriteOptions>,
+  #[napi(js_name = "workingDirectory")]
+  pub working_directory: Option<String>,
+  #[napi(js_name = "skipGitRepoCheck")]
+  pub skip_git_repo_check: Option<bool>,
+  #[napi(js_name = "baseUrl")]
+  pub base_url: Option<String>,
+  #[napi(js_name = "apiKey")]
+  pub api_key: Option<String>,
+  #[napi(js_name = "linuxSandboxPath")]
+  pub linux_sandbox_path: Option<String>,
+  #[napi(js_name = "fullAuto")]
+  pub full_auto: Option<bool>,
+}
+
+#[derive(Debug)]
+pub struct InternalForkRequest {
+  pub thread_id: String,
+  pub nth_user_message: usize,
+  pub run_options: InternalRunRequest,
+}
+
+#[napi(object)]
+pub struct ForkResult {
+  #[napi(js_name = "threadId")]
+  pub thread_id: String,
+  #[napi(js_name = "rolloutPath")]
+  pub rollout_path: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ReviewRequest {
   pub prompt: String,
@@ -954,6 +1005,50 @@ impl RunRequest {
       api_key: self.api_key,
       linux_sandbox_path: self.linux_sandbox_path.map(PathBuf::from),
       full_auto: self.full_auto.unwrap_or(true),
+    })
+  }
+}
+
+impl ForkRequest {
+  fn into_internal(self) -> napi::Result<InternalForkRequest> {
+    let thread_id = self.thread_id.trim().to_string();
+    if thread_id.is_empty() {
+      return Err(napi::Error::from_reason(
+        "threadId must be provided for forkThread requests",
+      ));
+    }
+
+    let nth_user_message = self
+      .nth_user_message
+      .ok_or_else(|| napi::Error::from_reason("nthUserMessage must be provided for forkThread"))?
+      as usize;
+
+    let run_request = RunRequest {
+      prompt: String::new(),
+      thread_id: Some(thread_id.clone()),
+      images: None,
+      model: self.model,
+      oss: self.oss,
+      sandbox_mode: self.sandbox_mode,
+      approval_mode: self.approval_mode,
+      workspace_write_options: self.workspace_write_options,
+      working_directory: self.working_directory,
+      skip_git_repo_check: self.skip_git_repo_check,
+      output_schema: None,
+      base_url: self.base_url,
+      api_key: self.api_key,
+      linux_sandbox_path: self.linux_sandbox_path,
+      full_auto: self.full_auto,
+      review_mode: None,
+      review_hint: None,
+    };
+
+    let run_options = run_request.into_internal()?;
+
+    Ok(InternalForkRequest {
+      thread_id,
+      nth_user_message,
+      run_options,
     })
   }
 }
@@ -1672,6 +1767,23 @@ fn parse_approval_mode(input: Option<&str>) -> napi::Result<Option<ApprovalModeC
   )
 }
 
+fn approval_mode_cli_to_policy(mode: Option<ApprovalModeCliArg>) -> Option<AskForApproval> {
+  mode.map(|m| match m {
+    ApprovalModeCliArg::Never => AskForApproval::Never,
+    ApprovalModeCliArg::OnRequest => AskForApproval::OnRequest,
+    ApprovalModeCliArg::OnFailure => AskForApproval::OnFailure,
+    ApprovalModeCliArg::Untrusted => AskForApproval::UnlessTrusted,
+  })
+}
+
+fn sandbox_mode_cli_to_config(mode: Option<SandboxModeCliArg>) -> Option<SandboxMode> {
+  mode.map(|m| match m {
+    SandboxModeCliArg::ReadOnly => SandboxMode::ReadOnly,
+    SandboxModeCliArg::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+    SandboxModeCliArg::DangerFullAccess => SandboxMode::DangerFullAccess,
+  })
+}
+
 pub fn build_cli(
   options: &InternalRunRequest,
   schema_path: Option<PathBuf>,
@@ -1752,6 +1864,45 @@ pub fn build_cli(
       Some(options.prompt.clone())
     },
   }
+}
+
+fn build_config_inputs(
+  options: &InternalRunRequest,
+  linux_sandbox_path: Option<PathBuf>,
+) -> napi::Result<(ConfigOverrides, Vec<(String, toml::Value)>)> {
+  let cli = build_cli(options, None, false);
+  let cli_kv_overrides = cli
+    .config_overrides
+    .parse_overrides()
+    .map_err(|e| napi::Error::from_reason(format!("Failed to parse config overrides: {e}")))?;
+
+  let cwd = options
+    .working_directory
+    .as_ref()
+    .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()));
+
+  let overrides = ConfigOverrides {
+    model: options.model.clone(),
+    review_model: None,
+    cwd,
+    approval_policy: approval_mode_cli_to_policy(options.approval_mode),
+    sandbox_mode: sandbox_mode_cli_to_config(options.sandbox_mode),
+    model_provider: options
+      .oss
+      .then_some(BUILT_IN_OSS_MODEL_PROVIDER_ID.to_string()),
+    config_profile: None,
+    codex_linux_sandbox_exe: linux_sandbox_path,
+    base_instructions: None,
+    developer_instructions: None,
+    compact_prompt: None,
+    include_apply_patch_tool: None,
+    show_raw_agent_reasoning: options.oss.then_some(true),
+    tools_web_search_request: None,
+    experimental_sandbox_command_assessment: None,
+    additional_writable_roots: Vec::new(),
+  };
+
+  Ok((overrides, cli_kv_overrides))
 }
 
 fn event_to_json(event: &ExecThreadEvent) -> napi::Result<JsonValue> {
@@ -2009,6 +2160,109 @@ pub async fn compact_thread(req: RunRequest) -> napi::Result<Vec<String>> {
 
   let mut guard = events.lock().unwrap();
   Ok(std::mem::take(&mut *guard))
+}
+
+#[napi]
+pub async fn fork_thread(req: ForkRequest) -> napi::Result<ForkResult> {
+  let internal = req.into_internal()?;
+  tokio::task::spawn_blocking(move || fork_thread_sync(internal))
+    .await
+    .map_err(|e| napi::Error::from_reason(format!("Task join error: {e}")))?
+}
+
+fn fork_thread_sync(req: InternalForkRequest) -> napi::Result<ForkResult> {
+  let thread_id = req.thread_id;
+  let nth_user_message = req.nth_user_message;
+  let options = req.run_options;
+
+  let mut env_pairs: Vec<(&'static str, Option<String>, bool)> = Vec::new();
+  if std::env::var(ORIGINATOR_ENV).is_err() {
+    env_pairs.push((ORIGINATOR_ENV, Some(NATIVE_ORIGINATOR.to_string()), true));
+  }
+  if let Some(base_url) = options.base_url.clone() {
+    env_pairs.push(("OPENAI_BASE_URL", Some(base_url), true));
+  }
+  if let Some(api_key) = options.api_key.clone() {
+    env_pairs.push(("CODEX_API_KEY", Some(api_key), true));
+  }
+
+  let linux_sandbox_path = if let Some(path) = options.linux_sandbox_path.clone() {
+    Some(path)
+  } else if let Ok(path) = std::env::var("CODEX_LINUX_SANDBOX_EXE") {
+    Some(PathBuf::from(path))
+  } else {
+    default_linux_sandbox_path()?
+  };
+
+  if let Some(path) = linux_sandbox_path.as_ref() {
+    env_pairs.push((
+      "CODEX_LINUX_SANDBOX_EXE",
+      Some(path.to_string_lossy().to_string()),
+      false,
+    ));
+  }
+
+  let _env_guard = EnvOverrides::apply(env_pairs);
+
+  let runtime = tokio::runtime::Runtime::new()
+    .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+
+  runtime.block_on(async move {
+    let (overrides, cli_kv_overrides) =
+      build_config_inputs(&options, linux_sandbox_path.clone())?;
+    let config = Config::load_with_cli_overrides(cli_kv_overrides, overrides)
+      .await
+      .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    if !options.skip_git_repo_check && get_git_repo_root(&config.cwd).is_none() {
+      return Err(napi::Error::from_reason(
+        "Not inside a trusted directory and --skip-git-repo-check was not specified."
+          .to_string(),
+      ));
+    }
+
+    let auth_manager = AuthManager::shared(
+      config.codex_home.clone(),
+      true,
+      config.cli_auth_credentials_store_mode,
+    );
+
+    let path_opt = find_conversation_path_by_id_str(&config.codex_home, &thread_id)
+      .await
+      .map_err(|e| napi::Error::from_reason(format!(
+        "Failed to resolve conversation path for thread {thread_id}: {e}"
+      )))?;
+
+    let path = path_opt.ok_or_else(|| {
+      napi::Error::from_reason(format!(
+        "No saved conversation found for thread {thread_id}"
+      ))
+    })?;
+
+    let manager = ConversationManager::new(auth_manager, SessionSource::Exec);
+
+    let new_conv = manager
+      .fork_conversation(nth_user_message, config.clone(), path.clone())
+      .await
+      .map_err(|e| napi::Error::from_reason(format!("Failed to fork conversation: {e}")))?;
+
+    let new_id = new_conv.conversation_id.to_string();
+    let rollout_path = new_conv
+      .session_configured
+      .rollout_path
+      .to_string_lossy()
+      .to_string();
+
+    let conversation = new_conv.conversation.clone();
+    let _ = conversation.submit(Op::Shutdown).await;
+
+    manager.remove_conversation(&new_conv.conversation_id).await;
+
+    Ok(ForkResult {
+      thread_id: new_id,
+      rollout_path,
+    })
+  })
 }
 
 #[napi]
