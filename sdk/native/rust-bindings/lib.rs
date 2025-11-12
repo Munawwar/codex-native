@@ -2254,9 +2254,6 @@ fn fork_thread_sync(req: InternalForkRequest) -> napi::Result<ForkResult> {
       .to_string_lossy()
       .to_string();
 
-    let conversation = new_conv.conversation.clone();
-    let _ = conversation.submit(Op::Shutdown).await;
-
     manager.remove_conversation(&new_conv.conversation_id).await;
 
     Ok(ForkResult {

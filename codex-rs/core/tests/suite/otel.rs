@@ -751,7 +751,7 @@ async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
         .await
         .unwrap();
 
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TokenCount(_))).await;
+    wait_for_completion(&codex).await;
 
     logs_assert(tool_decision_assertion(
         "auto_config_call",
