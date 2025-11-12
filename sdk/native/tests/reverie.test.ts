@@ -35,7 +35,7 @@ function makeFakeCodexHome(): { home: string; convoPath: string } {
       id: uuid,
       timestamp: "2025-01-01T12:00:00Z",
       instructions: null,
-      cwd: ".",
+      cwd: home,  // Use the actual temp directory path
       originator: "test",
       cli_version: "0.0.0",
       model_provider: "test-provider"
@@ -47,31 +47,47 @@ function makeFakeCodexHome(): { home: string; convoPath: string } {
     type: "event_msg",
     payload: {
       type: "user_message",
-      message: "auth timeout bug fixed via backoff with reverie keyword present here",
-      kind: "plain"
+      message: "We fixed the auth timeout bug by adjusting retries with reverie test keyword"
     }
   };
 
-  // Add records with top-level content/text fields for search and insights
+  // ResponseItem::Message - payload contains type, role, and content array
+  // ContentItem::OutputText has type "output_text"
   const assistantMessage = {
     timestamp: "2025-01-01T12:00:02Z",
     type: "response_item",
-    content: "The auth timeout issue has been resolved using exponential backoff in the reverie system",
-    role: "assistant"
+    payload: {
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "output_text",
+          text: "The auth timeout issue has been resolved using exponential backoff in the reverie system"
+        }
+      ]
+    }
   };
 
-  const toolOutput = {
+  const secondMessage = {
     timestamp: "2025-01-01T12:00:03Z",
-    type: "tool_result",
-    output: "Successfully authenticated with retry logic for reverie integration",
-    call_id: "test-call-1"
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "output_text",
+          text: "Successfully authenticated with retry logic for reverie integration"
+        }
+      ]
+    }
   };
 
   writeJsonl(convoPath, [
     JSON.stringify(sessionMeta),
     JSON.stringify(userEvent),
     JSON.stringify(assistantMessage),
-    JSON.stringify(toolOutput)
+    JSON.stringify(secondMessage)
   ]);
   return { home, convoPath };
 }
@@ -89,6 +105,12 @@ describe("Reverie native helpers", () => {
 
   it("searches conversations by keyword", async () => {
     const { home } = makeFakeCodexHome();
+
+    // First verify we can list conversations
+    const list = await reverieListConversations(home, 10, 0);
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBeGreaterThan(0);
+
     // Search for "auth" which appears in the content field that gets extracted
     const results = await reverieSearchConversations(home, "auth", 10);
     expect(Array.isArray(results)).toBe(true);

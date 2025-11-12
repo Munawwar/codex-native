@@ -2683,21 +2683,46 @@ fn serialize_json_records(values: &[serde_json::Value]) -> Vec<String> {
 
 fn extract_insight_from_json(value: &serde_json::Value) -> Option<String> {
   // Extract meaningful content from JSON records
-  // This is a simplified implementation - you might want more sophisticated parsing
+  // RolloutItem uses tag+content serde format, so data is in "payload" field
 
-  if let Some(content) = value.get("content").and_then(|c| c.as_str()) {
-    // For assistant messages
-    Some(content.to_string())
-  } else if let Some(text) = value.get("text").and_then(|t| t.as_str()) {
-    // For other text content
-    Some(text.to_string())
-  } else {
-    // For tool outputs
-    value
-      .get("output")
-      .and_then(|o| o.as_str())
-      .map(|output| format!("Tool output: {}", output))
+  // First try to get payload (for tag+content serde format)
+  let target = value.get("payload").unwrap_or(value);
+
+  // Try to extract content from ResponseItem::Message which has content array
+  if let Some(content_array) = target.get("content").and_then(|c| c.as_array()) {
+    // Extract text from ContentItem array
+    let texts: Vec<String> = content_array
+      .iter()
+      .filter_map(|item| {
+        item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+      })
+      .collect();
+    if !texts.is_empty() {
+      return Some(texts.join(" "));
+    }
   }
+
+  // Try direct content string (for simple cases)
+  if let Some(content) = target.get("content").and_then(|c| c.as_str()) {
+    return Some(content.to_string());
+  }
+
+  // Try text field
+  if let Some(text) = target.get("text").and_then(|t| t.as_str()) {
+    return Some(text.to_string());
+  }
+
+  // Try output field (for tool results in EventMsg)
+  if let Some(output) = target.get("output").and_then(|o| o.as_str()) {
+    return Some(format!("Tool output: {}", output));
+  }
+
+  // Try message field in payload (for user messages in EventMsg)
+  if let Some(message) = target.get("message").and_then(|m| m.as_str()) {
+    return Some(message.to_string());
+  }
+
+  None
 }
 
 #[napi]

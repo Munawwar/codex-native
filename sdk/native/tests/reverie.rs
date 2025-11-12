@@ -5,14 +5,20 @@ use std::path::{Path, PathBuf};
 use codex_native::{
   reverie_get_conversation_insights, reverie_list_conversations, reverie_search_conversations,
 };
-use pretty_assertions::assert_eq;
+use codex_protocol::models::{ContentItem, ResponseItem};
+use codex_protocol::protocol::{
+  EventMsg, RolloutItem, RolloutLine, SessionMeta, SessionMetaLine, SessionSource,
+  UserMessageEvent,
+};
+use codex_protocol::ConversationId;
 
-fn write_jsonl<P: AsRef<Path>>(path: P, lines: &[&str]) {
+fn write_rollout_file<P: AsRef<Path>>(path: P, items: &[RolloutLine]) {
   let parent = path.as_ref().parent().unwrap();
   fs::create_dir_all(parent).unwrap();
   let mut file = fs::File::create(path).unwrap();
-  for line in lines {
-    writeln!(file, "{}", line).unwrap();
+  for item in items {
+    let json = serde_json::to_string(item).unwrap();
+    writeln!(file, "{}", json).unwrap();
   }
 }
 
@@ -21,18 +27,61 @@ fn make_fake_codex_home() -> (tempfile::TempDir, PathBuf) {
   let sessions = tmp.path().join("sessions/2025/01/01");
   let uuid = "019a0000-0000-0000-0000-000000000001";
   let convo = sessions.join(format!("rollout-2025-01-01T12-00-00-{}.jsonl", uuid));
+  let timestamp = "2025-01-01T12:00:00Z".to_string();
 
-  // Proper rollout JSONL format with session_meta and event_msg
-  write_jsonl(
-    &convo,
-    &[
-      r#"{"timestamp":"2025-01-01T12:00:00Z","type":"session_meta","payload":{"id":"019a0000-0000-0000-0000-000000000001","timestamp":"2025-01-01T12:00:00Z","instructions":null,"cwd":".","originator":"test","cli_version":"0.0.0","model_provider":"test-provider"}}"#,
-      r#"{"timestamp":"2025-01-01T12:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"We fixed the auth timeout bug by adjusting retries with reverie test keyword","kind":"plain"}}"#,
-      r#"{"timestamp":"2025-01-01T12:00:02Z","type":"response_item","content":"The auth timeout issue has been resolved using exponential backoff in the reverie system","role":"assistant"}"#,
-      r#"{"timestamp":"2025-01-01T12:00:03Z","type":"tool_result","output":"Successfully authenticated with retry logic for reverie integration","call_id":"test-call-1"}"#,
-    ],
-  );
+  // Create proper RolloutLine structs using the actual protocol types
+  let items = vec![
+    // Session metadata
+    RolloutLine {
+      timestamp: timestamp.clone(),
+      item: RolloutItem::SessionMeta(SessionMetaLine {
+        meta: SessionMeta {
+          id: ConversationId::from_string(uuid).unwrap(),
+          timestamp: timestamp.clone(),
+          instructions: None,
+          cwd: PathBuf::from("."),
+          originator: "test".to_string(),
+          cli_version: "0.0.0".to_string(),
+          model_provider: Some("test-provider".to_string()),
+          source: SessionSource::VSCode,
+        },
+        git: None,
+      }),
+    },
+    // User message event
+    RolloutLine {
+      timestamp: "2025-01-01T12:00:01Z".to_string(),
+      item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+        message: "We fixed the auth timeout bug by adjusting retries with reverie test keyword"
+          .to_string(),
+        images: None,
+      })),
+    },
+    // Assistant response with "auth" keyword
+    RolloutLine {
+      timestamp: "2025-01-01T12:00:02Z".to_string(),
+      item: RolloutItem::ResponseItem(ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+          text: "The auth timeout issue has been resolved using exponential backoff in the reverie system".to_string(),
+        }],
+      }),
+    },
+    // Another assistant response with "reverie" keyword
+    RolloutLine {
+      timestamp: "2025-01-01T12:00:03Z".to_string(),
+      item: RolloutItem::ResponseItem(ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+          text: "Successfully authenticated with retry logic for reverie integration".to_string(),
+        }],
+      }),
+    },
+  ];
 
+  write_rollout_file(&convo, &items);
   (tmp, convo)
 }
 
