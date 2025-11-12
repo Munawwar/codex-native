@@ -61,7 +61,7 @@ use codex_protocol::config_types::SandboxMode;
 use napi::bindgen_prelude::{Env, Function, Status};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
-use toml;
+use toml::Value as TomlValue;
 use ratatui::backend::Backend;
 use ratatui::backend::ClearType;
 use ratatui::backend::WindowSize;
@@ -1870,7 +1870,7 @@ pub fn build_cli(
 fn build_config_inputs(
   options: &InternalRunRequest,
   linux_sandbox_path: Option<PathBuf>,
-) -> napi::Result<(ConfigOverrides, Vec<(String, toml::Value)>)> {
+) -> napi::Result<(ConfigOverrides, Vec<(String, TomlValue)>)> {
   let cli = build_cli(options, None, false);
   let cli_kv_overrides = cli
     .config_overrides

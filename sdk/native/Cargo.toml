@@ -47,6 +47,9 @@ path = "../../codex-rs/common"
 [dependencies.codex-core]
 path = "../../codex-rs/core"
 
+[dependencies.toml]
+version = "0.9.5"
+
 [dependencies.codex-exec]
 path = "../../codex-rs/exec"
 
