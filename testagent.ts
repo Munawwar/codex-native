@@ -1,3 +1,25 @@
+/**
+ * Test Agent - TUI Launcher Utility
+ *
+ * A comprehensive CLI wrapper for launching the Codex Native SDK TUI.
+ * Useful for testing TUI functionality and demonstrating all available options.
+ *
+ * This is a development/testing utility located in the project root.
+ * For production examples, see sdk/native/examples/tui/
+ *
+ * Default model: gpt-5-codex-mini (fast, cost-effective)
+ *
+ * Usage:
+ *   npx tsx testagent.ts [options] [prompt...]
+ *   npx tsx testagent.ts --help
+ *
+ * Examples:
+ *   npx tsx testagent.ts "Review the codebase"
+ *   npx tsx testagent.ts --resume-last
+ *   npx tsx testagent.ts --full-auto --sandbox workspace-write
+ *   npx tsx testagent.ts --model gpt-5-codex "Complex analysis task"
+ */
+
 import process from "node:process";
 import path from "node:path";
 
@@ -43,6 +65,7 @@ async function main(): Promise<void> {
     sandboxMode: request.sandboxMode ?? "workspace-write",
     approvalMode: request.approvalMode ?? "on-request",
     workingDirectory: request.workingDirectory ?? process.cwd(),
+    model: request.model ?? "gpt-5-codex-mini",
   };
 
   logLaunchInfo(launchRequest);
@@ -265,7 +288,7 @@ Options:
   --approval <mode>         Set approval mode (never | on-request | on-failure | untrusted).
   --web-search              Allow Codex to perform web searches.
   --bypass-approvals        Disable all safety prompts (use with caution).
-  --model <name>            Override the default model.
+  --model <name>            Override the default model (default: gpt-5-codex-mini).
   --cwd <path>              Launch the TUI from a different working directory.
   --profile <name>          Choose a config profile from codex.config.ts.
   --config-override <pair>  Apply a config override (key=value). Repeatable.
