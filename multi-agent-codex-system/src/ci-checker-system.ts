@@ -12,7 +12,7 @@ import {
   type CiIssue,
 } from "./schemas.js";
 import type { CiAnalysis, CiCheckKind, MultiAgentConfig, PrStatusSummary, RepoContext } from "./types.js";
-import type { LspDiagnosticsBridge } from "./lsp/index.js";
+import type { LspDiagnosticsBridge } from "@codex-native/sdk";
 import { formatPrStatus, formatRepoContext } from "./repo.js";
 import { attachApplyPatchReminder } from "./reminders/applyPatchReminder.js";
 

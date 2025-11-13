@@ -8,7 +8,7 @@ import { StreamMessageReader, StreamMessageWriter } from "vscode-jsonrpc/lib/nod
 import type { Diagnostic } from "vscode-languageserver-types";
 import { DiagnosticSeverity } from "vscode-languageserver-types";
 
-import type { LspServerConfig } from "./types.js";
+import type { LspServerConfig } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 3_000;
 
@@ -175,7 +175,6 @@ function detectLanguageId(filePath: string): string {
     case ".jsx":
       return "javascriptreact";
     case ".py":
-      return "python";
     case ".pyi":
       return "python";
     case ".rs":
@@ -199,3 +198,4 @@ export function normalizeSeverity(severity?: Diagnostic["severity"]): "error" | 
       return "error";
   }
 }
+

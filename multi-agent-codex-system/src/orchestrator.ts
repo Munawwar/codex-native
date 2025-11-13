@@ -5,7 +5,7 @@ import { PRDeepReviewer } from "./pr-deep-reviewer.js";
 import { ReverieSystem } from "./reverie.js";
 import { collectPrStatus, collectRepoContext, formatPrStatus, formatRepoContext } from "./repo.js";
 import type { CiAnalysis, MultiAgentConfig, PrStatusSummary, RepoContext, ReviewAnalysis } from "./types.js";
-import { LspDiagnosticsBridge } from "./lsp/index.js";
+import { LspDiagnosticsBridge } from "@codex-native/sdk";
 import { attachApplyPatchReminder } from "./reminders/applyPatchReminder.js";
 
 class MultiAgentOrchestrator {

@@ -1,6 +1,6 @@
-import type { Thread } from "@codex-native/sdk";
-import type { LspManagerOptions } from "./types.js";
-import { LspDiagnosticsBridge } from "./bridge.js";
+import type { Thread } from "../thread";
+import type { LspManagerOptions } from "./types";
+import { LspDiagnosticsBridge } from "./bridge";
 
 /**
  * Attaches the LSP diagnostics bridge to a thread.
@@ -16,3 +16,4 @@ export function attachLspDiagnostics(thread: Thread, options: LspManagerOptions)
     });
   };
 }
+

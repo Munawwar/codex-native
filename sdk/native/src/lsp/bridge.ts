@@ -1,9 +1,10 @@
 import * as path from "node:path";
 
-import type { Thread, ThreadItem } from "@codex-native/sdk";
+import type { Thread } from "../thread";
+import type { ThreadItem } from "../items";
 
-import { LspManager } from "./manager.js";
-import type { FileDiagnostics, LspManagerOptions } from "./types.js";
+import { LspManager } from "./manager";
+import type { FileDiagnostics, LspManagerOptions } from "./types";
 
 const MAX_DIAGNOSTICS_PER_FILE = 5;
 
@@ -111,14 +112,13 @@ function extractReadFileTargets(item: ThreadItem, cwd: string): string[] {
     return [];
   }
 
-  const filePath = (args as { file_path?: unknown; path?: unknown }).file_path ??
-    (args as { path?: unknown }).path;
+  const filePath =
+    (args as { file_path?: unknown; path?: unknown }).file_path ?? (args as { path?: unknown }).path;
   if (typeof filePath !== "string" || filePath.trim().length === 0) {
     return [];
   }
 
-  const resolved = path.isAbsolute(filePath)
-    ? filePath
-    : path.resolve(cwd, filePath);
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
   return [resolved];
 }
+

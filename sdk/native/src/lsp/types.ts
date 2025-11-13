@@ -40,3 +40,4 @@ export type LspManagerOptions = {
   workingDirectory: string;
   waitForDiagnostics?: boolean;
 };
+

@@ -66,6 +66,24 @@ export type {
   FastEmbedEmbedRequest,
 } from "./nativeBinding";
 
+// LSP diagnostics integration
+export {
+  LspDiagnosticsBridge,
+  attachLspDiagnostics,
+  LspManager,
+  DEFAULT_SERVERS,
+  findServerForFile,
+  resolveWorkspaceRoot,
+} from "./lsp";
+export type {
+  FileDiagnostics,
+  LspDiagnosticSeverity,
+  LspManagerOptions,
+  LspServerConfig,
+  NormalizedDiagnostic,
+  WorkspaceLocator,
+} from "./lsp";
+
 // OpenAI Agents framework integration
 export { CodexProvider, codexTool } from "./agents";
 export type { CodexProviderOptions, CodexToolOptions } from "./agents";

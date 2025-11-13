@@ -4,7 +4,7 @@ import * as path from "node:path";
 
 import type { Thread, ThreadEvent } from "@codex-native/sdk";
 
-import { LspDiagnosticsBridge } from "../src/lsp/bridge.js";
+import { LspDiagnosticsBridge } from "@codex-native/sdk";
 
 class FakeThread {
   private listeners: ((event: ThreadEvent) => void)[] = [];

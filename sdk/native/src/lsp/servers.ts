@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { LspServerConfig, WorkspaceLocator } from "./types.js";
+import type { LspServerConfig, WorkspaceLocator } from "./types";
 
 const MARKERS_NODE = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock"];
 const MARKERS_PY = ["pyproject.toml", "requirements.txt", "Pipfile", "setup.py", "setup.cfg", "poetry.lock"];
@@ -71,3 +71,4 @@ export function resolveWorkspaceRoot(
   }
   return fallbackDir;
 }
+

@@ -2,9 +2,14 @@ import * as path from "node:path";
 
 import type { Diagnostic } from "vscode-languageserver-types";
 
-import { findServerForFile, resolveWorkspaceRoot } from "./servers.js";
-import { LspClient, normalizeSeverity } from "./client.js";
-import type { FileDiagnostics, LspManagerOptions, LspServerConfig, NormalizedDiagnostic } from "./types.js";
+import { findServerForFile, resolveWorkspaceRoot } from "./servers";
+import { LspClient, normalizeSeverity } from "./client";
+import type {
+  FileDiagnostics,
+  LspManagerOptions,
+  LspServerConfig,
+  NormalizedDiagnostic,
+} from "./types";
 
 export class LspManager {
   private clients = new Map<string, Promise<LspClient | null>>();
@@ -84,3 +89,4 @@ function normalizeDiagnostic(diag: Diagnostic): NormalizedDiagnostic {
     range: diag.range,
   };
 }
+
