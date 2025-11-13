@@ -1417,7 +1417,7 @@ async fn unified_exec_formats_large_output_summary() -> Result<()> {
     } = builder.build(&server).await?;
 
     let script = r#"python3 - <<'PY'
-for i in range(300):
+for i in range(700):
     print(f"line-{i}")
 PY
 "#;
@@ -1476,7 +1476,7 @@ PY
             r"(?s)",
             r"line-0.*?",
             r"\[\.{3} omitted \d+ of \d+ lines \.{3}\].*?",
-            r"line-299",
+            r"line-699",
         ),
         &large_output.output,
     );
