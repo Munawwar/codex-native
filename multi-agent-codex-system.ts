@@ -10,12 +10,10 @@
  *   5. Optional reverie lookup for prior lessons (with embedding-based re-ranking)
  *
  * Embedding Support:
- * To enable semantic re-ranking of reveries, pass an embedder to the config:
+ * To enable semantic re-ranking of reveries via EmbedAnything, configure:
  *   config.embedder = {
- *     embed: async (text: string) => {
- *       // Return your embedding vector here (e.g., OpenAI, local model, etc.)
- *       return [0.1, 0.2, ...]; // number[]
- *     }
+ *     initOptions: { backend: "onnx", modelId: "sentence-transformers/all-MiniLM-L12-v2" },
+ *     embedRequest: { normalize: true }
  *   };
  *
  * The system will:
@@ -33,6 +31,10 @@ import {
   CodexProvider,
   type Thread,
   type NativeTuiExitInfo,
+  embedAnythingInit,
+  embedAnythingEmbed,
+  type EmbedAnythingInitOptions,
+  type EmbedAnythingEmbedRequest,
 } from "@codex-native/sdk";
 
 const DEFAULT_MODEL = "gpt-5-codex";
@@ -45,10 +47,6 @@ const MAX_CONTEXT_CHARS = 4800;
 // Types
 // ---------------------------------------------------------------------------
 
-type Embedder = {
-  embed(input: string): Promise<number[]>;
-};
-
 type MultiAgentConfig = {
   baseUrl?: string;
   apiKey?: string;
@@ -60,7 +58,12 @@ type MultiAgentConfig = {
   reverieQuery?: string;
   model?: string;
   baseBranchOverride?: string;
-  embedder?: Embedder;
+  embedder?: EmbedAnythingConfig;
+};
+
+type EmbedAnythingConfig = {
+  initOptions: EmbedAnythingInitOptions;
+  embedRequest: Omit<EmbedAnythingEmbedRequest, "inputs">;
 };
 
 type RepoContext = {
@@ -115,6 +118,12 @@ type ReverieResult = {
   relevance: number;
   excerpt: string;
   insights: string[];
+};
+
+type ProcessedReverie = ReverieResult & {
+  rawRelevance: number;
+  headRecords: string[];
+  tailRecords: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -563,20 +572,28 @@ function extractCompactTextFromRecords(headRecords: string[], tailRecords: strin
   return combined;
 }
 
+function resolveCodexHome(): string {
+  return process.env.CODEX_HOME || path.join(process.env.HOME || process.cwd(), ".codex");
+}
+
+
 // ---------------------------------------------------------------------------
 // Reverie System (with embedding re-ranking)
 // ---------------------------------------------------------------------------
 
 class ReverieSystem {
+  private embedderReady = false;
+
   constructor(private readonly config: MultiAgentConfig) {}
 
   async searchReveries(query: string): Promise<ReverieResult[]> {
+    const codexHome = resolveCodexHome();
+
     // Prefer native reverie functions if available
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const native: any = require("@codex-native/sdk");
       if (native && typeof native.reverieSearchConversations === "function") {
-        const codexHome = process.env.CODEX_HOME || path.join(process.env.HOME || process.cwd(), ".codex");
         const results = await native.reverieSearchConversations(codexHome, query, 25);
 
         // Filter to conversations whose SessionMeta.cwd is inside our workingDirectory
@@ -602,7 +619,7 @@ class ReverieSystem {
         });
 
         // Re-rank with embeddings if embedder is available
-        let processed = scoped.map((r) => ({
+        let processed: ProcessedReverie[] = scoped.map((r) => ({
           conversationId: r.conversation?.id || "unknown",
           timestamp: r.conversation?.createdAt || new Date().toISOString(),
           relevance: typeof r.relevanceScore === "number" ? r.relevanceScore : 0.7,
@@ -615,40 +632,7 @@ class ReverieSystem {
         }));
 
         if (this.config.embedder) {
-          try {
-            // Get query embedding
-            const queryEmbedding = await this.config.embedder.embed(query);
-
-            // Re-rank each result using embeddings
-            const reranked = await Promise.all(
-              processed.map(async (item) => {
-                try {
-                  const docText = extractCompactTextFromRecords(
-                    item.headRecords,
-                    item.tailRecords,
-                    item.insights
-                  );
-                  const docEmbedding = await this.config.embedder!.embed(docText);
-                  const semanticScore = cosineSimilarity(queryEmbedding, docEmbedding);
-
-                  // Blend semantic and keyword scores (70% semantic, 30% keyword)
-                  const blendedScore = 0.7 * semanticScore + 0.3 * item.rawRelevance;
-
-                  return { ...item, relevance: blendedScore };
-                } catch (embedError) {
-                  console.warn(`Embedding failed for conversation ${item.conversationId}:`, embedError);
-                  return item; // fallback to original relevance
-                }
-              })
-            );
-
-            // Sort by blended relevance score
-            reranked.sort((a, b) => b.relevance - a.relevance);
-            processed = reranked;
-          } catch (embedError) {
-            console.warn("Embedding re-ranking failed, using keyword-based ranking:", embedError);
-            // Fall back to keyword-based ranking
-          }
+          processed = await this.rerankWithEmbeddings(query, processed);
         }
 
         // Return top 10 results, remove internal fields
@@ -669,6 +653,63 @@ class ReverieSystem {
         insights: ["Consider reusing patterns from prior CI fixes."],
       },
     ];
+  }
+
+  private async ensureEmbedderReady(): Promise<void> {
+    if (this.embedderReady || !this.config.embedder) {
+      return;
+    }
+    await embedAnythingInit(this.config.embedder.initOptions);
+    this.embedderReady = true;
+  }
+
+  private async rerankWithEmbeddings(
+    query: string,
+    items: ProcessedReverie[],
+  ): Promise<ProcessedReverie[]> {
+    if (!this.config.embedder || items.length === 0) {
+      return items;
+    }
+    try {
+      await this.ensureEmbedderReady();
+
+      const docTexts = items.map((item) =>
+        extractCompactTextFromRecords(item.headRecords, item.tailRecords, item.insights),
+      );
+      const projectRoot = path.resolve(this.config.workingDirectory);
+      const baseRequest = this.config.embedder.embedRequest ?? {};
+      const embedRequest: EmbedAnythingEmbedRequest = {
+        ...baseRequest,
+        projectRoot,
+        cache: baseRequest.cache ?? true,
+        inputs: [query, ...docTexts],
+      };
+
+      const embeddings = await embedAnythingEmbed(embedRequest);
+      if (embeddings.length !== docTexts.length + 1) {
+        throw new Error("Embedding API returned unexpected length");
+      }
+
+      const [queryVector, ...docVectors] = embeddings;
+      if (!queryVector) {
+        return items;
+      }
+
+      const reranked = items.map((item, idx) => {
+        const docEmbedding = docVectors[idx];
+        if (!docEmbedding) {
+          return item;
+        }
+        const semanticScore = cosineSimilarity(queryVector, docEmbedding);
+        const blendedScore = 0.7 * semanticScore + 0.3 * item.rawRelevance;
+        return { ...item, relevance: blendedScore };
+      });
+      reranked.sort((a, b) => b.relevance - a.relevance);
+      return reranked;
+    } catch (error) {
+      console.warn("Embedding re-ranking failed:", error);
+      return items;
+    }
   }
 
   async injectReverie(thread: Thread, reveries: ReverieResult[], query: string): Promise<void> {
@@ -778,25 +819,20 @@ function logCiSummary(data: CiAnalysis): void {
 // ---------------------------------------------------------------------------
 
 /*
-// Example embedder implementation using OpenAI:
-// npm install openai
-
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Example embedder configuration using EmbedAnything via the native SDK:
 
 const config: MultiAgentConfig = {
   workingDirectory: process.cwd(),
   skipGitRepoCheck: true,
   embedder: {
-    embed: async (text: string) => {
-      const response = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: text,
-      });
-      return response.data[0].embedding;
-    }
-  }
+    initOptions: {
+      backend: "onnx",
+      modelId: "sentence-transformers/all-MiniLM-L12-v2",
+    },
+    embedRequest: {
+      normalize: true,
+    },
+  },
 };
 */
 

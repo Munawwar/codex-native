@@ -30,15 +30,28 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(feature = "embed-anything")]
+use std::str::FromStr;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "embed-anything")]
+use embed_anything::Dtype;
+#[cfg(feature = "embed-anything")]
+use embed_anything::embeddings::embed::{Embedder, EmbedderBuilder, EmbeddingResult};
+#[cfg(feature = "embed-anything")]
+use embed_anything::embeddings::local::text_embedding::ONNXModel;
+#[cfg(feature = "embed-anything")]
+use sha1::{Digest, Sha1};
+
 use async_trait::async_trait;
 use codex_cloud_tasks_client as cloud;
 use codex_common::{ApprovalModeCliArg, CliConfigOverrides, SandboxModeCliArg};
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
+#[cfg(feature = "embed-anything")]
+use codex_core::config::find_codex_home;
 use codex_core::config::{Config, ConfigOverrides};
 use codex_core::default_client;
 use codex_core::find_conversation_path_by_id_str;
@@ -51,7 +64,7 @@ use codex_core::{
   create_function_tool_spec_from_schema, set_pending_external_interceptors,
   set_pending_external_tools,
 };
-use codex_exec::exec_events::ThreadEvent as ExecThreadEvent;
+use codex_exec::exec_events::{BackgroundEventEvent, ThreadEvent as ExecThreadEvent};
 use codex_exec::run_with_thread_event_callback;
 use codex_exec::{Cli, Color, Command, ResumeArgs};
 use codex_protocol::config_types::SandboxMode;
@@ -206,6 +219,58 @@ fn pending_builtin_calls() -> &'static Mutex<HashMap<String, PendingBuiltinCall>
   static CALLS: OnceLock<Mutex<HashMap<String, PendingBuiltinCall>>> = OnceLock::new();
   CALLS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+type ThreadEventHandler = Arc<Mutex<Box<dyn FnMut(ExecThreadEvent) + Send>>>;
+
+fn active_thread_handlers() -> &'static Mutex<HashMap<String, ThreadEventHandler>> {
+  static HANDLERS: OnceLock<Mutex<HashMap<String, ThreadEventHandler>>> = OnceLock::new();
+  HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_thread_handler(thread_id: &str, handler: &ThreadEventHandler) {
+  if let Ok(mut map) = active_thread_handlers().lock() {
+    map.insert(thread_id.to_string(), Arc::clone(handler));
+  }
+}
+
+fn unregister_thread_handler(thread_id: &str) {
+  if let Ok(mut map) = active_thread_handlers().lock() {
+    map.remove(thread_id);
+  }
+}
+
+fn dispatch_thread_event(handler: &ThreadEventHandler, event: ExecThreadEvent) -> napi::Result<()> {
+  let mut guard = handler
+    .lock()
+    .map_err(|e| napi::Error::from_reason(format!("thread handler mutex poisoned: {e}")))?;
+  (*guard)(event);
+  Ok(())
+}
+
+fn cleanup_thread_handler(slot: &Arc<Mutex<Option<String>>>) {
+  if let Ok(mut guard) = slot.lock() {
+    if let Some(id) = guard.take() {
+      unregister_thread_handler(&id);
+    }
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+#[cfg(feature = "embed-anything")]
+struct EmbedAnythingState {
+  embedder: Embedder,
+  namespace: String,
+}
+
+#[cfg(feature = "embed-anything")]
+impl EmbedAnythingState {
+  fn new(embedder: Embedder, namespace: String) -> Self {
+    Self { embedder, namespace }
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+static EMBED_ANYTHING_HANDLE: OnceLock<Arc<EmbedAnythingState>> = OnceLock::new();
 
 fn native_response_to_tool_output(
   response: NativeToolResponse,
@@ -430,6 +495,14 @@ pub async fn call_tool_builtin(
 
 #[derive(Clone)]
 #[napi(object)]
+pub struct JsEmitBackgroundEventRequest {
+  #[napi(js_name = "threadId")]
+  pub thread_id: String,
+  pub message: String,
+}
+
+#[derive(Clone)]
+#[napi(object)]
 pub struct JsEmitPlanUpdateRequest {
   pub thread_id: String,
   pub explanation: Option<String>,
@@ -465,6 +538,30 @@ pub struct JsPlanOperation {
 pub struct JsPlanUpdate {
   pub step: Option<String>,
   pub status: Option<String>,
+}
+
+#[napi]
+pub fn emit_background_event(req: JsEmitBackgroundEventRequest) -> napi::Result<()> {
+  let handler = {
+    let map = active_thread_handlers()
+      .lock()
+      .map_err(|e| napi::Error::from_reason(format!("thread handlers mutex poisoned: {e}")))?;
+    map.get(&req.thread_id).cloned()
+  };
+
+  let handler = handler.ok_or_else(|| {
+    napi::Error::from_reason(format!(
+      "No active run for thread {}. Mid-turn notifications require an ongoing runStreamed call.",
+      req.thread_id
+    ))
+  })?;
+
+  dispatch_thread_event(
+    &handler,
+    ExecThreadEvent::BackgroundEvent(BackgroundEventEvent {
+      message: req.message,
+    }),
+  )
 }
 
 #[napi]
@@ -1929,7 +2026,7 @@ fn event_to_json(event: &ExecThreadEvent) -> napi::Result<JsonValue> {
   }
 }
 
-fn run_internal_sync<F>(options: InternalRunRequest, mut handler: F) -> napi::Result<()>
+fn run_internal_sync<F>(options: InternalRunRequest, handler: F) -> napi::Result<()>
 where
   F: FnMut(ExecThreadEvent) + Send + 'static,
 {
@@ -1942,6 +2039,16 @@ where
   } else {
     None
   };
+
+  let handler_arc: ThreadEventHandler = Arc::new(Mutex::new(Box::new(handler)));
+  let handler_error: Arc<Mutex<Option<napi::Error>>> = Arc::new(Mutex::new(None));
+
+  let initial_thread_id = options.thread_id.clone();
+  let thread_id_slot = Arc::new(Mutex::new(initial_thread_id.clone()));
+
+  if let Some(id) = initial_thread_id {
+    register_thread_handler(&id, &handler_arc);
+  }
 
   if let Some(plan_args) = pending_plan {
     let todo_items: Vec<codex_exec::exec_events::TodoItem> = plan_args
@@ -1970,7 +2077,10 @@ where
     let plan_event = ExecThreadEvent::ItemCompleted(codex_exec::exec_events::ItemCompletedEvent {
       item: thread_item,
     });
-    handler(plan_event);
+    if let Err(err) = dispatch_thread_event(&handler_arc, plan_event) {
+      cleanup_thread_handler(&thread_id_slot);
+      return Err(err);
+    }
   }
 
   let schema_file = prepare_schema(options.output_schema.clone())?;
@@ -2027,21 +2137,39 @@ where
 
   let _env_guard = EnvOverrides::apply(env_pairs);
 
-  let handler_arc = Arc::new(Mutex::new(handler));
   let handler_for_callback = Arc::clone(&handler_arc);
+  let handler_error_for_callback = Arc::clone(&handler_error);
+  let thread_id_for_callback = Arc::clone(&thread_id_slot);
 
   let runtime = tokio::runtime::Runtime::new()
     .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
 
   runtime.block_on(async {
     run_with_thread_event_callback(cli, linux_sandbox_path, move |event| {
-      if let Ok(mut guard) = handler_for_callback.lock() {
-        (*guard)(event);
+      if let ExecThreadEvent::ThreadStarted(ev) = &event {
+        if let Ok(mut slot) = thread_id_for_callback.lock() {
+          *slot = Some(ev.thread_id.clone());
+        }
+        register_thread_handler(&ev.thread_id, &handler_for_callback);
+      }
+
+      if let Err(err) = dispatch_thread_event(&handler_for_callback, event) {
+        if let Ok(mut guard) = handler_error_for_callback.lock() {
+          *guard = Some(err);
+        }
       }
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))
-  })
+  })?;
+
+  if let Some(err) = handler_error.lock().unwrap().take() {
+    cleanup_thread_handler(&thread_id_slot);
+    return Err(err);
+  }
+
+  cleanup_thread_handler(&thread_id_slot);
+  Ok(())
 }
 
 #[napi]
@@ -2694,7 +2822,10 @@ fn extract_insight_from_json(value: &serde_json::Value) -> Option<String> {
     let texts: Vec<String> = content_array
       .iter()
       .filter_map(|item| {
-        item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+        item
+          .get("text")
+          .and_then(|t| t.as_str())
+          .map(|s| s.to_string())
       })
       .collect();
     if !texts.is_empty() {
@@ -2766,6 +2897,431 @@ pub async fn reverie_get_conversation_insights(
   insights.truncate(50);
 
   Ok(insights)
+}
+
+// ============================================================================
+// Section 7: EmbedAnything Integration
+// ============================================================================
+
+#[napi(object)]
+pub struct EmbedAnythingInitOptions {
+  pub backend: Option<String>,
+  pub model_architecture: String,
+  pub model_id: Option<String>,
+  pub revision: Option<String>,
+  pub token: Option<String>,
+  pub dtype: Option<String>,
+  pub onnx_model: Option<String>,
+  pub api_key: Option<String>,
+  pub path_in_repo: Option<String>,
+}
+
+#[napi(object)]
+pub struct EmbedAnythingEmbedRequest {
+  pub inputs: Vec<String>,
+  pub batch_size: Option<u32>,
+  pub late_chunking: Option<bool>,
+  pub normalize: Option<bool>,
+  pub project_root: Option<String>,
+  pub cache: Option<bool>,
+}
+
+#[cfg(feature = "embed-anything")]
+struct EmbeddingCache {
+  directory: PathBuf,
+}
+
+#[cfg(feature = "embed-anything")]
+impl EmbeddingCache {
+  async fn new(
+    namespace: &str,
+    project_root: Option<&str>,
+  ) -> napi::Result<Option<Self>> {
+    let Some(codex_home) = resolve_codex_home_for_cache() else {
+      return Ok(None);
+    };
+    let Some(project_key_source) = resolve_project_root_string(project_root) else {
+      return Ok(None);
+    };
+    let project_hash = hash_string(&project_key_source);
+    let directory = codex_home
+      .join("embeddings")
+      .join(project_hash)
+      .join(namespace);
+    tokio::fs::create_dir_all(&directory).await.map_err(|err| {
+      napi::Error::from_reason(format!(
+        "Failed to prepare embedding cache directory {}: {err}",
+        directory.display()
+      ))
+    })?;
+    Ok(Some(Self { directory }))
+  }
+
+  async fn read(&self, text: &str) -> Option<Vec<f32>> {
+    let key = hash_string(text);
+    let path = self.directory.join(format!("{key}.json"));
+    match tokio::fs::read(&path).await {
+      Ok(bytes) => match serde_json::from_slice::<Vec<f32>>(&bytes) {
+        Ok(vector) => Some(vector),
+        Err(err) => {
+          eprintln!(
+            "codex-native: failed to parse embedding cache {}: {err}",
+            path.display()
+          );
+          None
+        }
+      },
+      Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+      Err(err) => {
+        eprintln!(
+          "codex-native: failed to read embedding cache {}: {err}",
+          path.display()
+        );
+        None
+      }
+    }
+  }
+
+  async fn write(&self, text: &str, vector: &[f32]) {
+    let key = hash_string(text);
+    let file_name = format!("{key}.json");
+    let path = self.directory.join(&file_name);
+    let temp_name = format!("{file_name}.tmp-{}", Uuid::new_v4());
+    let temp_path = self.directory.join(temp_name);
+    let payload = match serde_json::to_vec(vector) {
+      Ok(bytes) => bytes,
+      Err(err) => {
+        eprintln!("codex-native: failed to serialize embedding cache entry: {err}");
+        return;
+      }
+    };
+    if let Err(err) = tokio::fs::write(&temp_path, payload).await {
+      eprintln!(
+        "codex-native: failed to write temporary embedding cache file {}: {err}",
+        temp_path.display()
+      );
+      return;
+    }
+    if let Err(err) = tokio::fs::rename(&temp_path, &path).await {
+      let _ = tokio::fs::remove_file(&temp_path).await;
+      eprintln!(
+        "codex-native: failed to finalise embedding cache file {}: {err}",
+        path.display()
+      );
+    }
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+fn resolve_codex_home_for_cache() -> Option<PathBuf> {
+  if let Ok(path) = find_codex_home() {
+    return Some(path);
+  }
+  if let Ok(home) = std::env::var("HOME") {
+    return Some(PathBuf::from(home).join(".codex"));
+  }
+  None
+}
+
+#[cfg(feature = "embed-anything")]
+fn resolve_project_root_string(project_root: Option<&str>) -> Option<String> {
+  if let Some(root) = project_root {
+    return Some(canonicalize_to_string(Path::new(root)));
+  }
+  let cwd = std::env::current_dir().ok()?;
+  Some(canonicalize_to_string(&cwd))
+}
+
+#[cfg(feature = "embed-anything")]
+fn canonicalize_to_string(path: &Path) -> String {
+  match std::fs::canonicalize(path) {
+    Ok(canonical) => canonical.to_string_lossy().into_owned(),
+    Err(_) => path.to_string_lossy().into_owned(),
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+fn hash_string(value: &str) -> String {
+  let mut hasher = Sha1::new();
+  hasher.update(value.as_bytes());
+  format!("{:x}", hasher.finalize())
+}
+
+#[cfg(feature = "embed-anything")]
+fn derive_embedder_namespace(opts: &EmbedAnythingInitOptions) -> String {
+  let descriptor = format!(
+    "{}|{}|{}|{}|{}|{}|{}",
+    opts.backend.as_deref().unwrap_or("hf"),
+    opts.model_architecture,
+    opts.model_id.as_deref().unwrap_or(""),
+    opts.revision.as_deref().unwrap_or(""),
+    opts.dtype.as_deref().unwrap_or(""),
+    opts.onnx_model.as_deref().unwrap_or(""),
+    opts.path_in_repo.as_deref().unwrap_or("")
+  );
+  hash_string(&descriptor)
+}
+
+#[napi(js_name = "embedAnythingInit")]
+#[allow(unused_variables)]
+pub async fn embed_anything_init(opts: EmbedAnythingInitOptions) -> napi::Result<()> {
+  #[cfg(feature = "embed-anything")]
+  {
+    if EMBED_ANYTHING_HANDLE.get().is_some() {
+      return Ok(());
+    }
+    let embedder = build_embedder_from_options(&opts)?;
+    let namespace = derive_embedder_namespace(&opts);
+    let state = EmbedAnythingState::new(embedder, namespace);
+    EMBED_ANYTHING_HANDLE
+      .set(Arc::new(state))
+      .map_err(|_| napi::Error::from_reason("EmbedAnything already initialised"))?;
+    Ok(())
+  }
+  #[cfg(not(feature = "embed-anything"))]
+  {
+    let _ = opts;
+    Err(napi::Error::from_reason(
+      "EmbedAnything support is disabled. Rebuild with the 'embed-anything' feature.",
+    ))
+  }
+}
+
+#[napi(js_name = "embedAnythingEmbed")]
+#[allow(unused_variables)]
+pub async fn embed_anything_embed(req: EmbedAnythingEmbedRequest) -> napi::Result<Vec<Vec<f32>>> {
+  #[cfg(feature = "embed-anything")]
+  {
+    let handle = EMBED_ANYTHING_HANDLE
+      .get()
+      .cloned()
+      .ok_or_else(|| napi::Error::from_reason("EmbedAnything not initialised"))?;
+    let EmbedAnythingEmbedRequest {
+      inputs,
+      batch_size,
+      late_chunking,
+      normalize,
+      project_root,
+      cache,
+    } = req;
+    if inputs.is_empty() {
+      return Ok(Vec::new());
+    }
+    let should_normalize = normalize.unwrap_or(false);
+    let batch_size = batch_size.map(|value| value as usize);
+    let use_cache = cache.unwrap_or(true);
+    let cache_handle = if use_cache {
+      EmbeddingCache::new(&handle.namespace, project_root.as_deref()).await?
+    } else {
+      None
+    };
+
+    let mut ordered_vectors: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
+    if let Some(cache_ref) = cache_handle.as_ref() {
+      for (idx, text) in inputs.iter().enumerate() {
+        if let Some(vector) = cache_ref.read(text).await {
+          ordered_vectors[idx] = Some(vector);
+        }
+      }
+    }
+
+    let mut missing_indices = Vec::new();
+    let mut missing_refs = Vec::new();
+    for (idx, maybe_vector) in ordered_vectors.iter().enumerate() {
+      if maybe_vector.is_none() {
+        missing_indices.push(idx);
+        missing_refs.push(inputs[idx].as_str());
+      }
+    }
+
+    if !missing_refs.is_empty() {
+      let embedder = &handle.embedder;
+      let embeddings = embedder
+        .embed(&missing_refs, batch_size, late_chunking)
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("EmbedAnything embed failed: {e}")))?;
+      if embeddings.len() != missing_refs.len() {
+        return Err(napi::Error::from_reason(
+          "EmbedAnything returned an unexpected number of embeddings",
+        ));
+      }
+      for (result_idx, embedding) in embeddings.into_iter().enumerate() {
+        let idx = missing_indices[result_idx];
+        let mut dense = embedding_result_to_vec(embedding)?;
+        if should_normalize {
+          normalize_vector(&mut dense);
+        }
+        if let Some(cache_ref) = cache_handle.as_ref() {
+          cache_ref.write(&inputs[idx], &dense).await;
+        }
+        ordered_vectors[idx] = Some(dense);
+      }
+    }
+
+    let mut vectors = Vec::with_capacity(inputs.len());
+    for (idx, maybe_vector) in ordered_vectors.into_iter().enumerate() {
+      if let Some(vector) = maybe_vector {
+        vectors.push(vector);
+      } else {
+        return Err(napi::Error::from_reason(format!(
+          "Missing embedding output for input #{idx}",
+        )));
+      }
+    }
+    Ok(vectors)
+  }
+  #[cfg(not(feature = "embed-anything"))]
+  {
+    let _ = req;
+    Err(napi::Error::from_reason(
+      "EmbedAnything support is disabled. Rebuild with the 'embed-anything' feature.",
+    ))
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+fn build_embedder_from_options(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
+  let backend = opts.backend.as_deref().unwrap_or("hf").to_lowercase();
+  match backend.as_str() {
+    "hf" => build_hf_embedder(opts),
+    "onnx" => build_onnx_embedder(opts),
+    "cloud" => build_cloud_embedder(opts),
+    other => Err(napi::Error::from_reason(format!(
+      "Unsupported embedder backend '{other}'. Expected 'hf', 'onnx', or 'cloud'."
+    ))),
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+fn build_hf_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
+  let model_id = opts
+    .model_id
+    .as_deref()
+    .ok_or_else(|| napi::Error::from_reason("model_id is required for hf backend"))?;
+  let mut builder = EmbedderBuilder::new()
+    .model_architecture(&opts.model_architecture)
+    .model_id(Some(model_id));
+  if let Some(revision) = opts.revision.as_deref() {
+    builder = builder.revision(Some(revision));
+  }
+  if let Some(token) = opts.token.as_deref() {
+    builder = builder.token(Some(token));
+  }
+  if let Some(dtype) = parse_dtype(opts.dtype.as_deref()) {
+    builder = builder.dtype(Some(dtype));
+  }
+  builder
+    .from_pretrained_hf()
+    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise HF embedder: {e}")))
+}
+
+#[cfg(feature = "embed-anything")]
+fn build_onnx_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
+  let mut builder = EmbedderBuilder::new().model_architecture(&opts.model_architecture);
+  if let Some(model_id) = opts.model_id.as_deref() {
+    builder = builder.model_id(Some(model_id));
+  }
+  if let Some(revision) = opts.revision.as_deref() {
+    builder = builder.revision(Some(revision));
+  }
+  if let Some(path) = opts.path_in_repo.as_deref() {
+    builder = builder.path_in_repo(Some(path));
+  }
+  if let Some(dtype) = parse_dtype(opts.dtype.as_deref()) {
+    builder = builder.dtype(Some(dtype));
+  }
+  if let Some(token) = opts.token.as_deref() {
+    builder = builder.token(Some(token));
+  }
+  if let Some(name) = opts.onnx_model.as_deref() {
+    let parsed = ONNXModel::from_str(name)
+      .map_err(|_| napi::Error::from_reason(format!("Unknown ONNX model identifier '{name}'")))?;
+    builder = builder.onnx_model_id(Some(parsed));
+  }
+  builder
+    .from_pretrained_onnx()
+    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise ONNX embedder: {e}")))
+}
+
+#[cfg(feature = "embed-anything")]
+fn build_cloud_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
+  let model_id = opts
+    .model_id
+    .as_deref()
+    .ok_or_else(|| napi::Error::from_reason("model_id is required for cloud backend"))?;
+  let mut builder = EmbedderBuilder::new()
+    .model_architecture(&opts.model_architecture)
+    .model_id(Some(model_id));
+  if let Some(api_key) = opts.api_key.as_deref() {
+    builder = builder.api_key(Some(api_key));
+  }
+  builder
+    .from_pretrained_cloud()
+    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise cloud embedder: {e}")))
+}
+
+#[cfg(feature = "embed-anything")]
+fn parse_dtype(value: Option<&str>) -> Option<Dtype> {
+  value.and_then(|dtype| match dtype.to_lowercase().as_str() {
+    "f16" => Some(Dtype::F16),
+    "f32" => Some(Dtype::F32),
+    "int8" => Some(Dtype::INT8),
+    "uint8" => Some(Dtype::UINT8),
+    "q4" => Some(Dtype::Q4),
+    "bnb4" => Some(Dtype::BNB4),
+    _ => None,
+  })
+}
+
+#[cfg(feature = "embed-anything")]
+fn embedding_result_to_vec(result: EmbeddingResult) -> napi::Result<Vec<f32>> {
+  match result {
+    EmbeddingResult::DenseVector(vec) => Ok(vec),
+    EmbeddingResult::MultiVector(chunks) => {
+      if chunks.is_empty() {
+        return Err(napi::Error::from_reason(
+          "Received empty multi-vector embedding",
+        ));
+      }
+      let dimension = chunks[0].len();
+      if dimension == 0 {
+        return Err(napi::Error::from_reason(
+          "Received zero-dimension embedding",
+        ));
+      }
+      let mut accum = vec![0f32; dimension];
+      for chunk in &chunks {
+        if chunk.len() != dimension {
+          return Err(napi::Error::from_reason(
+            "Multi-vector embedding chunks had mismatched dimensions",
+          ));
+        }
+        for (idx, value) in chunk.iter().enumerate() {
+          accum[idx] += *value;
+        }
+      }
+      let scale = chunks.len() as f32;
+      if scale > 0.0 {
+        for value in &mut accum {
+          *value /= scale;
+        }
+      }
+      Ok(accum)
+    }
+  }
+}
+
+#[cfg(feature = "embed-anything")]
+fn normalize_vector(vec: &mut [f32]) {
+  let norm = vec
+    .iter()
+    .fold(0f64, |sum, value| sum + (*value as f64) * (*value as f64))
+    .sqrt();
+  if norm > 0.0 {
+    for value in vec {
+      *value = (*value as f64 / norm) as f32;
+    }
+  }
 }
 
 // ============================================================================

@@ -61,6 +61,10 @@ export type {
   CommitReview,
   CustomReview,
 } from "./reviewOptions";
+export type {
+  EmbedAnythingInitOptions,
+  EmbedAnythingEmbedRequest,
+} from "./nativeBinding";
 
 // OpenAI Agents framework integration
 export { CodexProvider, codexTool } from "./agents";
@@ -86,6 +90,8 @@ export {
   reverieListConversations,
   reverieSearchConversations,
   reverieGetConversationInsights,
+  embedAnythingInit,
+  embedAnythingEmbed,
   tokenizerCount,
   tokenizerEncode,
   tokenizerDecode,

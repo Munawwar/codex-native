@@ -68,6 +68,28 @@ for await (const event of events) {
 }
 ```
 
+### Mid-turn notifications
+
+You can publish lightweight updates during an active turn without adding another user
+message. Call `thread.sendBackgroundEvent()` inside a `runStreamed()` loop after the
+turn has started:
+
+```typescript
+const { events } = await thread.runStreamed("Generate the release notes");
+
+for await (const event of events) {
+  if (event.type === "turn.started") {
+    await thread.sendBackgroundEvent("Gathering changelog entries…");
+  } else if (event.type === "background_event") {
+    console.log(event.message);
+  }
+}
+```
+
+The streaming API surfaces these as `background_event` items so downstream consumers
+can display progress indicators or status notifications while the agent continues its
+turn.
+
 ### Structured output
 
 The Codex agent can produce a JSON response that conforms to a specified schema. The schema

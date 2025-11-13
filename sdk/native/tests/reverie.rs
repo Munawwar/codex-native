@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 use codex_native::{
   reverie_get_conversation_insights, reverie_list_conversations, reverie_search_conversations,
 };
+use codex_protocol::ConversationId;
 use codex_protocol::models::{ContentItem, ResponseItem};
 use codex_protocol::protocol::{
-  EventMsg, RolloutItem, RolloutLine, SessionMeta, SessionMetaLine, SessionSource,
-  UserMessageEvent,
+  EventMsg, RolloutItem, RolloutLine, SessionMeta, SessionMetaLine, SessionSource, UserMessageEvent,
 };
-use codex_protocol::ConversationId;
 
 fn write_rollout_file<P: AsRef<Path>>(path: P, items: &[RolloutLine]) {
   let parent = path.as_ref().parent().unwrap();

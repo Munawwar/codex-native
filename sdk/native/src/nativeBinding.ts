@@ -65,6 +65,11 @@ export type NativeTuiRequest = {
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
+export type NativeEmitBackgroundEventRequest = {
+  threadId: string;
+  message: string;
+};
+
 export type NativeEmitPlanUpdateRequest = {
   threadId: string;
   explanation?: string;
@@ -138,6 +143,31 @@ export type ReverieSearchResult = {
 };
 
 // ============================================================================
+// EmbedAnything Types
+// ============================================================================
+
+export type EmbedAnythingInitOptions = {
+  backend?: "hf" | "onnx" | "cloud";
+  modelArchitecture: string;
+  modelId?: string;
+  revision?: string;
+  token?: string;
+  dtype?: string;
+  onnxModel?: string;
+  apiKey?: string;
+  pathInRepo?: string;
+};
+
+export type EmbedAnythingEmbedRequest = {
+  inputs: string[];
+  batchSize?: number;
+  lateChunking?: boolean;
+  normalize?: boolean;
+  projectRoot?: string;
+  cache?: boolean;
+};
+
+// ============================================================================
 // Tokenizer Types
 // ============================================================================
 
@@ -172,6 +202,7 @@ export type NativeBinding = {
   registerApprovalCallback?(
     handler: (request: ApprovalRequest) => boolean | Promise<boolean>,
   ): void;
+  emitBackgroundEvent(request: NativeEmitBackgroundEventRequest): Promise<void>;
   emitPlanUpdate(request: NativeEmitPlanUpdateRequest): Promise<void>;
   modifyPlan(request: NativeModifyPlanRequest): Promise<void>;
   startTui?(request: NativeTuiRequest): NativeTuiSession;
@@ -209,6 +240,9 @@ export type NativeBinding = {
   reverieListConversations(codexHomePath: string, limit?: number, offset?: number): Promise<ReverieConversation[]>;
   reverieSearchConversations(codexHomePath: string, query: string, limit?: number): Promise<ReverieSearchResult[]>;
   reverieGetConversationInsights(conversationPath: string, query?: string): Promise<string[]>;
+  // EmbedAnything hooks
+  embedAnythingInit?(options: EmbedAnythingInitOptions): Promise<void>;
+  embedAnythingEmbed?(request: EmbedAnythingEmbedRequest): Promise<number[][]>;
   // Tokenizer helpers
   tokenizerCount(text: string, options?: TokenizerOptions): number;
   tokenizerEncode(text: string, options?: TokenizerEncodeOptions): number[];
@@ -389,6 +423,19 @@ export async function reverieGetConversationInsights(
   const binding = getNativeBinding();
   if (!binding?.reverieGetConversationInsights) throw new Error("Native binding not available or reverie functions not supported");
   return (binding as any).reverieGetConversationInsights(conversationPath, query);
+}
+
+// EmbedAnything helpers
+export async function embedAnythingInit(options: EmbedAnythingInitOptions): Promise<void> {
+  const binding = getNativeBinding();
+  if (!binding?.embedAnythingInit) throw new Error("Native binding not available or embed functions not supported");
+  await binding.embedAnythingInit(options);
+}
+
+export async function embedAnythingEmbed(request: EmbedAnythingEmbedRequest): Promise<number[][]> {
+  const binding = getNativeBinding();
+  if (!binding?.embedAnythingEmbed) throw new Error("Native binding not available or embed functions not supported");
+  return binding.embedAnythingEmbed(request);
 }
 
 // Tokenizer helpers

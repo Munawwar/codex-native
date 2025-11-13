@@ -22,6 +22,33 @@ export declare function cloudTasksList(envFilter?: string | undefined | null, ba
 
 export declare function compactThread(req: RunRequest): Promise<Array<string>>
 
+export declare function embedAnythingEmbed(req: EmbedAnythingEmbedRequest): Promise<Array<Array<number>>>
+
+export interface EmbedAnythingEmbedRequest {
+  inputs: Array<string>
+  batchSize?: number
+  lateChunking?: boolean
+  normalize?: boolean
+  projectRoot?: string
+  cache?: boolean
+}
+
+export declare function embedAnythingInit(opts: EmbedAnythingInitOptions): Promise<void>
+
+export interface EmbedAnythingInitOptions {
+  backend?: string
+  modelArchitecture: string
+  modelId?: string
+  revision?: string
+  token?: string
+  dtype?: string
+  onnxModel?: string
+  apiKey?: string
+  pathInRepo?: string
+}
+
+export declare function emitBackgroundEvent(req: JsEmitBackgroundEventRequest): void
+
 export declare function emitPlanUpdate(req: JsEmitPlanUpdateRequest): void
 
 export declare function evAssistantMessage(id: string, text: string): string
@@ -58,6 +85,11 @@ export declare function forkThread(req: ForkRequest): Promise<ForkResult>
 export interface JsApprovalRequest {
   type: string
   details?: JsonValue
+}
+
+export interface JsEmitBackgroundEventRequest {
+  threadId: string
+  message: string
 }
 
 export interface JsEmitPlanUpdateRequest {

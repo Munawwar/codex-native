@@ -63,6 +63,12 @@ function convertRustEventToThreadEvent(rustEvent: any): ThreadEvent {
       message: rustEvent.Error.message,
     };
   }
+  if (rustEvent.type === "background_event" && typeof rustEvent.message === "string") {
+    return {
+      type: "background_event",
+      message: rustEvent.message,
+    };
+  }
   // Handle plan_update_scheduled synthetic event
   if (rustEvent.type === "plan_update_scheduled" && rustEvent.plan) {
     const planData = rustEvent.plan;
@@ -196,6 +202,27 @@ export class Thread {
     if (index !== -1) {
       this._eventListeners.splice(index, 1);
     }
+  }
+
+  /**
+   * Emit a background notification while the agent is running the current turn.
+   * The message is surfaced to event subscribers but does not modify the user input queue.
+   *
+   * @throws Error if the thread has not been started yet.
+   */
+  async sendBackgroundEvent(message: string): Promise<void> {
+    const trimmed = message?.toString();
+    if (!trimmed || trimmed.trim().length === 0) {
+      throw new Error("Background event message must be a non-empty string");
+    }
+    if (!this._id) {
+      throw new Error("Cannot emit a background event before the thread has started");
+    }
+    const binding = getNativeBinding();
+    if (!binding || typeof binding.emitBackgroundEvent !== "function") {
+      throw new Error("emitBackgroundEvent is not available in this build");
+    }
+    await binding.emitBackgroundEvent({ threadId: this._id, message: trimmed });
   }
 
   /**

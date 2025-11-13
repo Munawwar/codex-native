@@ -17,6 +17,8 @@ anyhow = "1"
 ratatui = "0.29.0"
 vt100 = "0.16.2"
 regex = "1"
+sha1 = "0.10"
+embed_anything = { version = "0.6.5", optional = true }
 
 [dependencies.napi]
 version = "3"
@@ -73,8 +75,9 @@ napi-build = "2"
 pretty_assertions = "1"
 
 [features]
-default = []
+default = ["embed-anything", "napi-bindings"]
 napi-bindings = ["napi", "napi-derive"]
+embed-anything = ["dep:embed_anything"]
 
 [profile.release]
 lto = true
