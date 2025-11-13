@@ -27,7 +27,8 @@ use sha1::{Digest, Sha1};
 use async_trait::async_trait;
 use codex_cloud_tasks_client as cloud;
 use codex_common::{ApprovalModeCliArg, CliConfigOverrides, SandboxModeCliArg};
-use codex_core::config::{find_codex_home, Config, ConfigOverrides};
+use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
+use codex_core::config::{Config, ConfigOverrides, find_codex_home};
 use codex_core::default_client;
 use codex_core::find_conversation_path_by_id_str;
 use codex_core::git_info::get_git_repo_root;
@@ -39,7 +40,6 @@ use codex_core::{
   create_function_tool_spec_from_schema, set_pending_external_interceptors,
   set_pending_external_tools,
 };
-use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_exec::exec_events::{BackgroundEventEvent, ThreadEvent as ExecThreadEvent};
 use codex_exec::run_with_thread_event_callback;
 use codex_exec::{Cli, Color, Command, ResumeArgs};
@@ -55,10 +55,10 @@ use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 use ratatui::prelude::CrosstermBackend;
-use serde_json::json;
-use serde_json::json as serde_json_json;
 use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
+use serde_json::json;
+use serde_json::json as serde_json_json;
 use std::fmt;
 use std::io::{self, Write};
 use tempfile::NamedTempFile;

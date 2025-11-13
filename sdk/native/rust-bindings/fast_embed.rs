@@ -296,7 +296,7 @@ fn hash_string(value: &str) -> String {
 fn derive_fastembed_namespace(opts: &TextInitOptions) -> String {
   let descriptor = format!(
     "fastembed|{}|{}|{}|{}",
-    opts.model_name.to_string(),
+    opts.model_name,
     opts.max_length,
     opts.cache_dir.display(),
     opts.show_download_progress

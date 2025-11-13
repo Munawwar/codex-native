@@ -837,10 +837,9 @@ where
         register_thread_handler(&ev.thread_id, &handler_for_callback);
       }
 
-      if let Err(err) = dispatch_thread_event(&handler_for_callback, event) {
-        if let Ok(mut guard) = handler_error_for_callback.lock() {
+      if let Err(err) = dispatch_thread_event(&handler_for_callback, event)
+        && let Ok(mut guard) = handler_error_for_callback.lock() {
           *guard = Some(err);
-        }
       }
     })
     .await

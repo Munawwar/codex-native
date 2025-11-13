@@ -37,6 +37,8 @@ import {
   type FastEmbedInitOptions,
   type FastEmbedEmbedRequest,
 } from "@codex-native/sdk";
+import type { JsonSchemaDefinition } from "@openai/agents-core";
+import zodToJsonSchema from "zod-to-json-schema";
 
 const DEFAULT_MODEL = "gpt-5-codex";
 const DEFAULT_MINI_MODEL = "gpt-5-codex-mini";
@@ -60,6 +62,7 @@ type MultiAgentConfig = {
   model?: string;
   baseBranchOverride?: string;
   embedder?: FastEmbedConfig;
+  suppressedChecks?: Array<"lint" | "tests" | "build">;
 };
 
 type FastEmbedConfig = {
@@ -72,27 +75,12 @@ const IntentionSchema = z.object({
     .enum(["Feature", "Refactor", "BugFix", "Performance", "Security", "DevEx", "Architecture", "Testing"])
     .describe("High-level intention category"),
   title: z.string().min(5).max(160),
-  summary: z.string().min(10).max(400),
+  summary: z.string().min(10).max(800),
   impactScope: z.enum(["local", "module", "system"]).default("module"),
   evidence: z.array(z.string()).default([]),
 });
 type Intention = z.infer<typeof IntentionSchema>;
 const IntentionListSchema = z.array(IntentionSchema).min(1).max(12);
-
-const RiskSchema = z.object({
-  category: z
-    .enum(["Architecture", "Quality", "Security", "Performance", "Process", "Testing", "Dependency", "Regression"])
-    .describe("Risk grouping"),
-  title: z.string().min(5).max(140),
-  likelihood: z.enum(["High", "Medium", "Low"]),
-  impact: z.enum(["Critical", "High", "Medium", "Low"]),
-  detectability: z.enum(["Pre-merge", "Post-merge", "Silent"]).default("Post-merge"),
-  description: z.string().min(10).max(400),
-  mitigation: z.string().min(5).max(400).optional().default(""),
-  evidence: z.array(z.string()).default([]),
-});
-type Risk = z.infer<typeof RiskSchema>;
-const RiskListSchema = z.array(RiskSchema).min(1).max(10);
 
 const RecommendationSchema = z.object({
   category: z.enum(["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"]),
@@ -130,6 +118,28 @@ const CiFixSchema = z.object({
 type CiFix = z.infer<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
 
+function buildJsonSchemaFromZod(schema: z.ZodTypeAny, name: string) {
+  const json = zodToJsonSchema(schema, name, { target: "openAi" }) as any;
+  if (json?.definitions?.[name]) {
+    return json.definitions[name];
+  }
+  return json;
+}
+
+function buildJsonOutputType(schema: z.ZodTypeAny, name: string): JsonSchemaDefinition {
+  return {
+    type: "json_schema",
+    name,
+    strict: true,
+    schema: buildJsonSchemaFromZod(schema, name),
+  };
+}
+
+const IntentionOutputType = buildJsonOutputType(IntentionListSchema, "Intentions");
+const RecommendationOutputType = buildJsonOutputType(RecommendationListSchema, "Recommendations");
+const CiIssueOutputType = buildJsonOutputType(CiIssueListSchema, "CiIssueList");
+const CiFixOutputType = buildJsonOutputType(CiFixListSchema, "CiFixList");
+
 type RepoContext = {
   cwd: string;
   branch: string;
@@ -161,7 +171,6 @@ type PrStatusSummary = {
 type ReviewAnalysis = {
   summary: string;
   intentions: Intention[];
-  risks: Risk[];
   recommendations: Recommendation[];
   repoContext: RepoContext;
   prStatus?: PrStatusSummary | null;
@@ -188,6 +197,30 @@ type ProcessedReverie = ReverieResult & {
   rawRelevance: number;
   headRecords: string[];
   tailRecords: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+const CONFIG: MultiAgentConfig = {
+  workingDirectory: process.cwd(),
+  skipGitRepoCheck: true,
+  reviewBranch: true,
+  ciCheck: true,
+  interactive: false,
+  model: DEFAULT_MODEL,
+  // Default to a heavier preset for production agents (tests can override with bge-small/e5-small).
+  embedder: {
+    initOptions: {
+      model: "BAAI/bge-large-en-v1.5",
+    },
+    embedRequest: {
+      normalize: true,
+      cache: true,
+    },
+  },
+  suppressedChecks: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -395,59 +428,6 @@ Categories: Feature, Refactor, BugFix, Performance, Security, DevEx, Architectur
 - Distinguish between primary goals and secondary effects
 - Each bullet should be actionable for follow-up analysis`,
     });
-    const riskAssessor = new Agent({
-      name: "RiskAssessor",
-      model,
-      instructions: `# Risk Assessment Agent
-
-You are assessing risks, regressions, and rollout concerns for code changes.
-
-## Your Task
-Identify concrete risks that could impact production, users, or development workflow.
-
-## Risk Categories
-1. **Breaking Changes**: API changes, behavior modifications, removed features
-2. **Performance Regressions**: Algorithm changes, resource usage, latency impact
-3. **Correctness Risks**: Logic errors, edge cases, race conditions
-4. **Security Vulnerabilities**: Auth bypasses, injection risks, data exposure
-5. **Operational Risks**: Migration complexity, rollback difficulty, monitoring gaps
-6. **Dependency Risks**: Version conflicts, supply chain, deprecations
-
-## Assessment Framework
-For each risk, evaluate:
-- **Likelihood**: How probable is this to occur? (High/Medium/Low)
-- **Impact**: What's the blast radius if it occurs? (Critical/High/Medium/Low)
-- **Detectability**: Will we catch this before production? (Pre-deploy/Post-deploy/Silent)
-
-## Output Format
-Provide 4-8 risks in this format:
-- **[Category] Risk Title**
-  - **L**ikelihood: [H/M/L] | **I**mpact: [Critical/High/Medium/Low] | **D**etectability: [Pre/Post/Silent]
-  - Description: What could go wrong and under what conditions
-  - Evidence: Specific code locations or patterns that raise this concern
-  - Mitigation: Brief suggestion for reducing risk
-
-## Constraints
-- Focus on risks introduced or amplified by THIS change, not pre-existing issues
-- Be concrete - cite specific files, functions, or scenarios
-- Differentiate between theoretical risks and likely risks
-- Avoid false positives - only flag concerns you can substantiate`,
-    });
-    riskAssessor.instructions += `
-## JSON Output
-Respond ONLY with raw JSON objects like:
-[
-  {
-    "category": "Architecture|Quality|Security|Performance|Process|Testing|Dependency|Regression",
-    "title": "risk title",
-    "likelihood": "High|Medium|Low",
-    "impact": "Critical|High|Medium|Low",
-    "detectability": "Pre-merge|Post-merge|Silent",
-    "description": "what could go wrong",
-    "mitigation": "suggested mitigation",
-    "evidence": ["path/to/file.ts:45 - reason"]
-  }
-]`;
     intentionAnalyzer.instructions += `
 ## JSON Output
 Respond ONLY with raw JSON (no prose, no backticks) shaped like:
@@ -519,8 +499,8 @@ Respond ONLY with raw JSON matching:
   }
 ]`;
 
-    intentionAnalyzer.handoffs = [handoff(riskAssessor), handoff(qualityReviewer)];
-    riskAssessor.handoffs = [handoff(qualityReviewer)];
+    intentionAnalyzer.handoffs = [handoff(qualityReviewer)];
+    qualityReviewer.handoffs = [];
 
     const intentionResult = await this.runner.run(
       intentionAnalyzer,
@@ -1234,132 +1214,8 @@ const config: MultiAgentConfig = {
 };
 */
 
-// ---------------------------------------------------------------------------
-// CLI parsing
-// ---------------------------------------------------------------------------
-
-function parseArgs(): MultiAgentConfig {
-  const args = process.argv.slice(2);
-  const config: MultiAgentConfig = {
-    workingDirectory: process.cwd(),
-    skipGitRepoCheck: true,
-  };
-
-  let embedderModel: string | undefined;
-  let embedderMaxLength: number | undefined;
-  let embedderCacheDir: string | undefined;
-  let embedderCacheEnabled = true;
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    switch (arg) {
-      case "--review-branch":
-        config.reviewBranch = true;
-        break;
-      case "--ci-check":
-        config.ciCheck = true;
-        break;
-      case "--interactive":
-      case "-i":
-        config.interactive = true;
-        break;
-      case "--reverie":
-      case "--search":
-        config.reverieQuery = args[++i];
-        break;
-      case "--model":
-        config.model = args[++i];
-        break;
-      case "--base-branch":
-        config.baseBranchOverride = args[++i];
-        break;
-      case "--cwd":
-      case "--working-dir":
-        config.workingDirectory = path.resolve(args[++i]);
-        break;
-      case "--api-key":
-        config.apiKey = args[++i];
-        break;
-      case "--base-url":
-        config.baseUrl = args[++i];
-        break;
-      case "--embedder-model":
-        embedderModel = args[++i];
-        break;
-      case "--embedder-max-length":
-        embedderMaxLength = Number(args[++i]);
-        break;
-      case "--embedder-cache-dir":
-        embedderCacheDir = args[++i];
-        break;
-      case "--embedder-no-cache":
-        embedderCacheEnabled = false;
-        break;
-      case "--help":
-      case "-h":
-        printUsage();
-        process.exit(0);
-        break;
-      default:
-        if (!arg.startsWith("--")) {
-          config.reverieQuery = arg;
-        }
-        break;
-    }
-  }
-
-  // Configure embedder if any embedder options were provided
-  if (
-    embedderModel ||
-    embedderCacheDir ||
-    embedderMaxLength !== undefined ||
-    !embedderCacheEnabled
-  ) {
-    const normalizedMaxLength =
-      embedderMaxLength !== undefined && Number.isFinite(embedderMaxLength)
-        ? Math.max(1, Math.floor(embedderMaxLength))
-        : undefined;
-    config.embedder = {
-      initOptions: {
-        model: embedderModel,
-        cacheDir: embedderCacheDir,
-        maxLength: normalizedMaxLength,
-      },
-      embedRequest: {
-        normalize: true,
-        cache: embedderCacheEnabled,
-      },
-    };
-  }
-
-  return config;
-}
-
-function printUsage(): void {
-  console.log(`
-Multi-Agent Codex System
-Usage: npx tsx multi-agent-codex-system.ts [options]
-
-Options:
-  --review-branch          Run automated branch review before handing to TUI
-  --ci-check               Run CI prediction & fixer workflow
-  --reverie <query>        Look up prior learnings (placeholder)
-  --interactive, -i        Launch TUIs for each stage
-  --model <name>           Override default model (default ${DEFAULT_MODEL})
-  --base-branch <name>     Override detected base branch
-  --cwd <path>             Working directory (default: cwd)
-  --api-key <key>          Codex API key
-  --base-url <url>         Codex API base URL
-  --embedder-model <id>        FastEmbed model ID (e.g., BAAI/bge-large-en-v1.5)
-  --embedder-max-length <n>    Override FastEmbed tokenizer max length
-  --embedder-cache-dir <path>  Override FastEmbed model cache directory
-  --embedder-no-cache          Disable on-disk embedding cache
-  --help                   Show this message
-`);
-}
-
 async function main(): Promise<void> {
-  const config = parseArgs();
+  const config: MultiAgentConfig = { ...CONFIG };
   if (config.interactive && (!process.stdout.isTTY || !process.stdin.isTTY)) {
     console.error("❌ Interactive mode requires a TTY terminal.");
     process.exit(1);

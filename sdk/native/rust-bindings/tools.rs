@@ -91,10 +91,9 @@ fn dispatch_thread_event(handler: &ThreadEventHandler, event: ExecThreadEvent) -
 }
 
 fn cleanup_thread_handler(slot: &Arc<Mutex<Option<String>>>) {
-  if let Ok(mut guard) = slot.lock() {
-    if let Some(id) = guard.take() {
+  if let Ok(mut guard) = slot.lock()
+    && let Some(id) = guard.take() {
       unregister_thread_handler(&id);
-    }
   }
 }
 
