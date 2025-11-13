@@ -255,7 +255,9 @@ fn background_event_emits_background_thread_event() {
 
     assert_eq!(
         out,
-        vec![ThreadEvent::BackgroundEvent(ExecBackgroundEventEvent { message })]
+        vec![ThreadEvent::BackgroundEvent(ExecBackgroundEventEvent {
+            message
+        })]
     );
 }
 

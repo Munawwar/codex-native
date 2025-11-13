@@ -1,12 +1,12 @@
 import path from "node:path";
 
-import { embedAnythingInit, embedAnythingEmbed } from "@codex-native/sdk";
+import { fastEmbedInit, fastEmbedEmbed } from "@codex-native/sdk";
+
+const MODEL_ID = "BAAI/bge-large-en-v1.5";
 
 async function main() {
-  await embedAnythingInit({
-    backend: "onnx",
-    modelArchitecture: "bert",
-    modelId: "sentence-transformers/all-MiniLM-L6-v2",
+  await fastEmbedInit({
+    model: MODEL_ID,
   });
 
   const snippets = [
@@ -15,7 +15,7 @@ async function main() {
     "Add thread forking to the CI inspector",
   ];
 
-  const embeddings = await embedAnythingEmbed({
+  const embeddings = await fastEmbedEmbed({
     inputs: snippets,
     projectRoot: process.cwd(),
     normalize: true,
@@ -30,9 +30,10 @@ async function main() {
     ? path.join(process.env.CODEX_HOME, "embeddings")
     : path.join(process.env.HOME ?? process.cwd(), ".codex", "embeddings");
   console.log(`\nVectors are cached under ${cacheRoot}`);
+  console.log(`Model: ${MODEL_ID}`);
 }
 
 main().catch((error) => {
-  console.error("Failed to run embed-anything example", error);
+  console.error("Failed to run fast-embed example", error);
   process.exit(1);
 });

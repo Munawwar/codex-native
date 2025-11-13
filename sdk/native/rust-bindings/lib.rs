@@ -30,29 +30,19 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-#[cfg(feature = "embed-anything")]
-use std::str::FromStr;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(feature = "embed-anything")]
-use embed_anything::Dtype;
-#[cfg(feature = "embed-anything")]
-use embed_anything::embeddings::embed::{Embedder, EmbedderBuilder, EmbeddingResult};
-#[cfg(feature = "embed-anything")]
-use embed_anything::embeddings::local::text_embedding::ONNXModel;
-#[cfg(feature = "embed-anything")]
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use sha1::{Digest, Sha1};
 
 use async_trait::async_trait;
 use codex_cloud_tasks_client as cloud;
 use codex_common::{ApprovalModeCliArg, CliConfigOverrides, SandboxModeCliArg};
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
-#[cfg(feature = "embed-anything")]
-use codex_core::config::find_codex_home;
-use codex_core::config::{Config, ConfigOverrides};
+use codex_core::config::{find_codex_home, Config, ConfigOverrides};
 use codex_core::default_client;
 use codex_core::find_conversation_path_by_id_str;
 use codex_core::git_info::get_git_repo_root;
@@ -254,23 +244,6 @@ fn cleanup_thread_handler(slot: &Arc<Mutex<Option<String>>>) {
     }
   }
 }
-
-#[cfg(feature = "embed-anything")]
-#[cfg(feature = "embed-anything")]
-struct EmbedAnythingState {
-  embedder: Embedder,
-  namespace: String,
-}
-
-#[cfg(feature = "embed-anything")]
-impl EmbedAnythingState {
-  fn new(embedder: Embedder, namespace: String) -> Self {
-    Self { embedder, namespace }
-  }
-}
-
-#[cfg(feature = "embed-anything")]
-static EMBED_ANYTHING_HANDLE: OnceLock<Arc<EmbedAnythingState>> = OnceLock::new();
 
 fn native_response_to_tool_output(
   response: NativeToolResponse,
@@ -2900,43 +2873,195 @@ pub async fn reverie_get_conversation_insights(
 }
 
 // ============================================================================
-// Section 7: EmbedAnything Integration
+// Section 7: FastEmbed Integration
 // ============================================================================
 
 #[napi(object)]
-pub struct EmbedAnythingInitOptions {
-  pub backend: Option<String>,
-  pub model_architecture: String,
-  pub model_id: Option<String>,
-  pub revision: Option<String>,
-  pub token: Option<String>,
-  pub dtype: Option<String>,
-  pub onnx_model: Option<String>,
-  pub api_key: Option<String>,
-  pub path_in_repo: Option<String>,
+pub struct FastEmbedInitOptions {
+  pub model: Option<String>,
+  pub cache_dir: Option<String>,
+  pub max_length: Option<u32>,
+  pub show_download_progress: Option<bool>,
 }
 
 #[napi(object)]
-pub struct EmbedAnythingEmbedRequest {
+pub struct FastEmbedEmbedRequest {
   pub inputs: Vec<String>,
   pub batch_size: Option<u32>,
-  pub late_chunking: Option<bool>,
   pub normalize: Option<bool>,
   pub project_root: Option<String>,
   pub cache: Option<bool>,
 }
 
-#[cfg(feature = "embed-anything")]
+struct FastEmbedState {
+  namespace: String,
+  embedder: Mutex<TextEmbedding>,
+}
+
+static FAST_EMBED_STATE: OnceLock<Arc<FastEmbedState>> = OnceLock::new();
+
+#[napi(js_name = "fastEmbedInit")]
+pub async fn fast_embed_init(opts: FastEmbedInitOptions) -> napi::Result<()> {
+  if FAST_EMBED_STATE.get().is_some() {
+    return Ok(());
+  }
+
+  let model = resolve_fastembed_model(opts.model)?;
+  let mut init_options = TextInitOptions::new(model.clone());
+  if let Some(max_length) = opts.max_length {
+    init_options = init_options.with_max_length(max_length as usize);
+  }
+  if let Some(cache_dir) = opts.cache_dir.as_deref() {
+    init_options = init_options.with_cache_dir(PathBuf::from(cache_dir));
+  }
+  if let Some(show_download_progress) = opts.show_download_progress {
+    init_options = init_options.with_show_download_progress(show_download_progress);
+  }
+
+  let namespace = derive_fastembed_namespace(&init_options);
+  let options_clone = init_options.clone();
+  let embedder = tokio::task::spawn_blocking(move || TextEmbedding::try_new(options_clone))
+    .await
+    .map_err(|err| napi::Error::from_reason(format!("Failed to join FastEmbed init task: {err}")))?
+    .map_err(|err| napi::Error::from_reason(format!("Failed to initialise FastEmbed: {err}")))?;
+
+  let state = FastEmbedState {
+    namespace,
+    embedder: Mutex::new(embedder),
+  };
+
+  FAST_EMBED_STATE
+    .set(Arc::new(state))
+    .map_err(|_| napi::Error::from_reason("FastEmbed already initialised"))?;
+
+  Ok(())
+}
+
+#[napi(js_name = "fastEmbedEmbed")]
+pub async fn fast_embed_embed(req: FastEmbedEmbedRequest) -> napi::Result<Vec<Vec<f32>>> {
+  let state = FAST_EMBED_STATE
+    .get()
+    .ok_or_else(|| napi::Error::from_reason("FastEmbed not initialised"))?
+    .clone();
+
+  if req.inputs.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let use_cache = req.cache.unwrap_or(true);
+  let cache = if use_cache {
+    EmbeddingCache::new(&state.namespace, req.project_root.as_deref()).await?
+  } else {
+    None
+  };
+
+  let mut raw_vectors: Vec<Option<Vec<f32>>> = vec![None; req.inputs.len()];
+  let mut missing_indices = Vec::new();
+  let mut missing_texts = Vec::new();
+
+  if let Some(cache_ref) = cache.as_ref() {
+    for (idx, text) in req.inputs.iter().enumerate() {
+      if let Some(vector) = cache_ref.read(text).await {
+        raw_vectors[idx] = Some(vector);
+      } else {
+        missing_indices.push(idx);
+        missing_texts.push(text.clone());
+      }
+    }
+  } else {
+    missing_indices.extend(0..req.inputs.len());
+    missing_texts = req.inputs.clone();
+  }
+
+  if !missing_texts.is_empty() {
+    let batch_size = req.batch_size.map(|value| value as usize);
+    let embeddings = tokio::task::spawn_blocking({
+      let state = state.clone();
+      move || {
+        let mut embedder = state.embedder.lock().expect("FastEmbed mutex poisoned");
+        embedder
+          .embed(missing_texts, batch_size)
+          .map_err(|err| napi::Error::from_reason(format!("FastEmbed embed failed: {err}")))
+      }
+    })
+    .await
+    .map_err(|err| napi::Error::from_reason(format!("FastEmbed task join error: {err}")))??;
+
+    for (offset, vector) in embeddings.into_iter().enumerate() {
+      let idx = missing_indices[offset];
+      if let Some(cache_ref) = cache.as_ref() {
+        cache_ref.write(&req.inputs[idx], &vector).await;
+      }
+      raw_vectors[idx] = Some(vector);
+    }
+  }
+
+  let mut outputs = Vec::with_capacity(req.inputs.len());
+  for maybe_vector in raw_vectors.into_iter() {
+    let mut vector = maybe_vector
+      .ok_or_else(|| napi::Error::from_reason("Missing embedding after FastEmbed inference"))?;
+    if req.normalize.unwrap_or(false) {
+      normalize_vector(&mut vector);
+    }
+    outputs.push(vector);
+  }
+
+  Ok(outputs)
+}
+
+fn resolve_fastembed_model(model: Option<String>) -> napi::Result<EmbeddingModel> {
+  match model {
+    None => Ok(EmbeddingModel::default()),
+    Some(name) => {
+      let trimmed = name.trim();
+      let sanitized = sanitize_model_identifier(trimmed);
+      if let Ok(parsed) = sanitized.parse::<EmbeddingModel>() {
+        return Ok(parsed);
+      }
+      if let Some(matched) = match_supported_model(&sanitized) {
+        return Ok(matched);
+      }
+      Err(napi::Error::from_reason(format!(
+        "Unknown FastEmbed model '{trimmed}'. Run fastembed::TextEmbedding::list_supported_models() to inspect supported identifiers."
+      )))
+    }
+  }
+}
+
+fn sanitize_model_identifier(input: &str) -> String {
+  let lowercase = input.trim();
+  if lowercase
+    .to_ascii_lowercase()
+    .starts_with("baai/bge-")
+  {
+    let suffix = lowercase
+      .split_once('/')
+      .map(|(_, right)| right)
+      .unwrap_or(lowercase);
+    format!("Xenova/{suffix}")
+  } else {
+    lowercase.to_string()
+  }
+}
+
+fn match_supported_model(identifier: &str) -> Option<EmbeddingModel> {
+  let id_lower = identifier.to_ascii_lowercase();
+  let supported = TextEmbedding::list_supported_models();
+  for info in supported {
+    let code = info.model_code.to_ascii_lowercase();
+    if code == id_lower || code.ends_with(&id_lower) || id_lower.ends_with(&code) {
+      return Some(info.model);
+    }
+  }
+  None
+}
+
 struct EmbeddingCache {
   directory: PathBuf,
 }
 
-#[cfg(feature = "embed-anything")]
 impl EmbeddingCache {
-  async fn new(
-    namespace: &str,
-    project_root: Option<&str>,
-  ) -> napi::Result<Option<Self>> {
+  async fn new(namespace: &str, project_root: Option<&str>) -> napi::Result<Option<Self>> {
     let Some(codex_home) = resolve_codex_home_for_cache() else {
       return Ok(None);
     };
@@ -3012,7 +3137,6 @@ impl EmbeddingCache {
   }
 }
 
-#[cfg(feature = "embed-anything")]
 fn resolve_codex_home_for_cache() -> Option<PathBuf> {
   if let Ok(path) = find_codex_home() {
     return Some(path);
@@ -3023,7 +3147,6 @@ fn resolve_codex_home_for_cache() -> Option<PathBuf> {
   None
 }
 
-#[cfg(feature = "embed-anything")]
 fn resolve_project_root_string(project_root: Option<&str>) -> Option<String> {
   if let Some(root) = project_root {
     return Some(canonicalize_to_string(Path::new(root)));
@@ -3032,7 +3155,6 @@ fn resolve_project_root_string(project_root: Option<&str>) -> Option<String> {
   Some(canonicalize_to_string(&cwd))
 }
 
-#[cfg(feature = "embed-anything")]
 fn canonicalize_to_string(path: &Path) -> String {
   match std::fs::canonicalize(path) {
     Ok(canonical) => canonical.to_string_lossy().into_owned(),
@@ -3040,278 +3162,23 @@ fn canonicalize_to_string(path: &Path) -> String {
   }
 }
 
-#[cfg(feature = "embed-anything")]
 fn hash_string(value: &str) -> String {
   let mut hasher = Sha1::new();
   hasher.update(value.as_bytes());
   format!("{:x}", hasher.finalize())
 }
 
-#[cfg(feature = "embed-anything")]
-fn derive_embedder_namespace(opts: &EmbedAnythingInitOptions) -> String {
+fn derive_fastembed_namespace(opts: &TextInitOptions) -> String {
   let descriptor = format!(
-    "{}|{}|{}|{}|{}|{}|{}",
-    opts.backend.as_deref().unwrap_or("hf"),
-    opts.model_architecture,
-    opts.model_id.as_deref().unwrap_or(""),
-    opts.revision.as_deref().unwrap_or(""),
-    opts.dtype.as_deref().unwrap_or(""),
-    opts.onnx_model.as_deref().unwrap_or(""),
-    opts.path_in_repo.as_deref().unwrap_or("")
+    "fastembed|{}|{}|{}|{}",
+    opts.model_name.to_string(),
+    opts.max_length,
+    opts.cache_dir.display(),
+    opts.show_download_progress
   );
   hash_string(&descriptor)
 }
 
-#[napi(js_name = "embedAnythingInit")]
-#[allow(unused_variables)]
-pub async fn embed_anything_init(opts: EmbedAnythingInitOptions) -> napi::Result<()> {
-  #[cfg(feature = "embed-anything")]
-  {
-    if EMBED_ANYTHING_HANDLE.get().is_some() {
-      return Ok(());
-    }
-    let embedder = build_embedder_from_options(&opts)?;
-    let namespace = derive_embedder_namespace(&opts);
-    let state = EmbedAnythingState::new(embedder, namespace);
-    EMBED_ANYTHING_HANDLE
-      .set(Arc::new(state))
-      .map_err(|_| napi::Error::from_reason("EmbedAnything already initialised"))?;
-    Ok(())
-  }
-  #[cfg(not(feature = "embed-anything"))]
-  {
-    let _ = opts;
-    Err(napi::Error::from_reason(
-      "EmbedAnything support is disabled. Rebuild with the 'embed-anything' feature.",
-    ))
-  }
-}
-
-#[napi(js_name = "embedAnythingEmbed")]
-#[allow(unused_variables)]
-pub async fn embed_anything_embed(req: EmbedAnythingEmbedRequest) -> napi::Result<Vec<Vec<f32>>> {
-  #[cfg(feature = "embed-anything")]
-  {
-    let handle = EMBED_ANYTHING_HANDLE
-      .get()
-      .cloned()
-      .ok_or_else(|| napi::Error::from_reason("EmbedAnything not initialised"))?;
-    let EmbedAnythingEmbedRequest {
-      inputs,
-      batch_size,
-      late_chunking,
-      normalize,
-      project_root,
-      cache,
-    } = req;
-    if inputs.is_empty() {
-      return Ok(Vec::new());
-    }
-    let should_normalize = normalize.unwrap_or(false);
-    let batch_size = batch_size.map(|value| value as usize);
-    let use_cache = cache.unwrap_or(true);
-    let cache_handle = if use_cache {
-      EmbeddingCache::new(&handle.namespace, project_root.as_deref()).await?
-    } else {
-      None
-    };
-
-    let mut ordered_vectors: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
-    if let Some(cache_ref) = cache_handle.as_ref() {
-      for (idx, text) in inputs.iter().enumerate() {
-        if let Some(vector) = cache_ref.read(text).await {
-          ordered_vectors[idx] = Some(vector);
-        }
-      }
-    }
-
-    let mut missing_indices = Vec::new();
-    let mut missing_refs = Vec::new();
-    for (idx, maybe_vector) in ordered_vectors.iter().enumerate() {
-      if maybe_vector.is_none() {
-        missing_indices.push(idx);
-        missing_refs.push(inputs[idx].as_str());
-      }
-    }
-
-    if !missing_refs.is_empty() {
-      let embedder = &handle.embedder;
-      let embeddings = embedder
-        .embed(&missing_refs, batch_size, late_chunking)
-        .await
-        .map_err(|e| napi::Error::from_reason(format!("EmbedAnything embed failed: {e}")))?;
-      if embeddings.len() != missing_refs.len() {
-        return Err(napi::Error::from_reason(
-          "EmbedAnything returned an unexpected number of embeddings",
-        ));
-      }
-      for (result_idx, embedding) in embeddings.into_iter().enumerate() {
-        let idx = missing_indices[result_idx];
-        let mut dense = embedding_result_to_vec(embedding)?;
-        if should_normalize {
-          normalize_vector(&mut dense);
-        }
-        if let Some(cache_ref) = cache_handle.as_ref() {
-          cache_ref.write(&inputs[idx], &dense).await;
-        }
-        ordered_vectors[idx] = Some(dense);
-      }
-    }
-
-    let mut vectors = Vec::with_capacity(inputs.len());
-    for (idx, maybe_vector) in ordered_vectors.into_iter().enumerate() {
-      if let Some(vector) = maybe_vector {
-        vectors.push(vector);
-      } else {
-        return Err(napi::Error::from_reason(format!(
-          "Missing embedding output for input #{idx}",
-        )));
-      }
-    }
-    Ok(vectors)
-  }
-  #[cfg(not(feature = "embed-anything"))]
-  {
-    let _ = req;
-    Err(napi::Error::from_reason(
-      "EmbedAnything support is disabled. Rebuild with the 'embed-anything' feature.",
-    ))
-  }
-}
-
-#[cfg(feature = "embed-anything")]
-fn build_embedder_from_options(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
-  let backend = opts.backend.as_deref().unwrap_or("hf").to_lowercase();
-  match backend.as_str() {
-    "hf" => build_hf_embedder(opts),
-    "onnx" => build_onnx_embedder(opts),
-    "cloud" => build_cloud_embedder(opts),
-    other => Err(napi::Error::from_reason(format!(
-      "Unsupported embedder backend '{other}'. Expected 'hf', 'onnx', or 'cloud'."
-    ))),
-  }
-}
-
-#[cfg(feature = "embed-anything")]
-fn build_hf_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
-  let model_id = opts
-    .model_id
-    .as_deref()
-    .ok_or_else(|| napi::Error::from_reason("model_id is required for hf backend"))?;
-  let mut builder = EmbedderBuilder::new()
-    .model_architecture(&opts.model_architecture)
-    .model_id(Some(model_id));
-  if let Some(revision) = opts.revision.as_deref() {
-    builder = builder.revision(Some(revision));
-  }
-  if let Some(token) = opts.token.as_deref() {
-    builder = builder.token(Some(token));
-  }
-  if let Some(dtype) = parse_dtype(opts.dtype.as_deref()) {
-    builder = builder.dtype(Some(dtype));
-  }
-  builder
-    .from_pretrained_hf()
-    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise HF embedder: {e}")))
-}
-
-#[cfg(feature = "embed-anything")]
-fn build_onnx_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
-  let mut builder = EmbedderBuilder::new().model_architecture(&opts.model_architecture);
-  if let Some(model_id) = opts.model_id.as_deref() {
-    builder = builder.model_id(Some(model_id));
-  }
-  if let Some(revision) = opts.revision.as_deref() {
-    builder = builder.revision(Some(revision));
-  }
-  if let Some(path) = opts.path_in_repo.as_deref() {
-    builder = builder.path_in_repo(Some(path));
-  }
-  if let Some(dtype) = parse_dtype(opts.dtype.as_deref()) {
-    builder = builder.dtype(Some(dtype));
-  }
-  if let Some(token) = opts.token.as_deref() {
-    builder = builder.token(Some(token));
-  }
-  if let Some(name) = opts.onnx_model.as_deref() {
-    let parsed = ONNXModel::from_str(name)
-      .map_err(|_| napi::Error::from_reason(format!("Unknown ONNX model identifier '{name}'")))?;
-    builder = builder.onnx_model_id(Some(parsed));
-  }
-  builder
-    .from_pretrained_onnx()
-    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise ONNX embedder: {e}")))
-}
-
-#[cfg(feature = "embed-anything")]
-fn build_cloud_embedder(opts: &EmbedAnythingInitOptions) -> napi::Result<Embedder> {
-  let model_id = opts
-    .model_id
-    .as_deref()
-    .ok_or_else(|| napi::Error::from_reason("model_id is required for cloud backend"))?;
-  let mut builder = EmbedderBuilder::new()
-    .model_architecture(&opts.model_architecture)
-    .model_id(Some(model_id));
-  if let Some(api_key) = opts.api_key.as_deref() {
-    builder = builder.api_key(Some(api_key));
-  }
-  builder
-    .from_pretrained_cloud()
-    .map_err(|e| napi::Error::from_reason(format!("Failed to initialise cloud embedder: {e}")))
-}
-
-#[cfg(feature = "embed-anything")]
-fn parse_dtype(value: Option<&str>) -> Option<Dtype> {
-  value.and_then(|dtype| match dtype.to_lowercase().as_str() {
-    "f16" => Some(Dtype::F16),
-    "f32" => Some(Dtype::F32),
-    "int8" => Some(Dtype::INT8),
-    "uint8" => Some(Dtype::UINT8),
-    "q4" => Some(Dtype::Q4),
-    "bnb4" => Some(Dtype::BNB4),
-    _ => None,
-  })
-}
-
-#[cfg(feature = "embed-anything")]
-fn embedding_result_to_vec(result: EmbeddingResult) -> napi::Result<Vec<f32>> {
-  match result {
-    EmbeddingResult::DenseVector(vec) => Ok(vec),
-    EmbeddingResult::MultiVector(chunks) => {
-      if chunks.is_empty() {
-        return Err(napi::Error::from_reason(
-          "Received empty multi-vector embedding",
-        ));
-      }
-      let dimension = chunks[0].len();
-      if dimension == 0 {
-        return Err(napi::Error::from_reason(
-          "Received zero-dimension embedding",
-        ));
-      }
-      let mut accum = vec![0f32; dimension];
-      for chunk in &chunks {
-        if chunk.len() != dimension {
-          return Err(napi::Error::from_reason(
-            "Multi-vector embedding chunks had mismatched dimensions",
-          ));
-        }
-        for (idx, value) in chunk.iter().enumerate() {
-          accum[idx] += *value;
-        }
-      }
-      let scale = chunks.len() as f32;
-      if scale > 0.0 {
-        for value in &mut accum {
-          *value /= scale;
-        }
-      }
-      Ok(accum)
-    }
-  }
-}
-
-#[cfg(feature = "embed-anything")]
 fn normalize_vector(vec: &mut [f32]) {
   let norm = vec
     .iter()
@@ -3324,6 +3191,9 @@ fn normalize_vector(vec: &mut [f32]) {
   }
 }
 
+// ============================================================================
+// Section 7: Tokenizer Helpers
+// ============================================================================
 // ============================================================================
 // Section 7: Tokenizer Helpers
 // ============================================================================
@@ -3409,3 +3279,4 @@ pub fn tokenizer_decode(
   )?;
   tokenizer.decode(&tokens).map_err(map_tokenizer_error)
 }
+

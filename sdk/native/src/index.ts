@@ -62,8 +62,8 @@ export type {
   CustomReview,
 } from "./reviewOptions";
 export type {
-  EmbedAnythingInitOptions,
-  EmbedAnythingEmbedRequest,
+  FastEmbedInitOptions,
+  FastEmbedEmbedRequest,
 } from "./nativeBinding";
 
 // OpenAI Agents framework integration
@@ -90,8 +90,8 @@ export {
   reverieListConversations,
   reverieSearchConversations,
   reverieGetConversationInsights,
-  embedAnythingInit,
-  embedAnythingEmbed,
+  fastEmbedInit,
+  fastEmbedEmbed,
   tokenizerCount,
   tokenizerEncode,
   tokenizerDecode,

@@ -10,9 +10,9 @@
  *   5. Optional reverie lookup for prior lessons (with embedding-based re-ranking)
  *
  * Embedding Support:
- * To enable semantic re-ranking of reveries via EmbedAnything, configure:
+ * To enable semantic re-ranking of reveries via FastEmbed, configure:
  *   config.embedder = {
- *     initOptions: { backend: "onnx", modelId: "sentence-transformers/all-MiniLM-L12-v2" },
+ *     initOptions: { model: "BAAI/bge-large-en-v1.5" },
  *     embedRequest: { normalize: true }
  *   };
  *
@@ -31,10 +31,10 @@ import {
   CodexProvider,
   type Thread,
   type NativeTuiExitInfo,
-  embedAnythingInit,
-  embedAnythingEmbed,
-  type EmbedAnythingInitOptions,
-  type EmbedAnythingEmbedRequest,
+  fastEmbedInit,
+  fastEmbedEmbed,
+  type FastEmbedInitOptions,
+  type FastEmbedEmbedRequest,
 } from "@codex-native/sdk";
 
 const DEFAULT_MODEL = "gpt-5-codex";
@@ -58,12 +58,12 @@ type MultiAgentConfig = {
   reverieQuery?: string;
   model?: string;
   baseBranchOverride?: string;
-  embedder?: EmbedAnythingConfig;
+  embedder?: FastEmbedConfig;
 };
 
-type EmbedAnythingConfig = {
-  initOptions: EmbedAnythingInitOptions;
-  embedRequest: Omit<EmbedAnythingEmbedRequest, "inputs">;
+type FastEmbedConfig = {
+  initOptions: FastEmbedInitOptions;
+  embedRequest: Omit<FastEmbedEmbedRequest, "inputs" | "projectRoot">;
 };
 
 type RepoContext = {
@@ -302,18 +302,116 @@ class PRDeepReviewer {
     const intentionAnalyzer = new Agent({
       name: "IntentionAnalyzer",
       model,
-      instructions:
-        "Understand developer intent and architecture decisions behind the supplied diff summary.",
+      instructions: `# Intention Analysis Agent
+
+You are analyzing developer intent and architectural decisions behind code changes.
+
+## Your Task
+Extract the key intentions, goals, and architectural decisions from the provided diff and review context.
+
+## Guidelines
+1. Focus on the "why" not the "what" - understand motivations, not just mechanics
+2. Identify explicit patterns: refactoring, feature additions, bug fixes, performance improvements
+3. Note any architectural shifts: new abstractions, design pattern changes, dependency updates
+4. Consider cross-cutting concerns: testability, maintainability, scalability implications
+5. Flag any apparent mismatches between stated goals (from commits/PR) and actual changes
+6. Distinguish between intentional changes vs. incidental side effects
+
+## Output Format
+Provide 5-8 bullet points in this format:
+- **[Category]** Brief description of intent or architectural decision
+  - Supporting evidence from diff (file/line references)
+  - Impact: [scope of change - local/module/system-wide]
+
+Categories: Feature, Refactor, BugFix, Performance, Security, DevEx, Architecture, Testing
+
+## Constraints
+- Be specific - cite actual files, functions, or modules
+- Avoid speculation - stick to observable changes
+- Distinguish between primary goals and secondary effects
+- Each bullet should be actionable for follow-up analysis`,
     });
     const riskAssessor = new Agent({
       name: "RiskAssessor",
       model,
-      instructions: "Enumerate concrete risks, regressions, or rollout concerns for this diff.",
+      instructions: `# Risk Assessment Agent
+
+You are assessing risks, regressions, and rollout concerns for code changes.
+
+## Your Task
+Identify concrete risks that could impact production, users, or development workflow.
+
+## Risk Categories
+1. **Breaking Changes**: API changes, behavior modifications, removed features
+2. **Performance Regressions**: Algorithm changes, resource usage, latency impact
+3. **Correctness Risks**: Logic errors, edge cases, race conditions
+4. **Security Vulnerabilities**: Auth bypasses, injection risks, data exposure
+5. **Operational Risks**: Migration complexity, rollback difficulty, monitoring gaps
+6. **Dependency Risks**: Version conflicts, supply chain, deprecations
+
+## Assessment Framework
+For each risk, evaluate:
+- **Likelihood**: How probable is this to occur? (High/Medium/Low)
+- **Impact**: What's the blast radius if it occurs? (Critical/High/Medium/Low)
+- **Detectability**: Will we catch this before production? (Pre-deploy/Post-deploy/Silent)
+
+## Output Format
+Provide 4-8 risks in this format:
+- **[Category] Risk Title**
+  - **L**ikelihood: [H/M/L] | **I**mpact: [Critical/High/Medium/Low] | **D**etectability: [Pre/Post/Silent]
+  - Description: What could go wrong and under what conditions
+  - Evidence: Specific code locations or patterns that raise this concern
+  - Mitigation: Brief suggestion for reducing risk
+
+## Constraints
+- Focus on risks introduced or amplified by THIS change, not pre-existing issues
+- Be concrete - cite specific files, functions, or scenarios
+- Differentiate between theoretical risks and likely risks
+- Avoid false positives - only flag concerns you can substantiate`,
     });
     const qualityReviewer = new Agent({
       name: "QualityReviewer",
       model,
-      instructions: "Evaluate code quality, tests, and developer experience improvements to pursue.",
+      instructions: `# Code Quality & DevEx Reviewer
+
+You are evaluating code quality, test coverage, and developer experience improvements.
+
+## Your Task
+Identify actionable improvements to code quality, testing, and team productivity.
+
+## Evaluation Criteria
+
+### Code Quality
+1. Readability: naming, structure, complexity
+2. Maintainability: modularity, coupling, documentation
+3. Consistency: style alignment with codebase norms
+4. Error handling: edge cases, validation, failure modes
+
+### Test Coverage
+1. Missing test cases: edge cases, error paths, integration scenarios
+2. Test quality: brittleness, clarity, isolation
+3. Test gaps: untested modules, uncovered branches
+
+### DevEx (Developer Experience)
+1. Documentation: inline comments, README updates, API docs
+2. Tooling: build improvements, debugging aids, dev scripts
+3. Onboarding: clarity for new contributors
+4. Feedback loops: error messages, logging, observability
+
+## Output Format
+Provide 6-10 recommendations in this format:
+- **[Category] Recommendation Title**
+  - **Priority**: P0 (critical) / P1 (high) / P2 (medium) / P3 (low)
+  - **Effort**: [Low/Medium/High] - estimated implementation complexity
+  - Description: What to improve and why it matters
+  - Location: Specific files, functions, or modules
+  - Example: Concrete code snippet or test case to add (if applicable)
+
+## Constraints
+- Prioritize improvements with high impact / effort ratio
+- Suggest follow-up tasks, not just observations
+- Balance thoroughness with pragmatism - match the repo's quality bar
+- Focus on improvements that will benefit future changes, not just this PR`,
     });
 
     intentionAnalyzer.handoffs = [handoff(riskAssessor), handoff(qualityReviewer)];
@@ -423,27 +521,221 @@ class CICheckerSystem {
     const lintChecker = new Agent({
       name: "LintChecker",
       model,
-      instructions: "Find lint/style/static-analysis risks given the repo + CI signal.",
+      instructions: `# Lint & Static Analysis Checker
+
+You are predicting lint, style, and static analysis issues before CI runs.
+
+## Your Task
+Identify likely linter failures, type errors, and static analysis violations based on the diff and CI configuration.
+
+## What to Check
+1. **Linter Violations**: ESLint/Pylint/Clippy rules based on project config
+2. **Type Errors**: TypeScript/Flow/mypy type mismatches
+3. **Style Issues**: Formatting (Prettier/Black/rustfmt), naming conventions
+4. **Static Analysis**: Unused imports, dead code, complexity warnings
+5. **Language-Specific**: async/await patterns, null safety, memory safety
+
+## Analysis Strategy
+- Examine modified files for common anti-patterns
+- Check if new code follows existing style patterns in the codebase
+- Look for missing type annotations or imports
+- Identify deprecated API usage or banned patterns
+
+## Output Format
+Provide 3-5 likely issues in this format:
+- **[Tool] Issue Description**
+  - File: path/to/file:line
+  - Rule: specific-rule-id or error code
+  - Reason: Why this will fail the check
+  - Fix: Suggested command or code change
+
+## Constraints
+- Only flag issues you're confident will fail CI (avoid false positives)
+- Provide actionable fixes, not just problem descriptions
+- Include actual commands to run (e.g., \`eslint --fix\`, \`cargo clippy --fix\`)`,
     });
     const testChecker = new Agent({
       name: "TestChecker",
       model,
-      instructions: "Predict unit/integration/e2e failures and missing coverage.",
+      instructions: `# Test Failure Predictor
+
+You are predicting test failures and coverage gaps before CI runs.
+
+## Your Task
+Identify likely test failures and missing test coverage based on code changes.
+
+## What to Check
+1. **Direct Failures**: Tests that call modified functions
+2. **Integration Failures**: Tests that depend on changed behavior
+3. **Snapshot Mismatches**: UI/output changes requiring snapshot updates
+4. **Flaky Tests**: Timing-sensitive or stateful tests affected by changes
+5. **Coverage Gaps**: New code lacking test coverage
+
+## Analysis Strategy
+- Trace modified functions to their test callers
+- Identify breaking API changes (signature, return type, behavior)
+- Look for new branches/functions without corresponding tests
+- Check for race conditions or async changes affecting test stability
+
+## Output Format
+Provide 4-6 predictions in this format:
+- **[Category] Test Suite/File**
+  - Likelihood: High/Medium/Low
+  - Failure Type: Assertion/Timeout/Error/Coverage
+  - Reason: What changed that will break this test
+  - Fix: Specific test updates needed or new tests to add
+  - Command: How to run this test locally
+
+## Constraints
+- Focus on tests that will definitely or likely fail, not theoretical gaps
+- Provide specific test file names and function names when possible
+- Suggest commands to reproduce locally (e.g., \`npm test -- --testNamePattern=...\`)`,
     });
     const buildChecker = new Agent({
       name: "BuildChecker",
       model,
-      instructions: "Detect build/package/dependency or platform issues before CI fails.",
+      instructions: `# Build & Dependency Checker
+
+You are detecting build, packaging, and dependency issues before CI runs.
+
+## Your Task
+Identify likely build failures, dependency conflicts, and cross-platform issues.
+
+## What to Check
+1. **Compilation Errors**: Syntax, imports, missing dependencies
+2. **Dependency Conflicts**: Version mismatches, peer dependency issues
+3. **Platform Issues**: OS-specific code, architecture-dependent builds
+4. **Build Script Errors**: Webpack/Rollup/Cargo config issues
+5. **Asset Problems**: Missing files, broken paths, resource loading
+6. **Incremental Build**: Cache invalidation, stale artifacts
+
+## Analysis Strategy
+- Check if new imports are declared in package.json/Cargo.toml/requirements.txt
+- Look for platform-specific code without proper conditionals
+- Identify breaking changes in dependency APIs
+- Check for missing build steps or asset generation
+
+## Output Format
+Provide 3-5 predictions in this format:
+- **[Category] Build Issue**
+  - Severity: Blocking/Warning
+  - Platform: All/Linux/macOS/Windows or Language/Runtime version
+  - Reason: What will cause the build to fail
+  - Detection: Which CI step will catch this (compile/bundle/package)
+  - Fix: Specific change to make (add dep, update config, fix import)
+  - Command: How to reproduce locally
+
+## Constraints
+- Prioritize blocking build failures over warnings
+- Be specific about which platform/config will fail
+- Provide actual commands or config changes, not just descriptions`,
     });
     const securityChecker = new Agent({
       name: "SecurityChecker",
       model,
-      instructions: "Highlight security, auth, or secrets issues visible from context.",
+      instructions: `# Security & Secrets Checker
+
+You are identifying security vulnerabilities and secrets hygiene issues.
+
+## Your Task
+Flag security risks and secret exposure that CI security scans will catch or should catch.
+
+## What to Check
+1. **Hardcoded Secrets**: API keys, tokens, passwords in code
+2. **Injection Vulnerabilities**: SQL injection, XSS, command injection
+3. **Auth/Authz Bypass**: Missing checks, broken access control
+4. **Cryptography Issues**: Weak algorithms, insecure random, bad key management
+5. **Dependency Vulnerabilities**: Known CVEs in dependencies
+6. **Data Exposure**: Logging sensitive data, debug output in production
+
+## Analysis Strategy
+- Scan for string literals that look like secrets (regex patterns)
+- Identify user input flowing into dangerous sinks (SQL, eval, exec)
+- Check for missing authentication/authorization on new endpoints
+- Look for cryptographic primitives used incorrectly
+- Check if sensitive data is logged or exposed in errors
+
+## Output Format
+Provide 2-4 security concerns in this format:
+- **[Severity: Critical/High/Medium] Issue Title**
+  - Category: Secrets/Injection/Auth/Crypto/Dependency/DataExposure
+  - Location: path/to/file:line
+  - Risk: What could be exploited and by whom
+  - Detection: Will CI catch this? (Static analysis/Secrets scan/Manual review)
+  - Fix: Specific remediation (use env var, sanitize input, add auth check)
+
+## Constraints
+- Only flag genuine security issues, not theoretical hardening
+- Differentiate between "will fail CI" vs "should be fixed but CI might miss"
+- Be explicit about severity - not everything is Critical
+- Provide concrete fixes, not just "fix the vulnerability"`,
     });
     const fixer = new Agent({
       name: "CIFixer",
       model,
-      instructions: "Synthesize fixes and ordered remediation plan for the aggregated CI issues.",
+      instructions: `# CI Issue Remediation Planner
+
+You are synthesizing CI issues from multiple checkers and creating an ordered fix plan.
+
+## Your Task
+Aggregate all predicted CI issues and generate a prioritized, actionable remediation checklist.
+
+## Prioritization Framework
+1. **P0 - Blockers**: Build failures, critical security issues
+2. **P1 - Urgent**: Test failures, type errors, high-severity lint
+3. **P2 - Normal**: Coverage gaps, medium-severity security, warnings
+4. **P3 - Low**: Style nits, minor refactors, documentation
+
+## Remediation Plan Structure
+For each issue group:
+1. **Triage**: Which issues are duplicates or related?
+2. **Dependencies**: What must be fixed first? (build before test, etc.)
+3. **Batch Fixes**: What can be fixed with one command? (e.g., \`eslint --fix\`)
+4. **Manual Fixes**: What requires code changes?
+
+## Output Format
+\`\`\`markdown
+# CI Remediation Plan
+
+## Summary
+- Total Issues: X (P0: A, P1: B, P2: C, P3: D)
+- Estimated Time: ~X hours
+- Auto-fixable: Y issues
+
+## Phase 1: Blockers (P0)
+- [ ] **Build** Fix missing dependency in package.json
+  - Run: \`npm install --save @types/node\`
+  - Files: package.json
+  - Owner: Build team
+
+## Phase 2: Urgent (P1)
+...
+
+## Quick Wins (Batch Fixes)
+\`\`\`bash
+# Run all auto-fixes
+npm run lint:fix
+cargo fmt
+pytest --co -q  # Check which tests will run
+\`\`\`
+
+## Manual Intervention Required
+1. **Test Failures**: Update snapshot tests after UI changes
+   - Run: \`npm test -- -u\`
+   - Review: Ensure snapshots are correct, not just updated
+
+## Validation Checklist
+- [ ] All linters pass locally
+- [ ] All tests pass locally
+- [ ] Build succeeds on all platforms
+- [ ] Security scan clean
+\`\`\`
+
+## Constraints
+- Group related issues to avoid redundant fixes
+- Provide copy-paste commands wherever possible
+- Estimate time/effort for manual fixes
+- Call out any fixes that need team discussion or design decisions`,
     });
 
     lintChecker.handoffs = [handoff(fixer)];
@@ -587,7 +879,9 @@ class ReverieSystem {
   constructor(private readonly config: MultiAgentConfig) {}
 
   async searchReveries(query: string): Promise<ReverieResult[]> {
+    console.log(`🔍 Searching reveries for: "${query}"`);
     const codexHome = resolveCodexHome();
+    console.log(`📁 Codex home: ${codexHome}`);
 
     // Prefer native reverie functions if available
     try {
@@ -659,7 +953,7 @@ class ReverieSystem {
     if (this.embedderReady || !this.config.embedder) {
       return;
     }
-    await embedAnythingInit(this.config.embedder.initOptions);
+    await fastEmbedInit(this.config.embedder.initOptions);
     this.embedderReady = true;
   }
 
@@ -678,14 +972,14 @@ class ReverieSystem {
       );
       const projectRoot = path.resolve(this.config.workingDirectory);
       const baseRequest = this.config.embedder.embedRequest ?? {};
-      const embedRequest: EmbedAnythingEmbedRequest = {
+      const embedRequest: FastEmbedEmbedRequest = {
         ...baseRequest,
         projectRoot,
         cache: baseRequest.cache ?? true,
         inputs: [query, ...docTexts],
       };
 
-      const embeddings = await embedAnythingEmbed(embedRequest);
+      const embeddings = await fastEmbedEmbed(embedRequest);
       if (embeddings.length !== docTexts.length + 1) {
         throw new Error("Embedding API returned unexpected length");
       }
@@ -819,15 +1113,14 @@ function logCiSummary(data: CiAnalysis): void {
 // ---------------------------------------------------------------------------
 
 /*
-// Example embedder configuration using EmbedAnything via the native SDK:
+// Example embedder configuration using FastEmbed via the native SDK:
 
 const config: MultiAgentConfig = {
   workingDirectory: process.cwd(),
   skipGitRepoCheck: true,
   embedder: {
     initOptions: {
-      backend: "onnx",
-      modelId: "sentence-transformers/all-MiniLM-L12-v2",
+      model: "BAAI/bge-large-en-v1.5",
     },
     embedRequest: {
       normalize: true,
@@ -846,6 +1139,11 @@ function parseArgs(): MultiAgentConfig {
     workingDirectory: process.cwd(),
     skipGitRepoCheck: true,
   };
+
+  let embedderModel: string | undefined;
+  let embedderMaxLength: number | undefined;
+  let embedderCacheDir: string | undefined;
+  let embedderCacheEnabled = true;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -880,6 +1178,18 @@ function parseArgs(): MultiAgentConfig {
       case "--base-url":
         config.baseUrl = args[++i];
         break;
+      case "--embedder-model":
+        embedderModel = args[++i];
+        break;
+      case "--embedder-max-length":
+        embedderMaxLength = Number(args[++i]);
+        break;
+      case "--embedder-cache-dir":
+        embedderCacheDir = args[++i];
+        break;
+      case "--embedder-no-cache":
+        embedderCacheEnabled = false;
+        break;
       case "--help":
       case "-h":
         printUsage();
@@ -891,6 +1201,30 @@ function parseArgs(): MultiAgentConfig {
         }
         break;
     }
+  }
+
+  // Configure embedder if any embedder options were provided
+  if (
+    embedderModel ||
+    embedderCacheDir ||
+    embedderMaxLength !== undefined ||
+    !embedderCacheEnabled
+  ) {
+    const normalizedMaxLength =
+      embedderMaxLength !== undefined && Number.isFinite(embedderMaxLength)
+        ? Math.max(1, Math.floor(embedderMaxLength))
+        : undefined;
+    config.embedder = {
+      initOptions: {
+        model: embedderModel,
+        cacheDir: embedderCacheDir,
+        maxLength: normalizedMaxLength,
+      },
+      embedRequest: {
+        normalize: true,
+        cache: embedderCacheEnabled,
+      },
+    };
   }
 
   return config;
@@ -911,6 +1245,10 @@ Options:
   --cwd <path>             Working directory (default: cwd)
   --api-key <key>          Codex API key
   --base-url <url>         Codex API base URL
+  --embedder-model <id>        FastEmbed model ID (e.g., BAAI/bge-large-en-v1.5)
+  --embedder-max-length <n>    Override FastEmbed tokenizer max length
+  --embedder-cache-dir <path>  Override FastEmbed model cache directory
+  --embedder-no-cache          Disable on-disk embedding cache
   --help                   Show this message
 `);
 }

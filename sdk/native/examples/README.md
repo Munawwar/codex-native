@@ -19,12 +19,12 @@ Basic examples using the Native SDK directly (without OpenAI Agents framework).
   - Type-safe structured responses
   - Multiple schema examples (code analysis, task breakdown)
 
-### `/embeddings` - EmbedAnything Integration
+### `/embeddings` - FastEmbed Integration
 
-- **`embed-anything.ts`** — Local embedding pipelines with caching
-  - Initialize the EmbedAnything runtime from Node.js
-  - Generate normalized sentence embeddings
-  - Demonstrates Codex Home caching under `~/.codex/embeddings`
+- **`fast-embed.ts`** — Local embedding pipelines with caching
+  - Initialize the FastEmbed runtime from Node.js
+  - Defaults to the `BAAI/bge-large-en-v1.5` ONNX model bundle
+  - Generates normalized sentence embeddings & stores them under `~/.codex/embeddings`
   - Perfect starting point for reverie re-ranking or custom RAG flows
 
 ### `/basic` - Core Features

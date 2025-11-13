@@ -143,25 +143,19 @@ export type ReverieSearchResult = {
 };
 
 // ============================================================================
-// EmbedAnything Types
+// FastEmbed Types
 // ============================================================================
 
-export type EmbedAnythingInitOptions = {
-  backend?: "hf" | "onnx" | "cloud";
-  modelArchitecture: string;
-  modelId?: string;
-  revision?: string;
-  token?: string;
-  dtype?: string;
-  onnxModel?: string;
-  apiKey?: string;
-  pathInRepo?: string;
+export type FastEmbedInitOptions = {
+  model?: string;
+  cacheDir?: string;
+  maxLength?: number;
+  showDownloadProgress?: boolean;
 };
 
-export type EmbedAnythingEmbedRequest = {
+export type FastEmbedEmbedRequest = {
   inputs: string[];
   batchSize?: number;
-  lateChunking?: boolean;
   normalize?: boolean;
   projectRoot?: string;
   cache?: boolean;
@@ -240,9 +234,9 @@ export type NativeBinding = {
   reverieListConversations(codexHomePath: string, limit?: number, offset?: number): Promise<ReverieConversation[]>;
   reverieSearchConversations(codexHomePath: string, query: string, limit?: number): Promise<ReverieSearchResult[]>;
   reverieGetConversationInsights(conversationPath: string, query?: string): Promise<string[]>;
-  // EmbedAnything hooks
-  embedAnythingInit?(options: EmbedAnythingInitOptions): Promise<void>;
-  embedAnythingEmbed?(request: EmbedAnythingEmbedRequest): Promise<number[][]>;
+  // FastEmbed hooks
+  fastEmbedInit?(options: FastEmbedInitOptions): Promise<void>;
+  fastEmbedEmbed?(request: FastEmbedEmbedRequest): Promise<number[][]>;
   // Tokenizer helpers
   tokenizerCount(text: string, options?: TokenizerOptions): number;
   tokenizerEncode(text: string, options?: TokenizerEncodeOptions): number[];
@@ -425,17 +419,17 @@ export async function reverieGetConversationInsights(
   return (binding as any).reverieGetConversationInsights(conversationPath, query);
 }
 
-// EmbedAnything helpers
-export async function embedAnythingInit(options: EmbedAnythingInitOptions): Promise<void> {
+// FastEmbed helpers
+export async function fastEmbedInit(options: FastEmbedInitOptions): Promise<void> {
   const binding = getNativeBinding();
-  if (!binding?.embedAnythingInit) throw new Error("Native binding not available or embed functions not supported");
-  await binding.embedAnythingInit(options);
+  if (!binding?.fastEmbedInit) throw new Error("Native binding not available or FastEmbed functions not supported");
+  await binding.fastEmbedInit(options);
 }
 
-export async function embedAnythingEmbed(request: EmbedAnythingEmbedRequest): Promise<number[][]> {
+export async function fastEmbedEmbed(request: FastEmbedEmbedRequest): Promise<number[][]> {
   const binding = getNativeBinding();
-  if (!binding?.embedAnythingEmbed) throw new Error("Native binding not available or embed functions not supported");
-  return binding.embedAnythingEmbed(request);
+  if (!binding?.fastEmbedEmbed) throw new Error("Native binding not available or FastEmbed functions not supported");
+  return binding.fastEmbedEmbed(request);
 }
 
 // Tokenizer helpers

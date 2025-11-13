@@ -22,31 +22,6 @@ export declare function cloudTasksList(envFilter?: string | undefined | null, ba
 
 export declare function compactThread(req: RunRequest): Promise<Array<string>>
 
-export declare function embedAnythingEmbed(req: EmbedAnythingEmbedRequest): Promise<Array<Array<number>>>
-
-export interface EmbedAnythingEmbedRequest {
-  inputs: Array<string>
-  batchSize?: number
-  lateChunking?: boolean
-  normalize?: boolean
-  projectRoot?: string
-  cache?: boolean
-}
-
-export declare function embedAnythingInit(opts: EmbedAnythingInitOptions): Promise<void>
-
-export interface EmbedAnythingInitOptions {
-  backend?: string
-  modelArchitecture: string
-  modelId?: string
-  revision?: string
-  token?: string
-  dtype?: string
-  onnxModel?: string
-  apiKey?: string
-  pathInRepo?: string
-}
-
 export declare function emitBackgroundEvent(req: JsEmitBackgroundEventRequest): void
 
 export declare function emitPlanUpdate(req: JsEmitPlanUpdateRequest): void
@@ -58,6 +33,25 @@ export declare function evCompleted(id: string): string
 export declare function evFunctionCall(callId: string, name: string, args: string): string
 
 export declare function evResponseCreated(id: string): string
+
+export declare function fastEmbedEmbed(req: FastEmbedEmbedRequest): Promise<Array<Array<number>>>
+
+export interface FastEmbedEmbedRequest {
+  inputs: Array<string>
+  batchSize?: number
+  normalize?: boolean
+  projectRoot?: string
+  cache?: boolean
+}
+
+export declare function fastEmbedInit(opts: FastEmbedInitOptions): Promise<void>
+
+export interface FastEmbedInitOptions {
+  model?: string
+  cacheDir?: string
+  maxLength?: number
+  showDownloadProgress?: boolean
+}
 
 export interface ForkRequest {
   threadId: string
