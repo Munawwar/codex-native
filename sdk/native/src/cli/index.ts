@@ -103,17 +103,29 @@ async function main(): Promise<void> {
 }
 
 function selectCommand(argv: string[]): { command: CommandName; args: string[] } {
+  // Handle explicit "tui" and "run" subcommands
+  if (argv.length > 0) {
+    const [first, ...rest] = argv;
+    if (first === "tui") {
+      return { command: "tui", args: rest };
+    }
+    if (first === "run") {
+      return { command: "run", args: rest };
+    }
+    // Unrecognized first arg: treat as prompt
+  }
+
+  // Smart default based on whether we're in an interactive terminal
+  // If TTY: prefer TUI (better UX for interactive users)
+  // If non-TTY: prefer run (for scripts/pipes)
+  const isInteractive = process.stdout.isTTY && process.stdin.isTTY;
+
   if (argv.length === 0) {
-    return { command: "run", args: [] };
+    return { command: isInteractive ? "tui" : "run", args: [] };
   }
-  const [first, ...rest] = argv;
-  if (first === "tui") {
-    return { command: "tui", args: rest };
-  }
-  if (first === "run") {
-    return { command: "run", args: rest };
-  }
-  return { command: "run", args: argv };
+
+  // Non-empty argv without explicit command: treat as prompt
+  return { command: isInteractive ? "tui" : "run", args: argv };
 }
 
 function parseRunCommand(args: string[]): RunCommandOptions {
@@ -201,12 +213,18 @@ function printGeneralHelp(): void {
   console.log(`codex-native v${VERSION}
 
 Usage:
-  codex-native [run] [options] [prompt]
-  codex-native tui [options] [prompt]
+  codex-native [options] [prompt]
+  codex-native run [options] [prompt]
+
+Default behavior:
+  In an interactive terminal, launches the TUI with optional initial prompt.
+  In a non-TTY environment (e.g., piped input), runs non-interactively.
+  Use 'codex-native run' to force non-interactive mode.
 
 Commands:
-  run (default)   Run Codex in exec mode
-  tui             Launch the interactive TUI
+  (default)   Launch TUI (if interactive) or run (if non-TTY)
+  run         Run Codex in non-interactive exec mode
+  tui         Force launch the interactive TUI
 
 Global options:
   --config <path>        Path to codex.config.js (or similar)
