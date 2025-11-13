@@ -26,6 +26,7 @@ import * as process from "node:process";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Agent, Runner, handoff } from "@openai/agents";
+import { z } from "zod";
 import {
   Codex,
   CodexProvider,
@@ -66,6 +67,69 @@ type FastEmbedConfig = {
   embedRequest: Omit<FastEmbedEmbedRequest, "inputs" | "projectRoot">;
 };
 
+const IntentionSchema = z.object({
+  category: z
+    .enum(["Feature", "Refactor", "BugFix", "Performance", "Security", "DevEx", "Architecture", "Testing"])
+    .describe("High-level intention category"),
+  title: z.string().min(5).max(160),
+  summary: z.string().min(10).max(400),
+  impactScope: z.enum(["local", "module", "system"]).default("module"),
+  evidence: z.array(z.string()).default([]),
+});
+type Intention = z.infer<typeof IntentionSchema>;
+const IntentionListSchema = z.array(IntentionSchema).min(1).max(12);
+
+const RiskSchema = z.object({
+  category: z
+    .enum(["Architecture", "Quality", "Security", "Performance", "Process", "Testing", "Dependency", "Regression"])
+    .describe("Risk grouping"),
+  title: z.string().min(5).max(140),
+  likelihood: z.enum(["High", "Medium", "Low"]),
+  impact: z.enum(["Critical", "High", "Medium", "Low"]),
+  detectability: z.enum(["Pre-merge", "Post-merge", "Silent"]).default("Post-merge"),
+  description: z.string().min(10).max(400),
+  mitigation: z.string().min(5).max(400).optional().default(""),
+  evidence: z.array(z.string()).default([]),
+});
+type Risk = z.infer<typeof RiskSchema>;
+const RiskListSchema = z.array(RiskSchema).min(1).max(10);
+
+const RecommendationSchema = z.object({
+  category: z.enum(["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"]),
+  title: z.string().min(5).max(160),
+  priority: z.enum(["P0", "P1", "P2", "P3"]),
+  effort: z.enum(["Low", "Medium", "High"]).default("Medium"),
+  description: z.string().min(10).max(400),
+  location: z.string().max(200).optional().default(""),
+  example: z.string().max(400).optional().default(""),
+});
+type Recommendation = z.infer<typeof RecommendationSchema>;
+const RecommendationListSchema = z.array(RecommendationSchema).min(1).max(10);
+
+const CiIssueSchema = z.object({
+  source: z.enum(["lint", "tests", "build", "security"]).or(z.string()),
+  severity: z.enum(["P0", "P1", "P2", "P3"]),
+  title: z.string().min(5).max(160),
+  summary: z.string().min(10).max(400),
+  suggestedCommands: z.array(z.string()).default([]),
+  files: z.array(z.string()).default([]),
+  owner: z.string().optional(),
+  autoFixable: z.boolean().default(false),
+});
+type CiIssue = z.infer<typeof CiIssueSchema>;
+const CiIssueListSchema = z.array(CiIssueSchema).min(1).max(12);
+
+const CiFixSchema = z.object({
+  title: z.string().min(5).max(160),
+  priority: z.enum(["P0", "P1", "P2", "P3"]),
+  steps: z.array(z.string()).default([]),
+  owner: z.string().optional(),
+  etaHours: z.number().min(0).max(40).optional(),
+  commands: z.array(z.string()).default([]),
+});
+type CiFix = z.infer<typeof CiFixSchema>;
+const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
+
 type RepoContext = {
   cwd: string;
   branch: string;
@@ -96,9 +160,9 @@ type PrStatusSummary = {
 
 type ReviewAnalysis = {
   summary: string;
-  intentions: string[];
-  risks: string[];
-  recommendations: string[];
+  intentions: Intention[];
+  risks: Risk[];
+  recommendations: Recommendation[];
   repoContext: RepoContext;
   prStatus?: PrStatusSummary | null;
   thread: Thread;
@@ -106,8 +170,8 @@ type ReviewAnalysis = {
 };
 
 type CiAnalysis = {
-  issues: string[];
-  fixes: string[];
+  issues: CiIssue[];
+  fixes: CiFix[];
   confidence: number;
   thread: Thread;
 };
@@ -369,6 +433,33 @@ Provide 4-8 risks in this format:
 - Differentiate between theoretical risks and likely risks
 - Avoid false positives - only flag concerns you can substantiate`,
     });
+    riskAssessor.instructions += `
+## JSON Output
+Respond ONLY with raw JSON objects like:
+[
+  {
+    "category": "Architecture|Quality|Security|Performance|Process|Testing|Dependency|Regression",
+    "title": "risk title",
+    "likelihood": "High|Medium|Low",
+    "impact": "Critical|High|Medium|Low",
+    "detectability": "Pre-merge|Post-merge|Silent",
+    "description": "what could go wrong",
+    "mitigation": "suggested mitigation",
+    "evidence": ["path/to/file.ts:45 - reason"]
+  }
+]`;
+    intentionAnalyzer.instructions += `
+## JSON Output
+Respond ONLY with raw JSON (no prose, no backticks) shaped like:
+[
+  {
+    "category": "Feature|Refactor|BugFix|Performance|Security|DevEx|Architecture|Testing",
+    "title": "concise intent label",
+    "summary": "why the change exists",
+    "impactScope": "local|module|system",
+    "evidence": ["path/to/file.ts:123 - supporting detail"]
+  }
+]`;
     const qualityReviewer = new Agent({
       name: "QualityReviewer",
       model,
@@ -413,6 +504,20 @@ Provide 6-10 recommendations in this format:
 - Balance thoroughness with pragmatism - match the repo's quality bar
 - Focus on improvements that will benefit future changes, not just this PR`,
     });
+    qualityReviewer.instructions += `
+## JSON Output
+Respond ONLY with raw JSON matching:
+[
+  {
+    "category": "Code|Tests|Docs|Tooling|DevEx|Observability",
+    "title": "recommendation title",
+    "priority": "P0|P1|P2|P3",
+    "effort": "Low|Medium|High",
+    "description": "actionable guidance",
+    "location": "path/to/file or module",
+    "example": "optional example snippet"
+  }
+]`;
 
     intentionAnalyzer.handoffs = [handoff(riskAssessor), handoff(qualityReviewer)];
     riskAssessor.handoffs = [handoff(qualityReviewer)];
