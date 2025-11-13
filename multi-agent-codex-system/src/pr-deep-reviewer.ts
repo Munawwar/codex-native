@@ -1,6 +1,6 @@
 import { Agent, Runner, handoff } from "@openai/agents";
 import type { JsonSchemaDefinition } from "@openai/agents-core";
-import { Codex, CodexProvider } from "@codex-native/sdk";
+import { Codex, CodexProvider, type ThreadEvent, type ThreadItem, type ReviewOutputEvent } from "@codex-native/sdk";
 import { DEFAULT_MODEL } from "./constants.js";
 import {
   IntentionResponseSchema,
@@ -39,7 +39,7 @@ class PRDeepReviewer {
       ? ({ type: "branch", baseBranch: repoContext.baseBranch } as const)
       : ({ type: "current_changes" } as const);
 
-    const reviewResult = await this.codex.review({
+    const reviewResult = await this.runReviewWithLogging({
       target,
       threadOptions: {
         model: this.config.model ?? DEFAULT_MODEL,
@@ -214,6 +214,127 @@ Return a JSON array of recommendations following the Recommendation schema (cate
       thread: reviewThread,
       ciHandoff,
     };
+  }
+
+  private async runReviewWithLogging(options: Parameters<Codex["review"]>[0]): Promise<Awaited<ReturnType<Codex["review"]>> & { items: ThreadItem[] }> {
+    const stream = await this.codex.reviewStreamed(options);
+    const items: ThreadItem[] = [];
+    let finalResponse = "";
+    let usage: Awaited<ReturnType<Codex["review"]>>["usage"] = null;
+    let turnFailure: string | null = null;
+
+    for await (const event of stream.events) {
+      if (!event) {
+        continue;
+      }
+      this.logReviewEvent(event);
+
+      if (event.type === "item.completed") {
+        items.push(event.item);
+        if (event.item.type === "agent_message") {
+          finalResponse = event.item.text;
+        }
+      } else if (event.type === "exited_review_mode" && event.review_output) {
+        finalResponse = this.formatReviewOutput(event.review_output) ?? finalResponse;
+      } else if (event.type === "turn.completed") {
+        usage = event.usage;
+      } else if (event.type === "turn.failed") {
+        turnFailure = event.error.message;
+        break;
+      }
+    }
+
+    if (turnFailure) {
+      throw new Error(turnFailure);
+    }
+
+    return { items, finalResponse, usage };
+  }
+
+  private formatReviewOutput(output: ReviewOutputEvent): string | null {
+    let reviewText = output.overall_explanation ?? "";
+
+    if (output.findings && output.findings.length > 0) {
+      if (reviewText) {
+        reviewText += "\n\n";
+      }
+      reviewText += "## Review Findings\n\n";
+      output.findings.forEach((finding, index) => {
+        reviewText += `### ${index + 1}. ${finding.title}\n`;
+        reviewText += `${finding.body}\n`;
+        reviewText += `**Priority:** ${finding.priority} | **Confidence:** ${finding.confidence_score}\n`;
+        reviewText += `**Location:** ${finding.code_location.absolute_file_path}:${finding.code_location.line_range.start}-${finding.code_location.line_range.end}\n\n`;
+      });
+    }
+
+    return reviewText || null;
+  }
+
+  private logReviewEvent(event: ThreadEvent): void {
+    switch (event.type) {
+      case "thread.started":
+        console.log(`🧵 Review thread started (${event.thread_id})`);
+        break;
+      case "turn.started":
+        console.log("🔄 Review turn started");
+        break;
+      case "turn.completed":
+        console.log(
+          `✅ Review turn completed (usage: ${event.usage.input_tokens + event.usage.output_tokens} tokens)`,
+        );
+        break;
+      case "turn.failed":
+        console.warn("⚠️ Review turn failed:", event.error.message);
+        break;
+      case "background_event":
+        console.log(`📡 ${event.message}`);
+        break;
+      case "item.started":
+        this.logItemEvent("started", event.item);
+        break;
+      case "item.completed":
+        this.logItemEvent("completed", event.item);
+        break;
+      case "item.updated":
+        this.logItemEvent("updated", event.item);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private logItemEvent(phase: "started" | "completed" | "updated", item: ThreadItem): void {
+    switch (item.type) {
+      case "command_execution":
+        console.log(`🛠️  Command ${phase}: ${item.command}`);
+        if (item.status === "completed" && item.exit_code !== undefined) {
+          console.log(`   ↳ exit code ${item.exit_code}`);
+        }
+        break;
+      case "file_change":
+        console.log(`📄 Patch ${phase}: ${item.changes.length} file(s) (${item.status})`);
+        break;
+      case "mcp_tool_call":
+        console.log(`🔌 MCP ${phase}: ${item.server}.${item.tool}`);
+        break;
+      case "web_search":
+        console.log(`🌐 Web search ${phase}: ${item.query}`);
+        break;
+      case "agent_message":
+        if (phase === "completed") {
+          const preview = item.text.length > 200 ? `${item.text.slice(0, 200)}…` : item.text;
+          console.log(`🤖 Agent message: ${preview}`);
+        }
+        break;
+      case "todo_list":
+        console.log(`📝 Plan ${phase}: ${item.items.length} step(s)`);
+        break;
+      case "error":
+        console.warn(`⚠️ Error ${phase}: ${item.message}`);
+        break;
+      default:
+        break;
+    }
   }
 }
 
