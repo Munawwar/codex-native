@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { LspManager } from "../src/lsp/manager.js";
+import { LspManager } from "@codex-native/sdk";
 
 async function main() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "codex-lsp-smoke-"));
