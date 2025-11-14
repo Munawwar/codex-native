@@ -163,7 +163,7 @@ pub async fn reverie_search_semantic(
   let normalized_project_root = opts
     .project_root
     .as_deref()
-    .map(|root| normalize_path(root));
+    .map(normalize_path);
 
   let codex_home = Path::new(&codex_home_path);
   let raw_conversations = load_reverie_conversations(codex_home, max_candidates.saturating_mul(2), 0)
@@ -255,7 +255,7 @@ pub async fn reverie_index_semantic(
   let project_root = opts
     .project_root
     .as_deref()
-    .map(|root| normalize_path(root));
+    .map(normalize_path);
 
   let codex_home = Path::new(&codex_home_path);
   let conversations = load_reverie_conversations(codex_home, max_candidates, 0)
@@ -464,17 +464,16 @@ fn conversation_matches_project(head_records: &[String], project_root: Option<&P
     return true;
   };
   for record in head_records {
-    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(record) {
-      if let Some(cwd) = json_value
+    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(record)
+      && let Some(cwd) = json_value
         .get("meta")
         .and_then(|meta| meta.get("cwd"))
         .and_then(|cwd| cwd.as_str())
         .or_else(|| json_value.get("cwd").and_then(|cwd| cwd.as_str()))
-      {
-        let candidate = normalize_path(cwd);
-        if path_starts_with(&candidate, root) {
-          return true;
-        }
+    {
+      let candidate = normalize_path(cwd);
+      if path_starts_with(&candidate, root) {
+        return true;
       }
     }
   }

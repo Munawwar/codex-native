@@ -45,6 +45,7 @@ class MultiAgentOrchestrator {
           model: this.config.model ?? DEFAULT_MODEL,
         },
         "PR review",
+        { autoDetach: true },
       );
       const hintCleanup = attachReverieHints(reviewData.thread, this.reverie, this.config);
       try {
@@ -64,6 +65,7 @@ class MultiAgentOrchestrator {
           model: this.config.model ?? DEFAULT_MODEL,
         },
         "CI triage",
+        { autoDetach: true },
       );
       const hintCleanup = attachReverieHints(ciResult.thread, this.reverie, this.config);
       try {
@@ -93,6 +95,7 @@ class MultiAgentOrchestrator {
           model: this.config.model ?? DEFAULT_MODEL,
         },
         "Reverie insights",
+        { autoDetach: true },
       );
       try {
         await waitForTuiSession(session, "Reverie insights");
@@ -129,6 +132,7 @@ class MultiAgentOrchestrator {
         model: this.config.model ?? DEFAULT_MODEL,
       },
       "Integrated session",
+      { autoDetach: true },
     );
     try {
       await waitForTuiSession(session, "Integrated session");

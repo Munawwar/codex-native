@@ -3,9 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use codex_native::{
-  fast_embed_init, reverie_get_conversation_insights, reverie_index_semantic,
-  reverie_list_conversations, reverie_search_conversations, reverie_search_semantic,
-  FastEmbedInitOptions, ReverieSemanticSearchOptions,
+  FastEmbedInitOptions, ReverieSemanticSearchOptions, fast_embed_init,
+  reverie_get_conversation_insights, reverie_index_semantic, reverie_list_conversations,
+  reverie_search_conversations, reverie_search_semantic,
 };
 use codex_protocol::ConversationId;
 use codex_protocol::models::{ContentItem, ResponseItem};
@@ -188,6 +188,9 @@ async fn test_reverie_index_semantic_populates_cache() {
   )
   .await
   .unwrap();
-  assert!(stats.documents_embedded > 0, "expected embeddings to be generated");
+  assert!(
+    stats.documents_embedded > 0,
+    "expected embeddings to be generated"
+  );
   assert!(stats.batches >= 1);
 }

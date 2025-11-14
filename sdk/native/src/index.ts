@@ -117,6 +117,11 @@ export {
   tokenizerDecode,
 } from "./nativeBinding";
 
+export type {
+  ReverieSemanticSearchOptions,
+  ReverieSemanticIndexStats,
+} from "./nativeBinding";
+
 export function evCompleted(id: string): string {
   const binding = getNativeBinding();
   if (!binding) throw new Error("Native binding not available");
