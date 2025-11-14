@@ -9,6 +9,7 @@ node_modules
 
 # build
 dist/
+diff-agent/dist/
 dist-examples/
 sdk/native/dist-examples/
 build/

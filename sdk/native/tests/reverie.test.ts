@@ -12,7 +12,6 @@ let reverieSearchSemantic: any;
 let reverieIndexSemantic: any;
 let reverieGetConversationInsights: any;
 let fastEmbedInit: any;
-let reverieGetConversationInsights: any;
 
 beforeAll(async () => {
   const mod = await import("../src/index");
@@ -25,9 +24,6 @@ beforeAll(async () => {
 });
 
 const LONG_TIMEOUT_MS = 120_000;
-
-  reverieGetConversationInsights = mod.reverieGetConversationInsights;
-});
 
 function writeJsonl(file: string, lines: string[]): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
