@@ -48,4 +48,5 @@ export const CONFIG: MultiAgentConfig = {
   reverieRerankerBatchSize: 8,
   reverieRerankerTopK: 20,
   reverieMiniAcceptThreshold: 0.25,
+  structuredOutputMode: "actions-only",
 };

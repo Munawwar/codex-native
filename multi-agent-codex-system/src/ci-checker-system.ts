@@ -12,7 +12,14 @@ import {
   type CiFix,
   type CiIssue,
 } from "./schemas.js";
-import type { CiAnalysis, CiCheckKind, MultiAgentConfig, PrStatusSummary, RepoContext } from "./types.js";
+import type {
+  CiAnalysis,
+  CiCheckKind,
+  MultiAgentConfig,
+  PrStatusSummary,
+  RepoContext,
+  StructuredOutputMode,
+} from "./types.js";
 import { formatPrStatus, formatRepoContext } from "./repo.js";
 import { attachApplyPatchReminder } from "./reminders/applyPatchReminder.js";
 
@@ -91,10 +98,13 @@ ${formatPrStatus(prStatus)}
 GH checks:
 ${prStatus?.ghChecksText ?? "<no gh pr checks output>"}`;
 
+    const useStructuredIssues = this.shouldUseStructuredOutput("ci-issues");
+    const useStructuredFixes = this.shouldUseStructuredOutput("ci-fixes");
+
     const lintChecker = new Agent<unknown, JsonSchemaDefinition>({
       name: "LintChecker",
       model,
-      outputType: CiIssueOutputType,
+      ...(useStructuredIssues ? { outputType: CiIssueOutputType } : {}),
       instructions: `# Lint & Static Analysis Checker
 
 You detect lint, formatting, and static-analysis issues that will fail CI.
@@ -108,7 +118,7 @@ Respond with a JSON array of CiIssue objects. Set "source" to "lint" for every e
     const testChecker = new Agent<unknown, JsonSchemaDefinition>({
       name: "TestChecker",
       model,
-      outputType: CiIssueOutputType,
+      ...(useStructuredIssues ? { outputType: CiIssueOutputType } : {}),
       instructions: `# Test Failure Forecaster
 
 You predict failing or missing tests before CI finishes.
@@ -122,7 +132,7 @@ Respond with a JSON array of CiIssue objects. Set "source" to "tests" for every 
     const buildChecker = new Agent<unknown, JsonSchemaDefinition>({
       name: "BuildChecker",
       model,
-      outputType: CiIssueOutputType,
+      ...(useStructuredIssues ? { outputType: CiIssueOutputType } : {}),
       instructions: `# Build & Dependency Checker
 
 You are detecting build, packaging, and dependency issues before CI runs.
@@ -136,7 +146,7 @@ Respond with a JSON array of CiIssue objects. Set "source" to "build" for every 
     const securityChecker = new Agent<unknown, JsonSchemaDefinition>({
       name: "SecurityChecker",
       model,
-      outputType: CiIssueOutputType,
+      ...(useStructuredIssues ? { outputType: CiIssueOutputType } : {}),
       instructions: `# Security & Secrets Checker
 
 You are identifying security vulnerabilities and secrets hygiene issues.
@@ -150,7 +160,7 @@ Respond with a JSON array of CiIssue objects. Set "source" to "security" for eve
     const fixer = new Agent<unknown, JsonSchemaDefinition>({
       name: "CIFixer",
       model,
-      outputType: CiFixOutputType,
+      ...(useStructuredFixes ? { outputType: CiFixOutputType } : {}),
       instructions: `# CI Issue Remediation Planner
 
 You synthesize issues from multiple checkers and output an ordered remediation plan.
@@ -259,6 +269,17 @@ ${this.formatFixSummary(data.fixes)}
 
 Let's jump into the TUI and apply/validate these fixes.`;
     return thread.tui({ prompt, model: this.config.model ?? DEFAULT_MODEL });
+  }
+
+  private shouldUseStructuredOutput(scope: "ci-issues" | "ci-fixes"): boolean {
+    const mode: StructuredOutputMode = this.config.structuredOutputMode ?? "actions-only";
+    if (mode === "always") {
+      return true;
+    }
+    if (mode === "never") {
+      return false;
+    }
+    return scope === "ci-fixes";
   }
 }
 

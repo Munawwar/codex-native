@@ -8,6 +8,8 @@ export type FastEmbedConfig = {
   embedRequest: Omit<FastEmbedEmbedRequest, "inputs" | "projectRoot">;
 };
 
+export type StructuredOutputMode = "always" | "actions-only" | "never";
+
 export type MultiAgentConfig = {
   baseUrl?: string;
   apiKey?: string;
@@ -44,6 +46,7 @@ export type MultiAgentConfig = {
   reverieRerankerBatchSize?: number;
   reverieRerankerTopK?: number;
   reverieMiniAcceptThreshold?: number;
+  structuredOutputMode?: StructuredOutputMode;
 };
 
 export type CommandResult = {

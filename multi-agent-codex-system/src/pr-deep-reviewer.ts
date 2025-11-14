@@ -81,11 +81,13 @@ class PRDeepReviewer {
     const prBlock = formatPrStatus(prStatus);
 
     const model = await this.provider.getModel();
+    const useStructuredIntentions = this.shouldUseStructuredOutput("review-intentions");
+    const useStructuredRecommendations = this.shouldUseStructuredOutput("review-recommendations");
 
     const intentionAnalyzer = new Agent<unknown, JsonSchemaDefinition>({
       name: "IntentionAnalyzer",
       model,
-      outputType: IntentionOutputType,
+      ...(useStructuredIntentions ? { outputType: IntentionOutputType } : {}),
       instructions: `# Intention Analysis Agent
 
 You are analyzing developer intent and architectural decisions behind code changes.
@@ -121,7 +123,7 @@ Return a JSON array matching the Intention schema (category, title, summary, imp
     const qualityReviewer = new Agent<unknown, JsonSchemaDefinition>({
       name: "QualityReviewer",
       model,
-      outputType: RecommendationOutputType,
+      ...(useStructuredRecommendations ? { outputType: RecommendationOutputType } : {}),
       instructions: `# Code Quality & DevEx Reviewer
 
 You are evaluating code quality, test coverage, and developer experience improvements.
@@ -375,6 +377,17 @@ Return a JSON array of recommendations following the Recommendation schema (cate
       .join("\n");
     const prompt = `PR Review Ready\n\nSummary:\n${data.summary}\n\nIntentions:\n${intentionLines}\n\nRecommendations:\n${recommendationLines}\n\nEnter the TUI and drill into any file or test you want.`;
     return thread.tui({ prompt, model: this.config.model ?? DEFAULT_MODEL });
+  }
+
+  private shouldUseStructuredOutput(scope: "review-intentions" | "review-recommendations"): boolean {
+    const mode = this.config.structuredOutputMode ?? "actions-only";
+    if (mode === "always") {
+      return true;
+    }
+    if (mode === "never") {
+      return false;
+    }
+    return false;
   }
 }
 
