@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { ReverieSemanticSearchOptions } from "@codex-native/sdk";
+import type { ReverieSemanticSearchOptions, Thread } from "@codex-native/sdk";
 import { ReverieSystem } from "../src/reverie.js";
 import type { MultiAgentConfig } from "../src/types.js";
 
@@ -92,4 +92,62 @@ test("ReverieSystem search & warm indexing uses embedder hooks", async () => {
     logLines.some((line) => line.includes("Reverie indexing complete")),
     "should announce indexing completion",
   );
+});
+
+test("ReverieSystem skips semantic search when embedder config missing", async () => {
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+  };
+
+  const config: MultiAgentConfig = {
+    workingDirectory: process.cwd(),
+    skipGitRepoCheck: true,
+  };
+  const reverie = new ReverieSystem(config);
+  const results = await reverie.searchReveriesFromText(" flaky test triage ");
+  console.warn = originalWarn;
+
+  assert.equal(results.length, 0, "semantic search should be disabled");
+  assert.ok(
+    warnings.some((line) => line.includes("semantic search disabled")),
+    "should emit warning about missing embedder",
+  );
+});
+
+test("injectReverie posts formatted summary exactly once", async () => {
+  const config: MultiAgentConfig = {
+    workingDirectory: process.cwd(),
+    skipGitRepoCheck: true,
+  };
+  const reverie = new ReverieSystem(config);
+  const runCalls: string[] = [];
+  const mockThread = {
+    async run(note: string) {
+      runCalls.push(note);
+      return { finalResponse: note };
+    },
+  } as unknown as Thread;
+
+  await reverie.injectReverie(
+    mockThread,
+    [
+      {
+        conversationId: "conv-42",
+        timestamp: "2025-01-01T00:00:00Z",
+        relevance: 0.78,
+        excerpt: "rerun migrations",
+        insights: ["Re-run migrations with --force"],
+      },
+    ],
+    "migration failures",
+  );
+
+  assert.equal(runCalls.length, 1, "thread.run should be called once for non-empty reveries");
+  assert.ok(runCalls[0].includes("migration failures"));
+  assert.ok(runCalls[0].includes("Re-run migrations"));
+
+  await reverie.injectReverie(mockThread, [], "noop");
+  assert.equal(runCalls.length, 1, "empty reveries should not emit follow-up note");
 });

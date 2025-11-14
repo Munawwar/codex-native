@@ -200,6 +200,48 @@ async fn test_reverie_index_semantic_populates_cache() {
 }
 
 #[tokio::test]
+async fn test_reverie_search_semantic_empty_query_short_circuits() {
+  let (home, _convo) = make_fake_codex_home();
+  let path = home.path().to_string_lossy().to_string();
+
+  let results = reverie_search_semantic(path, "   ".to_string(), None)
+    .await
+    .unwrap();
+  assert!(results.is_empty(), "whitespace-only queries should return no matches");
+}
+
+#[tokio::test]
+async fn test_reverie_search_semantic_filters_project_root() {
+  let (home, _convo) = make_fake_codex_home();
+  let path = home.path().to_string_lossy().to_string();
+  let cache_dir = tempfile::tempdir().unwrap();
+  fast_embed_init(FastEmbedInitOptions {
+    model: Some("BAAI/bge-small-en-v1.5".to_string()),
+    cache_dir: Some(cache_dir.path().to_string_lossy().to_string()),
+    max_length: Some(512),
+    show_download_progress: Some(false),
+  })
+  .await
+  .unwrap();
+
+  let unrelated_root = tempfile::tempdir().unwrap();
+  let options = ReverieSemanticSearchOptions {
+    limit: Some(5),
+    max_candidates: Some(10),
+    project_root: Some(unrelated_root.path().to_string_lossy().to_string()),
+    batch_size: None,
+    normalize: Some(true),
+    cache: Some(true),
+    ..Default::default()
+  };
+
+  let results = reverie_search_semantic(path, "auth timeout".to_string(), Some(options))
+    .await
+    .unwrap();
+  assert!(results.is_empty(), "conversations outside project root should be filtered out");
+}
+
+#[tokio::test]
 async fn test_reverie_search_semantic_respects_reranker_hook() {
   let (home, _convo) = make_fake_codex_home();
   let sessions_dir = home.path().join("sessions/2025/01/01");
