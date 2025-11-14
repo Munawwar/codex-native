@@ -3,6 +3,7 @@ import { DEFAULT_MODEL } from "./constants.js";
 import { CICheckerSystem } from "./ci-checker-system.js";
 import { PRDeepReviewer } from "./pr-deep-reviewer.js";
 import { ReverieSystem } from "./reverie.js";
+import { CodeImplementer } from "./code-implementer.js";
 import { attachReverieHints } from "./reverie-hints.js";
 import { collectPrStatus, collectRepoContext, formatPrStatus, formatRepoContext } from "./repo.js";
 import type { CiAnalysis, MultiAgentConfig, PrStatusSummary, RepoContext, ReviewAnalysis } from "./types.js";
@@ -15,6 +16,7 @@ class MultiAgentOrchestrator {
   private ciChecker: CICheckerSystem;
   private reverie: ReverieSystem;
   private diagnostics?: LspDiagnosticsBridge;
+  private implementer?: CodeImplementer;
 
   constructor(private readonly config: MultiAgentConfig) {
     if (config.enableLspDiagnostics) {
@@ -26,6 +28,9 @@ class MultiAgentOrchestrator {
     this.reviewer = new PRDeepReviewer(config, this.diagnostics);
     this.ciChecker = new CICheckerSystem(config, this.diagnostics);
     this.reverie = new ReverieSystem(config);
+    if (config.implementFixes) {
+      this.implementer = new CodeImplementer(config, this.diagnostics);
+    }
   }
 
   async runWorkflow(): Promise<void> {
@@ -58,8 +63,9 @@ class MultiAgentOrchestrator {
       }
     }
 
+    let ciResult: CiAnalysis | null = null;
     if (this.config.ciCheck) {
-      const ciResult = await this.ciChecker.checkAndFixCI(repoContext, prStatus, reviewData?.ciHandoff);
+      ciResult = await this.ciChecker.checkAndFixCI(repoContext, prStatus, reviewData?.ciHandoff);
       logCiSummary(ciResult);
       const session = runThreadTui(
         ciResult.thread,
@@ -75,6 +81,10 @@ class MultiAgentOrchestrator {
         await waitForTuiSession(session, "CI triage");
       } finally {
         hintCleanup();
+      }
+
+      if (this.config.implementFixes && this.implementer) {
+        await this.runFixerPhase(repoContext, ciResult);
       }
     }
 
@@ -145,6 +155,29 @@ class MultiAgentOrchestrator {
       hintCleanup();
     }
   }
+
+  private async runFixerPhase(repoContext: RepoContext, ciResult: CiAnalysis) {
+    if (!this.implementer) {
+      return;
+    }
+    const { thread: fixerThread, cleanup } = await this.implementer.applyFixes(repoContext, ciResult);
+    const session = runThreadTui(
+      fixerThread,
+      {
+        prompt: buildFixerPrompt(ciResult),
+        model: this.config.model ?? DEFAULT_MODEL,
+      },
+      "CI fixer",
+      { autoDetach: true },
+    );
+    const hintCleanup = attachReverieHints(fixerThread, this.reverie, this.config);
+    try {
+      await waitForTuiSession(session, "CI fixer");
+    } finally {
+      hintCleanup();
+      cleanup();
+    }
+  }
 }
 
 function logReviewSummary(data: ReviewAnalysis): void {
@@ -205,6 +238,12 @@ function buildCiPrompt(data: CiAnalysis): string {
     .join("\n")}\n\nFixes:\n${data
     .fixes.slice(0, 10)
     .map((fix, idx) => `#${idx + 1} [${fix.priority}] ${fix.title}`)
+    .join("\n")}`;
+}
+
+function buildFixerPrompt(data: CiAnalysis): string {
+  return `CI Fixer Session\nConfidence: ${(data.confidence * 100).toFixed(1)}%\nFocus on the remediation plan below and apply fixes iteratively.\n\nFix plan:\n${data.fixes
+    .map((fix, idx) => `#${idx + 1} [${fix.priority}] ${fix.title} — Steps: ${fix.steps.join(" | ")}`)
     .join("\n")}`;
 }
 

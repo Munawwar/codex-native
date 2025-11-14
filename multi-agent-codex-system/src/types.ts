@@ -24,6 +24,7 @@ export type MultiAgentConfig = {
   suppressedChecks?: CiCheckKind[];
   enableLspDiagnostics?: boolean;
   lspWaitForDiagnostics?: boolean;
+  implementFixes?: boolean;
   autoReverieHints?: boolean;
   reverieHintIntervalMs?: number;
   reverieHintMinScore?: number;

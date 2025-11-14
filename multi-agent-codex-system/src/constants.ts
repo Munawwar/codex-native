@@ -28,6 +28,7 @@ export const CONFIG: MultiAgentConfig = {
   suppressedChecks: [],
   enableLspDiagnostics: true,
   lspWaitForDiagnostics: true,
+  implementFixes: true,
   autoReverieHints: true,
   reverieHintIntervalMs: 120_000,
   reverieHintMinScore: 0.45,
