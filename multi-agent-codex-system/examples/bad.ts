@@ -1,1 +1,0 @@
-const total: number = 'invalid';

@@ -42,4 +42,8 @@ export const CONFIG: MultiAgentConfig = {
   reverieWarmIndexOnStart: true,
   reverieIndexLimit: 200,
   reverieIndexMaxCandidates: 400,
+  reverieRerankerModel: "BAAI/bge-reranker-v2-m3",
+  reverieRerankerBatchSize: 8,
+  reverieRerankerTopK: 20,
+  reverieMiniAcceptThreshold: 0.25,
 };

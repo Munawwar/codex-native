@@ -38,6 +38,10 @@ export type MultiAgentConfig = {
   reverieWarmIndexOnStart?: boolean;
   reverieIndexLimit?: number;
   reverieIndexMaxCandidates?: number;
+  reverieRerankerModel?: string;
+  reverieRerankerBatchSize?: number;
+  reverieRerankerTopK?: number;
+  reverieMiniAcceptThreshold?: number;
 };
 
 export type CommandResult = {
