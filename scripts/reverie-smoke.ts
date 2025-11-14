@@ -127,15 +127,15 @@ function reportResults(results: Result[]): void {
     const relevanceValue =
       match.relevanceScore ??
       // Fallback fields for keyword search output types.
-      (match as Record<string, number | undefined>).relevance ??
-      (match as Record<string, number | undefined>).relevance_score ??
+      (match as any).relevance ??
+      (match as any).relevance_score ??
       0;
     const summary = {
       index: idx + 1,
       conversation: match.conversation.id,
       relevance: Number(relevanceValue).toFixed(3),
-      timestamp: match.conversation.created_at ?? match.timestamp,
-      excerpt: match.matching_excerpts?.[0] ?? match.excerpt ?? "",
+      timestamp: match.conversation.created_at ?? (match as any).timestamp,
+      excerpt: match.matching_excerpts?.[0] ?? (match as any).excerpt ?? "",
       insights: match.insights?.slice(0, 3) ?? [],
     };
     console.log(JSON.stringify(summary, null, 2));
