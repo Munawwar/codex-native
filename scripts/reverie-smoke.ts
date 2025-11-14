@@ -134,8 +134,8 @@ function reportResults(results: Result[]): void {
       index: idx + 1,
       conversation: match.conversation.id,
       relevance: Number(relevanceValue).toFixed(3),
-      timestamp: match.conversation.created_at ?? (match as any).timestamp,
-      excerpt: match.matching_excerpts?.[0] ?? (match as any).excerpt ?? "",
+      timestamp: match.conversation.createdAt ?? (match as any).timestamp,
+      excerpt: match.matchingExcerpts?.[0] ?? (match as any).excerpt ?? "",
       insights: match.insights?.slice(0, 3) ?? [],
     };
     console.log(JSON.stringify(summary, null, 2));
