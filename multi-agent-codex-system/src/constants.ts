@@ -17,11 +17,12 @@ export const CONFIG: MultiAgentConfig = {
   approvalMode: "never",
   embedder: {
     initOptions: {
-      model: "BAAI/bge-large-en-v1.5",
+      model: "mixedbread-ai/mxbai-embed-large-v1",
     },
     embedRequest: {
       normalize: true,
       cache: true,
+      batchSize: 64,
     },
   },
   suppressedChecks: [],
@@ -38,4 +39,7 @@ export const CONFIG: MultiAgentConfig = {
   reverieHintMinDialogueChars: 160,
   reverieHintUseMiniModel: true,
   reverieHintModel: DEFAULT_MINI_MODEL,
+  reverieWarmIndexOnStart: true,
+  reverieIndexLimit: 200,
+  reverieIndexMaxCandidates: 400,
 };

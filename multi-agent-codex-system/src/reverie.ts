@@ -3,6 +3,7 @@ import * as process from "node:process";
 import {
   fastEmbedInit,
   reverieSearchSemantic,
+  reverieIndexSemantic,
   type ReverieSemanticSearchOptions,
   type Thread,
 } from "@codex-native/sdk";
@@ -22,6 +23,36 @@ class ReverieSystem {
 
   async searchReveries(query: string): Promise<ReverieResult[]> {
     return this.searchReveriesFromText(query);
+  }
+
+  async warmSemanticIndex(): Promise<void> {
+    if (!this.config.embedder) {
+      console.log("⚠️  Skipping reverie indexing: embedder config missing.");
+      return;
+    }
+    await this.ensureEmbedderReady();
+    const codexHome = resolveCodexHome();
+    const projectRoot = path.resolve(this.config.workingDirectory);
+    const limit = this.config.reverieIndexLimit ?? 200;
+    const maxCandidates = this.config.reverieIndexMaxCandidates ?? Math.max(limit * 2, 200);
+    console.log(
+      `📚 Pre-indexing reveries (limit=${limit}, candidates=${maxCandidates}) for ${projectRoot}…`,
+    );
+    try {
+      const stats = await reverieIndexSemantic(codexHome, {
+        projectRoot,
+        limit,
+        maxCandidates,
+        batchSize: this.config.embedder.embedRequest?.batchSize,
+        normalize: this.config.embedder.embedRequest?.normalize,
+        cache: this.config.embedder.embedRequest?.cache,
+      });
+      console.log(
+        `✅ Reverie indexing complete (docs=${stats.documentsEmbedded}, batches=${stats.batches}).`,
+      );
+    } catch (error) {
+      console.warn("⚠️  Reverie indexing failed:", error);
+    }
   }
 
   async searchReveriesFromText(

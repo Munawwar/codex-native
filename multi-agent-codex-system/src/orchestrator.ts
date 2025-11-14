@@ -30,6 +30,9 @@ class MultiAgentOrchestrator {
 
   async runWorkflow(): Promise<void> {
     console.log("🚀 Multi-Agent Codex Workflow started");
+    if (this.config.reverieWarmIndexOnStart) {
+      await this.reverie.warmSemanticIndex();
+    }
     const repoContext = collectRepoContext(this.config.workingDirectory, this.config.baseBranchOverride);
     const prStatus = collectPrStatus(this.config.workingDirectory);
 

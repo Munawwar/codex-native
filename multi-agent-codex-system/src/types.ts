@@ -35,6 +35,9 @@ export type MultiAgentConfig = {
   reverieHintMinDialogueChars?: number;
   reverieHintUseMiniModel?: boolean;
   reverieHintModel?: string;
+  reverieWarmIndexOnStart?: boolean;
+  reverieIndexLimit?: number;
+  reverieIndexMaxCandidates?: number;
 };
 
 export type CommandResult = {
