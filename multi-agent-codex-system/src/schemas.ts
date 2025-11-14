@@ -43,8 +43,6 @@ const CiFixSchema = z.object({
   priority: z.enum(["P0", "P1", "P2", "P3"]),
   steps: z.array(z.string()).default([]),
   owner: z.string().min(2).max(160).optional(),
-  etaHours: z.number().min(0).max(720).optional(),
-  commands: z.array(z.string()).min(1),
 });
 export type CiFix = z.output<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
@@ -67,8 +65,10 @@ function stringField(min?: number, max?: number) {
   return schema;
 }
 
-function optionalStringField(max?: number) {
-  return stringField(undefined, max);
+function optionalStringField(bounds?: number | { min?: number; max?: number }) {
+  const { min, max } = typeof bounds === "number" ? { min: undefined, max: bounds } : bounds ?? {};
+  const base = stringField(min, max);
+  return { anyOf: [base, { type: "null" as const }] };
 }
 
 function stringArrayField(options?: { minItems?: number; maxItems?: number }) {
@@ -84,9 +84,9 @@ function stringArrayField(options?: { minItems?: number; maxItems?: number }) {
 
 function buildResponseSchema(
   properties: JsonSchemaProperties,
-  required: string[],
   options?: { maxItems?: number },
 ): JsonSchemaDefinition["schema"] {
+  const required = Object.keys(properties);
   return {
     type: "object" as const,
     additionalProperties: false,
@@ -119,7 +119,6 @@ const IntentionOutputType: JsonSchemaDefinition = {
       impactScope: { type: "string", enum: ["local", "module", "system"] },
       evidence: stringArrayField(),
     },
-    ["category", "title", "summary", "impactScope"],
     { maxItems: 12 },
   ),
 };
@@ -138,7 +137,6 @@ const RecommendationOutputType: JsonSchemaDefinition = {
       location: optionalStringField(200),
       example: optionalStringField(400),
     },
-    ["category", "title", "priority", "effort", "description"],
     { maxItems: 10 },
   ),
 };
@@ -158,7 +156,6 @@ const CiIssueOutputType: JsonSchemaDefinition = {
       owner: optionalStringField(),
       autoFixable: { type: "boolean" },
     },
-    ["severity", "title", "summary"],
     { maxItems: 12 },
   ),
 };
@@ -172,11 +169,8 @@ const CiFixOutputType: JsonSchemaDefinition = {
       title: stringField(5, 160),
       priority: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
       steps: stringArrayField(),
-      owner: stringField(2, 160),
-      etaHours: { type: "number", minimum: 0, maximum: 720 },
-      commands: stringArrayField({ minItems: 1 }),
+      owner: optionalStringField({ min: 2, max: 160 }),
     },
-    ["title", "priority", "steps", "commands"],
     { maxItems: 15 },
   ),
 };

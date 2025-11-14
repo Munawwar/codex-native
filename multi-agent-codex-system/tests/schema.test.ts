@@ -59,6 +59,8 @@ validateSchema(
         priority: "P2",
         effort: "Low",
         description: "Explain how to enable streaming logs",
+        location: null,
+        example: null,
       },
     ],
   },
@@ -76,6 +78,8 @@ validateSchema(
         summary: "Schema definitions lack coverage",
         suggestedCommands: ["pnpm --filter multi-agent-codex-system run test"],
         files: ["src/schemas.ts"],
+        owner: null,
+        autoFixable: false,
       },
     ],
   },
@@ -91,8 +95,6 @@ validateSchema(
         priority: "P1",
         steps: ["Add AJV", "Write schema.test.ts"],
         owner: "infra",
-        etaHours: 24,
-        commands: ["pnpm --filter multi-agent-codex-system test"],
       },
     ],
   },
@@ -101,7 +103,7 @@ validateSchema(
 expectInvalid(
   "CiFixList",
   CiFixOutputType.schema,
-  { items: [{ title: "Missing commands", priority: "P2", steps: ["Investigate"], owner: "ci-bot", etaHours: 6 }] },
+  { items: [{ title: "Missing remediation steps", priority: "P2", owner: null }] },
 );
 
 await runReverieInjectionTests();
