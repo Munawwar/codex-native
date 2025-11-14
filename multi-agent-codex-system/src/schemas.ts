@@ -19,8 +19,8 @@ const RecommendationSchema = z.object({
   priority: z.enum(["P0", "P1", "P2", "P3"]),
   effort: z.enum(["Low", "Medium", "High"]).default("Medium"),
   description: z.string().min(10).max(400),
-  location: z.string().max(200).optional().default(""),
-  example: z.string().max(400).optional().default(""),
+  location: nullableStringWithDefault(200),
+  example: nullableStringWithDefault(400),
 });
 export type Recommendation = z.output<typeof RecommendationSchema>;
 const RecommendationListSchema = z.array(RecommendationSchema).min(1).max(10);
@@ -32,7 +32,7 @@ const CiIssueSchema = z.object({
   summary: z.string().min(10).max(400),
   suggestedCommands: z.array(z.string()).default([]),
   files: z.array(z.string()).default([]),
-  owner: z.string().optional(),
+  owner: z.string().optional().or(z.literal(null)),
   autoFixable: z.boolean().default(false),
 });
 export type CiIssue = z.output<typeof CiIssueSchema>;
@@ -42,7 +42,7 @@ const CiFixSchema = z.object({
   title: z.string().min(5).max(160),
   priority: z.enum(["P0", "P1", "P2", "P3"]),
   steps: z.array(z.string()).default([]),
-  owner: z.string().min(2).max(160).optional(),
+  owner: z.string().min(2).max(160).optional().or(z.literal(null)),
 });
 export type CiFix = z.output<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
@@ -63,6 +63,15 @@ function stringField(min?: number, max?: number) {
     schema.maxLength = max;
   }
   return schema;
+}
+
+function nullableStringWithDefault(max: number) {
+  return z
+    .string()
+    .max(max)
+    .optional()
+    .or(z.literal(null))
+    .transform((value) => value ?? "");
 }
 
 function optionalStringField(bounds?: number | { min?: number; max?: number }) {
