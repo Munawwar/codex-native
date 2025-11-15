@@ -2,6 +2,8 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_utils_string::take_bytes_at_char_boundary;
 use codex_utils_string::take_last_bytes_at_char_boundary;
 
+use crate::util::error_or_panic;
+
 // Model-formatting limits: clients get full streams; only content sent to the model is truncated.
 pub(crate) const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
 pub(crate) const MODEL_FORMAT_HEAD_LINES: usize = 128;
@@ -68,6 +70,7 @@ pub(crate) fn format_output_for_model_body(content: &str) -> String {
 }
 
 fn truncate_formatted_exec_output(content: &str, total_lines: usize) -> String {
+    debug_panic_on_double_truncation(content);
     let segments: Vec<&str> = content.split_inclusive('\n').collect();
     let head_take = MODEL_FORMAT_HEAD_LINES.min(segments.len());
     let tail_take = MODEL_FORMAT_TAIL_LINES.min(segments.len().saturating_sub(head_take));
@@ -125,4 +128,12 @@ fn truncate_formatted_exec_output(content: &str, total_lines: usize) -> String {
     result.push_str(tail_part);
 
     result
+}
+
+fn debug_panic_on_double_truncation(content: &str) {
+    if content.contains("Total output lines:") && content.contains("omitted") {
+        error_or_panic(format!(
+            "FunctionCallOutput content was already truncated before ContextManager::record_items; this would cause double truncation {content}"
+        ));
+    }
 }
