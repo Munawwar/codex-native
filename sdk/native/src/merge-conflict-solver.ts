@@ -968,85 +968,34 @@ function buildReviewerPrompt(input: {
       .map((outcome) => {
         const status = outcome.success ? "resolved" : "unresolved";
         const summary = outcome.summary ? outcome.summary.slice(0, 2000) : "(no summary)";
-        return `- ${outcome.path}: ${status}
-${summary}`;
+        return `- ${outcome.path}: ${status}\n${summary}`;
       })
-      .join("
-
-") || "(workers produced no summaries)";
+      .join("\n\n") || "(workers produced no summaries)";
   const remoteSection = input.remoteComparison
-    ? `Remote divergence (${input.remoteComparison.originRef} ↔ ${input.remoteComparison.upstreamRef})
-Commits only on ${input.remoteComparison.upstreamRef ?? "<none>"}
-
-Commits only on ${input.remoteComparison.originRef ?? "<none>"}
-
-Diff ${input.remoteComparison.originRef}..${input.remoteComparison.upstreamRef}:
-${input.remoteComparison.diffstatOriginToUpstream ?? "<no diff>"}`
+    ? `Remote divergence (${input.remoteComparison.originRef} ↔ ${input.remoteComparison.upstreamRef})\nCommits only on ${
+        input.remoteComparison.upstreamRef ?? "<none>"
+      }\n\nCommits only on ${input.remoteComparison.originRef ?? "<none>"}\n\nDiff ${
+        input.remoteComparison.originRef
+      }..${input.remoteComparison.upstreamRef}:\n${input.remoteComparison.diffstatOriginToUpstream ?? "<no diff>"}`
     : "Remote divergence context unavailable.";
 
-  return `# Merge Conflict Reviewer
+  const remainingBlock = input.remaining.length ? input.remaining.join("\n") : "<none>";
 
-Goal: confirm that all conflicts are resolved, run/plan validation commands, and highlight any follow-ups.
-
-Current git status:
-${input.status || "<clean>"}
-
-Diffstat:
-${input.diffStat || "<none>"}
-
-Remaining conflicted files (git diff --name-only --diff-filter=U):
-${input.remaining.length ? input.remaining.join("
-") : "<none>"}
-
-Worker notes:
-${workerNotes}
-
-${remoteSection}
-
-Historical guardrails to honor:
-${HISTORICAL_PLAYBOOK}
-
-Tasks:
-1. ${input.validationMode ? "Run targeted tests for each resolved file (unit/integration only)." : "Double-check no conflict markers remain (consider 'rg "<<<<<<"' across repo)."}
-2. ${input.validationMode ? "Report pass/fail per file and note any new issues." : "Ensure git status is staged/clean as appropriate."}
-3. ${input.validationMode ? "List broader suites (pnpm build/ci) to run once targeted checks pass." : "If feasible, run pnpm install, pnpm build, and pnpm run ci. If they are too heavy, explain when/how they should run."}
-4. Summarize final merge state plus TODOs for the human operator.
-5. Call out any files that still need manual attention.
-
-Respond with a crisp summary plus checklist.`;
+  return `# Merge Conflict Reviewer\n\nGoal: confirm that all conflicts are resolved, run/plan validation commands, and highlight any follow-ups.\n\nCurrent git status:\n${
+    input.status || "<clean>"
+  }\n\nDiffstat:\n${input.diffStat || "<none>"}\n\nRemaining conflicted files (git diff --name-only --diff-filter=U):\n${remainingBlock}\n\nWorker notes:\n${workerNotes}\n\n${remoteSection}\n\nHistorical guardrails to honor:\n${HISTORICAL_PLAYBOOK}\n\nTasks:\n1. ${
+    input.validationMode
+      ? "Run targeted tests for each resolved file (unit/integration only)."
+      : 'Double-check no conflict markers remain (consider "rg <<<<<<" across repo).'
+  }\n2. ${
+    input.validationMode ? "Report pass/fail per file and note any new issues." : "Ensure git status is staged/clean as appropriate."
+  }\n3. ${
+    input.validationMode
+      ? "List broader suites (pnpm build/ci) to run once targeted checks pass."
+      : "If feasible, run pnpm install, pnpm build, and pnpm run ci. If they are too heavy, explain when/how they should run."
+  }\n4. Summarize final merge state plus TODOs for the human operator.\n5. Call out any files that still need manual attention.\n\nRespond with a crisp summary plus checklist.`;
 }
 
-function buildValidationPrompt(path: string, workerSummary: string): string {
-  return `# Targeted Validation for ${path}
-
-The merge conflict for ${path} is resolved. Your task now is to run the most relevant tests for this file (unit/integration only). Do not edit code; focus on verifying the fix.
-
-Instructions:
-- Identify the smallest set of tests that exercise ${path}.
-- Run those tests. Prefer targeted commands (e.g., cargo test -p <crate> -- <filter>, pnpm test -- <file>, etc.).
-- If no tests exist, explain why and suggest follow-up coverage.
-- Summarize results starting with either "VALIDATION_OK:" or "VALIDATION_FAIL:" followed by details.
-
-Reference summary from the merge agent:
-${workerSummary || "(no summary provided)"}
-
-Report:
-- What tests you ran (commands/output).
-- Whether they passed or failed.
-- Any further actions needed.`;
-}
-
-function parseValidationSummary(text: string): { status: "ok" | "fail"; summary: string } {
-  const normalized = text.trim();
-  const lower = normalized.toLowerCase();
-  if (lower.startsWith("validation_ok")) {
-    return { status: "ok", summary: normalized };
-  }
-  if (lower.startsWith("validation_fail")) {
-    return { status: "fail", summary: normalized };
-  }
-  return { status: "fail", summary: normalized || "VALIDATION_FAIL: No output returned" };
-}
 
 async function main(): Promise<void> {
   try {
