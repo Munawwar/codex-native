@@ -608,7 +608,7 @@ fn build_compact_document(
 
   let mut textual_segments: Vec<String> = segments
     .iter()
-    .filter_map(|value| extract_insight_from_json(value))
+    .filter_map(extract_insight_from_json)
     .map(|text| text.trim().to_string())
     .filter(|text| !text.is_empty() && !contains_instruction_marker(text))
     .collect();
@@ -677,34 +677,29 @@ fn is_metadata_record(value: &serde_json::Value) -> bool {
     if record_type == "session_meta" {
       return true;
     }
-    if record_type == "event_msg" {
-      if let Some(payload) = value.get("payload") {
-        if payload
-          .get("type")
-          .and_then(|kind| kind.as_str())
-          .is_some_and(|kind| kind == "user_message")
-        {
-          if let Some(message) = payload.get("message").and_then(|msg| msg.as_str()) {
-            if contains_instruction_marker(message) {
-              return true;
-            }
-          }
-        }
-      }
+    if record_type == "event_msg"
+      && let Some(payload) = value.get("payload")
+      && payload
+        .get("type")
+        .and_then(|kind| kind.as_str())
+        .is_some_and(|kind| kind == "user_message")
+      && let Some(message) = payload.get("message").and_then(|msg| msg.as_str())
+      && contains_instruction_marker(message)
+    {
+      return true;
     }
-    if record_type == "message" {
-      if let Some(content) = value.get("content").and_then(|c| c.as_str()) {
-        if contains_instruction_marker(content) {
-          return true;
-        }
-      }
+    if record_type == "message"
+      && let Some(content) = value.get("content").and_then(|c| c.as_str())
+      && contains_instruction_marker(content)
+    {
+      return true;
     }
   }
 
-  if let Some(text) = value.get("text").and_then(|t| t.as_str()) {
-    if contains_instruction_marker(text) {
-      return true;
-    }
+  if let Some(text) = value.get("text").and_then(|t| t.as_str())
+    && contains_instruction_marker(text)
+  {
+    return true;
   }
   false
 }
