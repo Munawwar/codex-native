@@ -49,9 +49,19 @@ type ReverieContext = {
   perFile: Map<string, ReverieInsight[]>;
 };
 
-const DEFAULT_DIFF_AGENT_REPO = fs.existsSync("/Volumes/sandisk/codex/multi-agent-codex-system")
-  ? "/Volumes/sandisk/codex/multi-agent-codex-system"
-  : path.resolve(process.cwd(), "multi-agent-codex-system");
+function detectDefaultRepo(): string {
+  const cwdGit = findGitRoot(process.cwd());
+  if (cwdGit) {
+    return cwdGit;
+  }
+  const legacyPath = "/Volumes/sandisk/codex/multi-agent-codex-system";
+  if (fs.existsSync(path.join(legacyPath, ".git"))) {
+    return legacyPath;
+  }
+  return process.cwd();
+}
+
+const DEFAULT_DIFF_AGENT_REPO = detectDefaultRepo();
 const DEFAULT_MODEL = "gpt-5-codex";
 const DEFAULT_MAX_FILES = 12;
 const DEFAULT_REVERIE_LIMIT = 6;
@@ -501,6 +511,29 @@ function assertRepo(candidate: string): string {
     throw new Error(`Repository not found at ${repo}`);
   }
   return repo;
+}
+
+function findGitRoot(startDir: string): string | null {
+  let current = path.resolve(startDir);
+  while (true) {
+    const gitPath = path.join(current, ".git");
+    if (fs.existsSync(gitPath)) {
+      try {
+        const stats = fs.statSync(gitPath);
+        if (stats.isDirectory() || stats.isFile()) {
+          return current;
+        }
+      } catch {
+        // ignore and keep moving up
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return null;
 }
 
 function parseEnvInt(value: string | undefined, fallback: number): number {
