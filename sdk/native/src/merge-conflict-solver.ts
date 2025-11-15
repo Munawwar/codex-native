@@ -450,6 +450,7 @@ class MergeConflictSolver {
   private coordinatorUserMessageCount = 0;
   private readonly workerThreads = new Map<string, Thread>();
   private readonly ciThreads = new Map<string, Thread>();
+  private readonly ciThreads = new Map<string, Thread>();
 
   constructor(private readonly options: SolverConfig) {
     this.codex = new Codex({
@@ -665,7 +666,8 @@ class MergeConflictSolver {
 
   private async resolveConflict(conflict: ConflictContext): Promise<WorkerOutcome> {
     logInfo("worker", "Dispatching worker", conflict.path);
-    const workerThread = await this.acquireWorkerThread(conflict.path);
+    const workerModel = this.selectWorkerModelForConflict(conflict);
+    const workerThread = await this.acquireWorkerThread(conflict.path, workerModel);
     const prompt = buildWorkerPrompt(conflict, this.coordinatorPlan, {
       originRef: this.options.originRef,
       upstreamRef: this.options.upstreamRef,
@@ -781,17 +783,73 @@ class MergeConflictSolver {
 
   private async dispatchCiFailures(outcomes: WorkerOutcome[], ciLog: string): Promise<void> {
     const preparedLog = await this.prepareCiLogForAgents(ciLog);
-    for (const outcome of outcomes) {
-      const thread = this.workerThreads.get(outcome.path);
-      if (!thread) {
-        logWarn("worker", "No worker thread available for CI follow-up", outcome.path);
+    const failures = extractCiFailures(ciLog);
+    if (failures.length === 0) {
+      for (const outcome of outcomes) {
+        if (!outcome.success) {
+          continue;
+        }
+        const thread = this.workerThreads.get(outcome.path);
+        if (!thread) {
+          logWarn("worker", "No worker thread available for CI follow-up", outcome.path);
+          continue;
+        }
+        this.setCiPlan(thread, outcome.path, false);
+        const prompt = buildCiFailurePrompt({
+          targetLabel: outcome.path,
+          workerSummary: outcome.summary ?? "",
+          ciLog: preparedLog,
+        });
+        try {
+          await runThreadTurnWithLogs(thread, createThreadLogger("worker", outcome.path), prompt);
+        } catch (error) {
+          logWarn("worker", `Failed to push CI failure context: ${error}`, outcome.path);
+        }
+      }
+      return;
+    }
+
+    for (const failure of failures) {
+      const matchedOutcome = matchCiFailureToOutcome(failure, outcomes);
+      if (matchedOutcome) {
+        const thread = this.workerThreads.get(matchedOutcome.path);
+        if (!thread) {
+          logWarn("worker", "Matched CI failure to worker but thread missing", matchedOutcome.path);
+          continue;
+        }
+        this.setCiPlan(thread, failure.label, false);
+        const prompt = buildCiFailurePrompt({
+          targetLabel: matchedOutcome.path,
+          workerSummary: matchedOutcome.summary ?? "",
+          ciLog: preparedLog,
+          snippet: failure.snippet,
+          failureLabel: failure.label,
+          pathHints: failure.pathHints,
+        });
+        try {
+          await runThreadTurnWithLogs(thread, createThreadLogger("worker", matchedOutcome.path), prompt);
+        } catch (error) {
+          logWarn("worker", `Failed to push CI failure context: ${error}`, matchedOutcome.path);
+        }
         continue;
       }
-      const prompt = buildCiFailurePrompt(outcome.path, outcome.summary ?? "", preparedLog);
+
+      const ciThread = await this.acquireCiThread(failure.label);
+      this.setCiPlan(ciThread, failure.label, true);
+      const prompt = buildCiFailurePrompt({
+        targetLabel: failure.label,
+        workerSummary: "",
+        ciLog: preparedLog,
+        snippet: failure.snippet,
+        failureLabel: failure.label,
+        pathHints: failure.pathHints,
+        isNewAgent: true,
+      });
       try {
-        await runThreadTurnWithLogs(thread, createThreadLogger("worker", outcome.path), prompt);
+        await runThreadTurnWithLogs(ciThread, createThreadLogger("worker", failure.label), prompt);
+        this.setCiPlan(ciThread, failure.label, true);
       } catch (error) {
-        logWarn("worker", `Failed to push CI failure context: ${error}`, outcome.path);
+        logWarn("worker", `CI specialist thread failed: ${error}`, failure.label);
       }
     }
   }
@@ -830,6 +888,34 @@ class MergeConflictSolver {
     }
   }
 
+  private setCiPlan(thread: Thread, failureLabel: string, isNewAgent: boolean): void {
+    if (!thread.id) {
+      return;
+    }
+    try {
+      thread.updatePlan({
+        explanation: `CI remediation plan for ${failureLabel}`,
+        plan: [
+          {
+            step: `Diagnose failing test/module ${failureLabel}`,
+            status: "in_progress",
+          },
+          {
+            step: "Draft fix and explain changes",
+            status: "pending",
+          },
+          {
+            step: "Run targeted tests or pnpm run ci",
+            status: "pending",
+          },
+        ],
+      });
+      logInfo("worker", isNewAgent ? "Initialized CI plan" : "Updated CI plan", failureLabel);
+    } catch (error) {
+      logWarn("worker", `Unable to update CI plan: ${error}`, failureLabel);
+    }
+  }
+
   private selectWorkerModel(filePath: string): string {
     const matches = (patterns?: string[]) =>
       patterns?.some((pattern) => {
@@ -849,12 +935,21 @@ class MergeConflictSolver {
     return this.options.workerModel;
   }
 
-  private async acquireWorkerThread(filePath: string): Promise<Thread> {
+  private selectWorkerModelForConflict(conflict: ConflictContext): string {
+    const severityScore =
+      (conflict.lineCount ?? 0) + (conflict.conflictMarkers ?? 0) * 200;
+    if (severityScore >= 800 && this.options.workerModelHigh) {
+      return this.options.workerModelHigh;
+    }
+    return this.selectWorkerModel(conflict.path);
+  }
+
+  private async acquireWorkerThread(filePath: string, modelOverride?: string): Promise<Thread> {
     const existing = this.workerThreads.get(filePath);
     if (existing) {
       return existing;
     }
-    const model = this.selectWorkerModel(filePath);
+    const model = modelOverride ?? this.selectWorkerModel(filePath);
     const threadOptions: ThreadOptions = {
       ...this.workerThreadOptions,
       model,
@@ -873,6 +968,33 @@ class MergeConflictSolver {
     }
     const thread = this.codex.startThread(threadOptions);
     this.workerThreads.set(filePath, thread);
+    return thread;
+  }
+
+  private async acquireCiThread(label: string): Promise<Thread> {
+    const existing = this.ciThreads.get(label);
+    if (existing) {
+      return existing;
+    }
+    const threadOptions: ThreadOptions = {
+      ...this.workerThreadOptions,
+      model: this.options.workerModelHigh ?? this.options.reviewerModel ?? this.options.workerModel,
+    };
+    let thread: Thread;
+    if (this.coordinatorThread) {
+      try {
+        thread = await this.coordinatorThread.fork({
+          nthUserMessage: this.coordinatorUserMessageCount,
+          threadOptions,
+        });
+        this.ciThreads.set(label, thread);
+        return thread;
+      } catch (error) {
+        logWarn("worker", `Unable to fork coordinator for CI thread "${label}"; starting standalone`, label);
+      }
+    }
+    thread = this.codex.startThread(threadOptions);
+    this.ciThreads.set(label, thread);
     return thread;
   }
 }
@@ -1219,29 +1341,64 @@ function buildReviewerPrompt(input: {
   }\n4. Summarize final merge state plus TODOs for the human operator.\n5. Call out any files that still need manual attention.\n\nRespond with a crisp summary plus checklist.`;
 }
 
-function buildCiFailurePrompt(path: string, workerSummary: string, ciLog: string): string {
-  return `# pnpm run ci regression follow-up – ${path}
+type CiFailurePromptInput = {
+  targetLabel: string;
+  workerSummary?: string;
+  ciLog: string;
+  snippet?: string;
+  failureLabel?: string;
+  pathHints?: string[];
+  isNewAgent?: boolean;
+};
 
-The full verification command "pnpm run ci" failed after the merge agents finished their passes. Continue from your prior context for ${path} and focus on diagnosing the relevant CI failure(s).
+function buildCiFailurePrompt(input: CiFailurePromptInput): string {
+  const {
+    targetLabel,
+    workerSummary,
+    ciLog,
+    snippet,
+    failureLabel,
+    pathHints,
+    isNewAgent,
+  } = input;
+  const introTarget = failureLabel && failureLabel !== targetLabel ? `${targetLabel} (${failureLabel})` : targetLabel;
+  const ownershipNote = isNewAgent
+    ? "You are a CI specialist picking up this failure for the first time."
+    : "Continue from your previous merge context for this path.";
+  const hintsBlock = pathHints?.length
+    ? `Path/test hints: ${pathHints.join(", ")}`
+    : "Path/test hints: (not detected)";
+  const snippetBlock = snippet ? `\n\nFocused snippet:\n${snippet}` : "";
+  return `# pnpm run ci regression follow-up – ${introTarget}
+
+${ownershipNote}
 
 Previous merge summary:
-${workerSummary || "(no summary provided)"}
+${workerSummary && workerSummary.trim().length ? workerSummary : "(no summary provided)"}
 
-Latest pnpm run ci log (truncated to ${CI_LOG_CONTEXT_LIMIT} chars):
+${hintsBlock}${snippetBlock}
+
+Full pnpm run ci digest (prefix + summaries):
 ${ciLog || "(no log output captured)"}
 
 Tasks:
-1. Inspect the log to determine whether the failure involves ${path} or nearby crates/modules.
-2. Explain why the error is occurring and propose concrete code or configuration changes to fix it.
-3. Outline the commands/tests you will run after applying the fix (including rerunning pnpm run ci when appropriate).
-4. If the issue is unrelated to your area, document that and specify which subsystem should own it.
+1. Use the snippet and hints to determine the failing test/module.
+2. Explain why the failure occurs and propose concrete fixes (code/config/tests).
+3. Outline the exact commands/tests you will run after applying the fix (rerun pnpm run ci or targeted tests as needed).
+4. If this failure belongs to another subsystem, document that clearly and reassign with justification.
 
 Respond with a structured summary plus next steps so the orchestrator can decide how to re-run CI.`;
 }
 
-function buildCiSnippetSection(log: string): string | null {
+type CiSnippet = {
+  text: string;
+  startLine: number;
+  endLine: number;
+};
+
+function collectCiSnippets(log: string): CiSnippet[] {
   const lines = log.split(/\r?\n/);
-  const snippets: string[] = [];
+  const snippets: CiSnippet[] = [];
   for (let i = 0; i < lines.length && snippets.length < CI_SNIPPET_MAX_SECTIONS; i += 1) {
     const line = lines[i];
     if (!line || !CI_SNIPPET_KEYWORDS.test(line)) {
@@ -1249,14 +1406,82 @@ function buildCiSnippetSection(log: string): string | null {
     }
     const start = Math.max(0, i - CI_SNIPPET_CONTEXT_LINES);
     const end = Math.min(lines.length, i + CI_SNIPPET_CONTEXT_LINES + 1);
-    const snippet = lines.slice(start, end).join("\n");
-    snippets.push(`Snippet ${snippets.length + 1} (lines ${start + 1}-${end}):\n${snippet}`);
+    const snippetLines = lines.slice(start, end);
+    snippets.push({
+      text: snippetLines.join("\n"),
+      startLine: start + 1,
+      endLine: end,
+    });
     i = end - 1;
   }
+  return snippets;
+}
+
+function buildCiSnippetSection(log: string): string | null {
+  const snippets = collectCiSnippets(log);
   if (snippets.length === 0) {
     return null;
   }
-  return `[Keyword snippets]\n${snippets.join("\n\n")}`;
+  const section = snippets
+    .map(
+      (snippet, idx) =>
+        `Snippet ${idx + 1} (lines ${snippet.startLine}-${snippet.endLine}):\n${snippet.text}`,
+    )
+    .join("\n\n");
+  return `[Keyword snippets]\n${section}`;
+}
+
+type CiFailure = {
+  label: string;
+  snippet: string;
+  pathHints: string[];
+};
+
+function extractCiFailures(log: string): CiFailure[] {
+  const snippets = collectCiSnippets(log);
+  return snippets.map((snippet, idx) => {
+    const pathHints = derivePathHints(snippet.text);
+    const label =
+      pathHints[0] ??
+      snippet.text
+        .split(/\r?\n/)[0]
+        .trim()
+        .slice(0, 80) ||
+      `ci-failure-${idx + 1}`;
+    return {
+      label,
+      snippet: snippet.text,
+      pathHints,
+    };
+  });
+}
+
+function derivePathHints(text: string): string[] {
+  const hints = new Set<string>();
+  const pathRegex = /([A-Za-z0-9_./-]+\.(?:rs|ts|tsx|js|jsx|py|sh|toml|json|yml|yaml|md))/g;
+  for (const match of text.matchAll(pathRegex)) {
+    hints.add(match[1]);
+  }
+  const crateRegex = /----\s+([A-Za-z0-9_:-]+)\s*----/g;
+  for (const match of text.matchAll(crateRegex)) {
+    hints.add(match[1]);
+  }
+  return Array.from(hints);
+}
+
+function matchCiFailureToOutcome(failure: CiFailure, outcomes: WorkerOutcome[]): WorkerOutcome | null {
+  if (!failure.pathHints.length) {
+    return null;
+  }
+  for (const outcome of outcomes) {
+    if (!outcome.path) {
+      continue;
+    }
+    if (failure.pathHints.some((hint) => outcome.path.includes(hint) || hint.includes(outcome.path))) {
+      return outcome;
+    }
+  }
+  return null;
 }
 
 function buildValidationPrompt(path: string, workerSummary: string): string {
