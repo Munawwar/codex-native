@@ -32,6 +32,7 @@ import {
   type ThreadOptions,
   type ApprovalMode,
   type SandboxMode,
+  type ApprovalRequest,
 } from "@codex-native/sdk";
 
 const execFileAsync = promisify(execFile);
@@ -56,6 +57,7 @@ type SolverConfig = {
   coordinatorModel: string;
   workerModel: string;
   reviewerModel: string;
+  supervisorModel?: string;
   sandboxMode: SandboxMode;
   approvalMode: ApprovalMode;
   baseUrl?: string;
@@ -70,6 +72,7 @@ const CONFIG: SolverConfig = {
   coordinatorModel: DEFAULT_COORDINATOR_MODEL,
   workerModel: DEFAULT_WORKER_MODEL,
   reviewerModel: DEFAULT_REVIEWER_MODEL,
+  supervisorModel: "gpt-5-codex",
   sandboxMode: DEFAULT_SANDBOX_MODE,
   approvalMode: DEFAULT_APPROVAL_MODE,
   baseUrl: process.env.CODEX_BASE_URL,
@@ -115,6 +118,19 @@ type RemoteComparison = {
 type RemoteRefs = {
   originRef?: string | null;
   upstreamRef?: string | null;
+};
+
+type ApprovalContext = {
+  conflictPath?: string;
+  coordinatorPlan?: string | null;
+  remoteInfo?: RemoteComparison | null;
+  extraNotes?: string;
+};
+
+type SupervisorOptions = {
+  model: string;
+  workingDirectory: string;
+  sandboxMode: SandboxMode;
 };
 
 type WorkerOutcome = {
@@ -281,8 +297,10 @@ class GitRepo {
 class MergeConflictSolver {
   private readonly codex: Codex;
   private readonly git: GitRepo;
+  private readonly approvalSupervisor: ApprovalSupervisor | null;
   private coordinatorThread: Thread | null = null;
   private coordinatorPlan: string | null = null;
+  private remoteComparison: RemoteComparison | null = null;
 
   constructor(private readonly options: SolverConfig) {
     this.codex = new Codex({
@@ -290,6 +308,20 @@ class MergeConflictSolver {
       apiKey: options.apiKey,
     });
     this.git = new GitRepo(options.workingDirectory);
+    this.approvalSupervisor = new ApprovalSupervisor(
+      this.codex,
+      {
+        model: options.supervisorModel ?? options.coordinatorModel ?? DEFAULT_COORDINATOR_MODEL,
+        workingDirectory: options.workingDirectory,
+        sandboxMode: options.sandboxMode,
+      },
+      () => this.coordinatorThread,
+    );
+    if (this.approvalSupervisor.isAvailable()) {
+      this.codex.setApprovalCallback(async (request) => this.approvalSupervisor!.handleApproval(request));
+    } else {
+      console.warn("⚠️ Autonomous approval supervisor unavailable; falling back to default approval policy.");
+    }
   }
 
   private get coordinatorThreadOptions(): ThreadOptions {
@@ -331,8 +363,8 @@ class MergeConflictSolver {
       console.log(`  • ${conflict.path}`);
     }
 
-    const remoteComparison = await this.git.compareRefs(this.options.originRef, this.options.upstreamRef);
-    const snapshot = await this.buildSnapshot(conflicts, remoteComparison);
+    this.remoteComparison = await this.git.compareRefs(this.options.originRef, this.options.upstreamRef);
+    const snapshot = await this.buildSnapshot(conflicts, this.remoteComparison);
     await this.startCoordinator(snapshot);
 
     const outcomes: WorkerOutcome[] = [];
@@ -351,7 +383,7 @@ class MergeConflictSolver {
       }
     }
 
-    const reviewSummary = await this.runReviewer(outcomes, remoteComparison);
+    const reviewSummary = await this.runReviewer(outcomes, this.remoteComparison);
     const remaining = await this.git.listConflictPaths();
 
     console.log("\n📋 Merge Summary");
@@ -420,10 +452,17 @@ class MergeConflictSolver {
       originRef: this.options.originRef,
       upstreamRef: this.options.upstreamRef,
     });
+    this.approvalSupervisor?.setContext({
+      conflictPath: conflict.path,
+      coordinatorPlan: this.coordinatorPlan,
+      remoteInfo: this.remoteComparison,
+      extraNotes: "Worker is preparing to resolve this file.",
+    });
     try {
       const turn = await workerThread.run(prompt);
       const remaining = await this.git.listConflictPaths();
       const stillConflicted = remaining.includes(conflict.path);
+      this.approvalSupervisor?.setContext(null);
       return {
         path: conflict.path,
         success: !stillConflicted,
@@ -432,6 +471,7 @@ class MergeConflictSolver {
         error: stillConflicted ? "File remains conflicted after worker turn." : undefined,
       };
     } catch (error: any) {
+      this.approvalSupervisor?.setContext(null);
       return {
         path: conflict.path,
         success: false,
@@ -459,6 +499,89 @@ class MergeConflictSolver {
     });
     const turn = await reviewerThread.run(reviewerPrompt);
     return turn.finalResponse ?? null;
+  }
+}
+
+class ApprovalSupervisor {
+  private readonly thread: Thread | null;
+  private context: ApprovalContext | null = null;
+
+  constructor(
+    private readonly codex: Codex,
+    private readonly options: SupervisorOptions,
+    private readonly coordinatorThreadAccessor: () => Thread | null,
+  ) {
+    try {
+      this.thread = this.codex.startThread({
+        model: options.model,
+        sandboxMode: options.sandboxMode,
+        approvalMode: "never",
+        workingDirectory: options.workingDirectory,
+        skipGitRepoCheck: true,
+      });
+    } catch (error) {
+      console.warn("⚠️ Unable to start approval supervisor thread:", error);
+      this.thread = null;
+    }
+  }
+
+  isAvailable(): boolean {
+    return Boolean(this.thread);
+  }
+
+  setContext(context: ApprovalContext | null): void {
+    this.context = context;
+  }
+
+  async handleApproval(request: ApprovalRequest): Promise<boolean> {
+    if (!this.thread) {
+      return false;
+    }
+    const contextSummary = this.context
+      ? `Conflict: ${this.context.conflictPath ?? "<unknown>"}\nPlan: ${
+          this.context.coordinatorPlan?.slice(0, 2000) ?? "<none>"
+        }\nRemote divergence: ${
+          this.context.remoteInfo
+            ? `${this.context.remoteInfo.originRef} ↔ ${this.context.remoteInfo.upstreamRef}`
+            : "<not available>"
+        }\nNotes: ${this.context.extraNotes ?? "<none>"}`
+      : "No active worker context.";
+    const detailsBlock =
+      request.details !== undefined ? JSON.stringify(request.details, null, 2) : "<no additional details>";
+
+    const prompt = `# Autonomous Approval Supervisor
+
+You are a high-reasoning control agent responsible for approving or denying sensitive operations during a merge conflict remediation workflow. Only approve commands that are safe, necessary, and aligned with the plan. If a request is risky or redundant, deny it and explain the corrective guidance you want the worker to follow.
+
+Context:
+${contextSummary}
+
+Approval request:
+- Type: ${request.type}
+- Details: ${detailsBlock}
+
+Respond on the first line with either "APPROVE: <short reason>" or "DENY: <short reason>". You may follow up with bullet points containing corrective actions if denying.`;
+
+    try {
+      const turn = await this.thread.run(prompt);
+      const decisionLine = (turn.finalResponse ?? "").split("\n").find((line) => line.trim().length > 0) ?? "";
+      const normalized = decisionLine.trim().toLowerCase();
+      const approved = normalized.startsWith("approve");
+      if (!approved) {
+        const coordinator = this.coordinatorThreadAccessor();
+        if (coordinator) {
+          const note =
+            `Supervisor denied ${request.type} request.\nReason: ${decisionLine}\n` +
+            `Context: ${contextSummary}`;
+          await coordinator.run(note);
+        }
+      }
+      console.log(`🔐 Supervisor decision for ${request.type}: ${decisionLine || "(no response)"}`);
+      return approved;
+    } catch (error) {
+      console.warn("⚠️ Approval supervisor failed to respond; denying request.", error);
+      return false;
+    }
   }
 }
 
@@ -599,6 +722,7 @@ Constraints:
 - Mirror sdk/typescript → sdk/native implications if this file participates.
 - After resolving the conflict, run rg '<<<<<<<' ${conflict.path} to ensure markers are gone, then git add ${conflict.path}.
 - Summarize what you kept from each side plus any follow-up commands/tests to run.
+- Your shell/file-write accesses are gated by an autonomous supervisor; justify sensitive steps so approvals go through.
 
 Helpful context:
 ${combinedContext || "(no file excerpts available)"}
