@@ -138,6 +138,10 @@ type ConflictContext = {
   originRefContent?: string | null;
   upstreamRefContent?: string | null;
   originVsUpstreamDiff?: string | null;
+  baseVsOursDiff?: string | null;
+  baseVsTheirsDiff?: string | null;
+  oursVsTheirsDiff?: string | null;
+  recentHistory?: string | null;
 };
 
 type RemoteComparison = {
@@ -271,6 +275,10 @@ class GitRepo {
       remotes?.originRef && remotes?.upstreamRef
         ? await this.diffFileBetweenRefs(remotes.originRef, remotes.upstreamRef, filePath)
         : null;
+    const baseVsOursDiff = await this.diffStageBlobs(filePath, 1, 2);
+    const baseVsTheirsDiff = await this.diffStageBlobs(filePath, 1, 3);
+    const oursVsTheirsDiff = await this.diffStageBlobs(filePath, 2, 3);
+    const recentHistory = await this.getRecentHistory(filePath, 5);
 
     return {
       path: filePath,
@@ -285,6 +293,10 @@ class GitRepo {
       originRefContent: limitText(originRefContent),
       upstreamRefContent: limitText(upstreamRefContent),
       originVsUpstreamDiff: limitText(originVsUpstreamDiff),
+      baseVsOursDiff: limitText(baseVsOursDiff),
+      baseVsTheirsDiff: limitText(baseVsTheirsDiff),
+      oursVsTheirsDiff: limitText(oursVsTheirsDiff),
+      recentHistory: limitText(recentHistory, 2000),
     };
   }
 
@@ -297,6 +309,17 @@ class GitRepo {
     }
   }
 
+  private async diffStageBlobs(filePath: string, left: 1 | 2 | 3, right: 1 | 2 | 3): Promise<string | null> {
+    try {
+      const leftSpec = `:${left}:${filePath}`;
+      const rightSpec = `:${right}:${filePath}`;
+      const { stdout } = await this.runGit(["diff", "--color=never", "--unified=40", leftSpec, rightSpec], true);
+      return stdout.trim() ? stdout : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async diffFileBetweenRefs(refA: string, refB: string, relPath: string): Promise<string | null> {
     try {
       const { stdout } = await this.runGit(
@@ -304,6 +327,15 @@ class GitRepo {
         true,
       );
       return stdout.trim() ? stdout : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getRecentHistory(relPath: string, limit: number): Promise<string | null> {
+    try {
+      const { stdout } = await this.runGit(["log", "-n", String(limit), "--oneline", "--", relPath], true);
+      return stdout.trim() || null;
     } catch {
       return null;
     }
@@ -835,6 +867,13 @@ function buildWorkerPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+  const analysisSections = [
+    conflict.baseVsOursDiff ? `### Base → Ours diff\n${conflict.baseVsOursDiff}` : null,
+    conflict.baseVsTheirsDiff ? `### Base → Theirs diff\n${conflict.baseVsTheirsDiff}` : null,
+    conflict.oursVsTheirsDiff ? `### Ours ↔ Theirs diff\n${conflict.oursVsTheirsDiff}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const remoteSections = [
     conflict.originRefContent && remotes?.originRef
       ? `## ${remotes.originRef} content preview\n${conflict.originRefContent}`
@@ -849,6 +888,9 @@ function buildWorkerPrompt(
     .filter(Boolean)
     .join("\n\n");
   const combinedContext = [sections, remoteSections].filter((chunk) => chunk && chunk.length).join("\n\n");
+  const researchResources = [analysisSections, conflict.recentHistory ? `### Recent git log (last 5 commits)\n${conflict.recentHistory}` : null]
+    .filter((chunk) => chunk && chunk.length)
+    .join("\n\n") || "(no supplemental analysis available)";
 
   return `# Merge Conflict Specialist – ${conflict.path}
 
@@ -867,15 +909,20 @@ Constraints:
 - After resolving the conflict, run rg '<<<<<<<' ${conflict.path} to ensure markers are gone, then git add ${conflict.path}.
 - Summarize what you kept from each side plus any follow-up commands/tests to run.
 - Your shell/file-write accesses are gated by an autonomous supervisor; justify sensitive steps so approvals go through.
+- Begin with a short research note referencing the diffs/logs below before modifying any code.
 
 Helpful context:
 ${combinedContext || "(no file excerpts available)"}
 
+## Research materials
+${researchResources}
+
 Deliverables:
 1. Describe the conflicting intents you observed.
 2. Explain the final merged solution and why it's safe.
-3. List the commands you executed (shell/apply_patch/etc.).
-4. Recommend validation steps (e.g., targeted tests) referencing pnpm build/ci expectations when relevant.`;
+3. Provide the research summary (key insights from diffs/logs) before detailing edits.
+4. List the commands you executed (shell/apply_patch/etc.).
+5. Recommend validation steps (e.g., targeted tests) referencing pnpm build/ci expectations when relevant.`;
 }
 
 function buildReviewerPrompt(input: {
