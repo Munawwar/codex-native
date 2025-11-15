@@ -69,7 +69,7 @@ Basic SDK functionality and common use cases.
 - **`repo-diff-summary.ts`** — Git context summaries from Rust
   - Uses `collectRepoDiffSummary` via the N-API binding
   - Prints branch/base info, status summaries, and per-file diffs
-  - Demonstrates how to re-use codex-core’s git plumbing from Node
+  - Demonstrates how to reuse codex-core’s git plumbing from Node
 
 ### `/tools` - Tool Management
 Custom tool registration and override capabilities.
