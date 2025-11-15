@@ -105,6 +105,10 @@ export type {
   DiffSummary as CloudDiffSummary,
 } from "./cloudTasks";
 
+// Unified logging system
+export { Logger, ScopedLogger, logger, createThreadLogger, runThreadTurnWithLogs, LogLevel } from "./logging";
+export type { LogScope, LoggerConfig, LogOutput, ThreadLoggingSink, LogEntry } from "./logging";
+
 // SSE test helpers (exposed for TypeScript tests)
 // Re-export the native binding functions directly
 import { getNativeBinding } from "./nativeBinding";

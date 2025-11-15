@@ -1,46 +1,32 @@
-import type { ThreadLoggingSink } from "../threadLogging.js";
+/**
+ * Re-export unified logging from SDK
+ * This maintains backward compatibility while using the centralized logging system
+ */
+export { logger, LogLevel, createThreadLogger } from "@codex-native/sdk";
+export type { LogScope, ThreadLoggingSink } from "@codex-native/sdk";
 
-export type LogScope =
-  | "merge"
-  | "git"
-  | "coordinator"
-  | "worker"
-  | "supervisor"
-  | "reviewer"
-  | "validation";
-
-const LOG_SCOPE_COLORS: Record<LogScope, string> = {
-  merge: "\x1b[35m",
-  git: "\x1b[34m",
-  coordinator: "\x1b[36m",
-  worker: "\x1b[33m",
-  supervisor: "\x1b[95m",
-  reviewer: "\x1b[32m",
-  validation: "\x1b[92m",
-};
-
-function formatScope(scope: LogScope, subject?: string): string {
-  const color = LOG_SCOPE_COLORS[scope] ?? "";
-  const reset = "\x1b[0m";
-  const label = subject ? `${scope}:${subject}` : scope;
-  return `${color}[merge-solver:${label}]${reset}`;
-}
+/**
+ * Helper to create a scoped logger (backward compatibility)
+ */
+import { logger as defaultLogger } from "@codex-native/sdk";
+import type { LogScope } from "@codex-native/sdk";
 
 export function logInfo(scope: LogScope, message: string, subject?: string): void {
-  console.log(`${formatScope(scope, subject)} ${message}`);
+  const scopedLogger = defaultLogger.scope(scope, subject);
+  scopedLogger.info(message);
 }
 
 export function logWarn(scope: LogScope, message: string, subject?: string): void {
-  console.warn(`${formatScope(scope, subject)} ${message}`);
+  const scopedLogger = defaultLogger.scope(scope, subject);
+  scopedLogger.warn(message);
 }
 
 export function logError(scope: LogScope, message: string, subject?: string): void {
-  console.error(`${formatScope(scope, subject)} ${message}`);
+  const scopedLogger = defaultLogger.scope(scope, subject);
+  scopedLogger.error(message);
 }
 
-export function createThreadLogger(scope: LogScope, subject?: string): ThreadLoggingSink {
-  return {
-    info: (message) => logInfo(scope, message, subject),
-    warn: (message) => logWarn(scope, message, subject),
-  };
+export function createThreadLogger(scope: LogScope, subject?: string) {
+  const scopedLogger = defaultLogger.scope(scope, subject);
+  return scopedLogger.asThreadSink();
 }
