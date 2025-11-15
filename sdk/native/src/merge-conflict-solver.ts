@@ -45,6 +45,14 @@ function logWarn(message: string): void {
   console.warn(`${LOG_PREFIX} ${message}`);
 }
 
+function getErrorCode(error: unknown): number | undefined {
+  if (typeof error === "object" && error && "code" in error) {
+    const possibleCode = (error as { code?: unknown }).code;
+    return typeof possibleCode === "number" ? possibleCode : undefined;
+  }
+  return undefined;
+}
+
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_COORDINATOR_MODEL = "gpt-5-codex";
@@ -324,6 +332,15 @@ class GitRepo {
       return null;
     }
   }
+
+  async isMergeInProgress(): Promise<boolean> {
+    try {
+      await execFileAsync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd: this.cwd });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 class MergeConflictSolver {
@@ -381,6 +398,7 @@ class MergeConflictSolver {
   }
 
   async run(): Promise<void> {
+    await this.ensureUpstreamMerge();
     logInfo("Collecting merge conflicts via git diff --diff-filter=U");
     const conflicts = await this.git.collectConflicts({
       originRef: this.options.originRef,
@@ -450,6 +468,47 @@ class MergeConflictSolver {
       process.exitCode = 1;
     } else {
       logInfo("All conflicts resolved according to git diff --name-only --diff-filter=U");
+    }
+  }
+
+  private async ensureUpstreamMerge(): Promise<void> {
+    const upstreamRef = this.options.upstreamRef;
+    if (!upstreamRef) {
+      logInfo("No upstream ref configured; skipping auto-merge step");
+      return;
+    }
+    if (await this.git.isMergeInProgress()) {
+      logInfo("Merge already in progress; skipping auto-merge initiation");
+      return;
+    }
+    const delimiterIndex = upstreamRef.indexOf("/");
+    if (delimiterIndex <= 0) {
+      logWarn(`Unable to parse upstream ref '${upstreamRef}'; expected format remote/branch`);
+      return;
+    }
+    const remote = upstreamRef.slice(0, delimiterIndex);
+    const branch = upstreamRef.slice(delimiterIndex + 1);
+    if (!branch) {
+      logWarn(`Upstream ref '${upstreamRef}' is missing a branch component`);
+      return;
+    }
+
+    logInfo(`Fetching latest ${branch} from ${remote}`);
+    await execFileAsync("git", ["fetch", remote, branch], { cwd: this.options.workingDirectory });
+
+    logInfo(`Merging ${upstreamRef} into current branch with --no-commit --no-ff`);
+    try {
+      await execFileAsync("git", ["merge", "--no-commit", "--no-ff", upstreamRef], {
+        cwd: this.options.workingDirectory,
+      });
+      logInfo("Upstream merge completed without conflicts");
+    } catch (error) {
+      const exitCode = getErrorCode(error);
+      if (exitCode === 1) {
+        logInfo("Merge introduced conflicts; invoking resolver workflow");
+      } else {
+        throw error;
+      }
     }
   }
 
