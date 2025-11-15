@@ -192,12 +192,8 @@ export class Codex {
           return base;
         }
 
-        const header = `LSP diagnostics for ${filePath}:\n`;
-        const separator = base.output.startsWith("\n") ? "" : "\n\n";
-        return {
-          ...base,
-          output: `${header}${diagnosticsText}${separator}${base.output}`,
-        };
+        const header = `LSP diagnostics for ${filePath}:\n${diagnosticsText}`;
+        return prependSystemHintToToolResult(base, header);
       });
     } catch {
       // Interceptor support may be unavailable; fail silently.
@@ -340,4 +336,23 @@ export class Codex {
       await schemaFile.cleanup();
     }
   }
+}
+
+function prependSystemHintToToolResult(
+  base: NativeToolResult,
+  hint: string,
+): NativeToolResult {
+  const trimmedHint = hint.trim();
+  if (!trimmedHint) {
+    return base;
+  }
+  const existing = base.output ?? "";
+  const separator = existing.length === 0 || existing.startsWith("\n") ? "\n\n" : "\n\n";
+  const output = existing.length === 0
+    ? `[SYSTEM_HINT]\n${trimmedHint}`
+    : `[SYSTEM_HINT]\n${trimmedHint}${separator}${existing}`;
+  return {
+    ...base,
+    output,
+  };
 }

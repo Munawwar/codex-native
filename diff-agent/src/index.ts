@@ -17,6 +17,7 @@ import {
   type RepoDiffFileChange,
   type ReverieSemanticSearchOptions,
 } from "@codex-native/sdk";
+import { createDefaultSolverConfig, MergeConflictSolver } from "./merge-conflict-solver.js";
 
 type BranchIntentPlan = {
   intent_summary: string;
@@ -159,6 +160,16 @@ void main().catch((error) => {
 });
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  if (args.includes("--merge")) {
+    const mergeRepo = assertRepo(process.cwd());
+    const config = createDefaultSolverConfig(mergeRepo);
+    const solver = new MergeConflictSolver(config);
+    await solver.run();
+    return;
+  }
+
   const resolvedRepo = assertRepo(repoPath);
   const context = await collectRepoDiffSummary({
     cwd: resolvedRepo,
