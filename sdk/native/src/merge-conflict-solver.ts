@@ -996,6 +996,38 @@ function buildReviewerPrompt(input: {
   }\n4. Summarize final merge state plus TODOs for the human operator.\n5. Call out any files that still need manual attention.\n\nRespond with a crisp summary plus checklist.`;
 }
 
+function buildValidationPrompt(path: string, workerSummary: string): string {
+  return `# Targeted Validation for ${path}
+
+The merge conflict for ${path} is resolved. Your task now is to run the most relevant tests for this file (unit/integration only). Do not edit code; focus on verifying the fix.
+
+Instructions:
+- Identify the smallest set of tests that exercise ${path}.
+- Run those tests. Prefer targeted commands (e.g., cargo test -p <crate> -- <filter>, pnpm test -- <file>, etc.).
+- If no tests exist, explain why and suggest follow-up coverage.
+- Summarize results starting with either "VALIDATION_OK:" or "VALIDATION_FAIL:" followed by details.
+
+Reference summary from the merge agent:
+${workerSummary || "(no summary provided)"}
+
+Report:
+- What tests you ran (commands/output).
+- Whether they passed or failed.
+- Any further actions needed.`;
+}
+
+function parseValidationSummary(text: string): { status: "ok" | "fail"; summary: string } {
+  const normalized = text.trim();
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("validation_ok")) {
+    return { status: "ok", summary: normalized };
+  }
+  if (lower.startsWith("validation_fail")) {
+    return { status: "fail", summary: normalized };
+  }
+  return { status: "fail", summary: normalized || "VALIDATION_FAIL: No output returned" };
+}
+
 
 async function main(): Promise<void> {
   try {
