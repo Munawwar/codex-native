@@ -1441,13 +1441,11 @@ function extractCiFailures(log: string): CiFailure[] {
   const snippets = collectCiSnippets(log);
   return snippets.map((snippet, idx) => {
     const pathHints = derivePathHints(snippet.text);
-    const label =
-      pathHints[0] ??
-      snippet.text
-        .split(/\r?\n/)[0]
-        .trim()
-        .slice(0, 80) ||
-      `ci-failure-${idx + 1}`;
+    const snippetLead = snippet.text
+      .split(/\r?\n/)[0]
+      .trim()
+      .slice(0, 80);
+    const label = (pathHints[0] ?? snippetLead) || `ci-failure-${idx + 1}`;
     return {
       label,
       snippet: snippet.text,
@@ -1528,6 +1526,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-const CI_SNIPPET_KEYWORDS = /\b(fail(?:ed)?|error|panic|pass(?:ed)?|ok)\b/i;
-const CI_SNIPPET_CONTEXT_LINES = 2;
-const CI_SNIPPET_MAX_SECTIONS = 5;
