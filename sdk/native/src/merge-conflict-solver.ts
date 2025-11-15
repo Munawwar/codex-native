@@ -352,7 +352,7 @@ class MergeConflictSolver {
     if (this.approvalSupervisor.isAvailable()) {
       this.codex.setApprovalCallback(async (request) => this.approvalSupervisor!.handleApproval(request));
     } else {
-      console.warn("⚠️ Autonomous approval supervisor unavailable; falling back to default approval policy.");
+      logWarn("Autonomous approval supervisor unavailable; falling back to default approval policy");
     }
   }
 
@@ -486,7 +486,7 @@ class MergeConflictSolver {
   }
 
   private async resolveConflict(conflict: ConflictContext): Promise<WorkerOutcome> {
-    console.log(`\n🧩 Resolving ${conflict.path}...`);
+    logInfo(`Dispatching worker agent for ${conflict.path}`);
     const workerThread = this.codex.startThread(this.workerThreadOptions);
     const prompt = buildWorkerPrompt(conflict, this.coordinatorPlan, {
       originRef: this.options.originRef,
@@ -502,6 +502,9 @@ class MergeConflictSolver {
       const turn = await workerThread.run(prompt);
       const remaining = await this.git.listConflictPaths();
       const stillConflicted = remaining.includes(conflict.path);
+      logInfo(
+        `${conflict.path} worker completed; ${stillConflicted ? "conflict persists" : "file resolved"}`,
+      );
       this.approvalSupervisor?.setContext(null);
       return {
         path: conflict.path,
@@ -512,6 +515,7 @@ class MergeConflictSolver {
       };
     } catch (error: any) {
       this.approvalSupervisor?.setContext(null);
+      logWarn(`Worker for ${conflict.path} failed: ${error}`);
       return {
         path: conflict.path,
         success: false,
@@ -525,7 +529,7 @@ class MergeConflictSolver {
     outcomes: WorkerOutcome[],
     remoteComparison: RemoteComparison | null,
   ): Promise<string | null> {
-    console.log("\n🧾 Launching reviewer agent...");
+    logInfo("Launching reviewer agent for final validation");
     const reviewerThread = this.codex.startThread(this.reviewerThreadOptions);
     const remaining = await this.git.listConflictPaths();
     const status = await this.git.getStatusShort();
@@ -560,7 +564,7 @@ class ApprovalSupervisor {
         skipGitRepoCheck: true,
       });
     } catch (error) {
-      console.warn("⚠️ Unable to start approval supervisor thread:", error);
+      logWarn(`Unable to start approval supervisor thread: ${error}`);
       this.thread = null;
     }
   }
@@ -571,10 +575,14 @@ class ApprovalSupervisor {
 
   setContext(context: ApprovalContext | null): void {
     this.context = context;
+    if (context?.conflictPath) {
+      logInfo(`Supervisor monitoring ${context.conflictPath}`);
+    }
   }
 
   async handleApproval(request: ApprovalRequest): Promise<boolean> {
     if (!this.thread) {
+      logWarn(`Supervisor unavailable; automatically denying ${request.type}`);
       return false;
     }
     const contextSummary = this.context
@@ -606,7 +614,7 @@ Respond on the first line with either "APPROVE: <short reason>" or "DENY: <short
       const turn = await this.thread.run(prompt, { outputSchema: SUPERVISOR_OUTPUT_SCHEMA });
       const parsedDecision = parseSupervisorDecision(turn.finalResponse);
       if (!parsedDecision) {
-        console.warn("⚠️ Supervisor produced non-JSON response; denying request.");
+        logWarn("Supervisor produced non-JSON response; denying request");
         return false;
       }
       const approved = parsedDecision.decision === "approve";
@@ -624,10 +632,10 @@ Respond on the first line with either "APPROVE: <short reason>" or "DENY: <short
           await coordinator.run(note);
         }
       }
-      console.log(`🔐 Supervisor decision for ${request.type}: ${summary}`);
+      logInfo(`Supervisor decision for ${request.type}: ${summary}`);
       return approved;
     } catch (error) {
-      console.warn("⚠️ Approval supervisor failed to respond; denying request.", error);
+      logWarn(`Supervisor failed to respond; denying ${request.type}. ${error}`);
       return false;
     }
   }
