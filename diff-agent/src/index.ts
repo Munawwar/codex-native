@@ -63,7 +63,7 @@ function detectDefaultRepo(): string {
 }
 
 const DEFAULT_DIFF_AGENT_REPO = detectDefaultRepo();
-const DEFAULT_MODEL = "gpt-5.1-codex";
+const DEFAULT_MODEL = "gpt-5.1-mini";
 const DEFAULT_MAX_FILES = 12;
 const DEFAULT_REVERIE_LIMIT = 6;
 const DEFAULT_REVERIE_MAX_CANDIDATES = 80;
@@ -190,9 +190,6 @@ async function main(): Promise<void> {
       visualize: true, // Always show visual progress
       autoFix: true,   // Always attempt to fix issues
       maxIterations: 5,
-      coordinatorModel: "gpt-5.1-codex", // Primary orchestrator uses full model
-      fixerModel: "gpt-5.1-mini",        // Worker agents use mini model for efficiency
-      reviewerModel: "gpt-5.1-mini",     // Reviewer agents use mini model for efficiency
     });
     return;
   }
