@@ -9,6 +9,7 @@ import {
   CodexProvider,
   collectRepoDiffSummary,
   fastEmbedInit,
+  logger,
   LspManager,
   reverieSearchSemantic,
   type FileDiagnostics,
@@ -63,7 +64,7 @@ function detectDefaultRepo(): string {
 }
 
 const DEFAULT_DIFF_AGENT_REPO = detectDefaultRepo();
-const DEFAULT_MODEL = "gpt-5.1-mini";
+const DEFAULT_MODEL = "gpt-5.1-codex-mini";
 const DEFAULT_MAX_FILES = 12;
 const DEFAULT_REVERIE_LIMIT = 6;
 const DEFAULT_REVERIE_MAX_CANDIDATES = 80;
@@ -72,6 +73,9 @@ const REVERIE_RERANKER_MODEL: FastEmbedRerankerModelCode = "rozgo/bge-reranker-v
 const LOG_LABEL = "[DiffAgent]";
 const MAX_DIAGNOSTICS_PER_FILE = 4;
 let reverieReady = false;
+
+// Create scoped logger for diff-agent
+const log = logger.scope("reviewer");
 
 const BRANCH_PLAN_OUTPUT_TYPE: JsonSchemaDefinition = {
   type: "json_schema",
@@ -166,7 +170,7 @@ const model = process.env.CX_DIFF_AGENT_MODEL ?? DEFAULT_MODEL;
 const maxFiles = parseEnvInt(process.env.CX_DIFF_AGENT_MAX_FILES, DEFAULT_MAX_FILES);
 
 void main().catch((error) => {
-  console.error(`${LOG_LABEL} fatal error`, error);
+  log.error(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
 
@@ -201,7 +205,7 @@ async function main(): Promise<void> {
     maxFiles,
   });
   if (context.changedFiles.length === 0) {
-    console.log(`${LOG_LABEL} No changed files detected between ${context.mergeBase} and HEAD.`);
+    log.info(`No changed files detected between ${context.mergeBase} and HEAD`);
     return;
   }
 
@@ -287,7 +291,7 @@ async function searchReveries(
       insights: Array.isArray(match.insights) ? match.insights : [],
     }));
   } catch (error) {
-    console.warn(`${LOG_LABEL} Reverie search failed:`, error);
+    log.warn(`Reverie search failed: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
@@ -300,7 +304,7 @@ async function ensureReverieReady(): Promise<void> {
     await fastEmbedInit({ model: REVERIE_EMBED_MODEL, showDownloadProgress: true });
     reverieReady = true;
   } catch (error) {
-    console.warn(`${LOG_LABEL} Failed to initialize reverie embedder:`, error);
+    log.warn(`Failed to initialize reverie embedder: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -405,7 +409,7 @@ function parseStructuredOutput<T>(value: unknown, fallback: T): T {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
     return parsed as T;
   } catch (error) {
-    console.warn(`${LOG_LABEL} Failed to parse structured output`, error);
+    log.warn(`Failed to parse structured output: ${error instanceof Error ? error.message : String(error)}`);
     return fallback;
   }
 }
@@ -432,7 +436,7 @@ async function collectDiagnosticsForChanges(context: RepoDiffSummary): Promise<M
       diagnostics.set(normalizeRepoPath(relative), entry);
     }
   } catch (error) {
-    console.warn(`${LOG_LABEL} Unable to collect LSP diagnostics:`, error);
+    log.warn(`Unable to collect LSP diagnostics: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     try {
       await manager.dispose();
@@ -445,29 +449,29 @@ async function collectDiagnosticsForChanges(context: RepoDiffSummary): Promise<M
 }
 
 function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, insights: ReverieInsight[]): void {
-  console.log(`\n${LOG_LABEL} Branch Intent Summary`);
-  console.log(`Branch ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
-  console.log(`Intent: ${plan.intent_summary || "(missing)"}`);
+  log.info(`\nBranch Intent Summary`);
+  log.info(`Branch ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
+  log.info(`Intent: ${plan.intent_summary || "(missing)"}`);
   if (plan.objectives.length > 0) {
-    console.log("Objectives:");
+    log.info("Objectives:");
     plan.objectives.forEach((obj, idx) => {
-      console.log(`  ${idx + 1}. ${obj.title} [${obj.impact_scope}] - ${obj.evidence}`);
+      log.info(`  ${idx + 1}. ${obj.title} [${obj.impact_scope}] - ${obj.evidence}`);
     });
   }
   if (plan.risk_flags.length > 0) {
-    console.log("Risks:");
-    plan.risk_flags.forEach((flag) => console.log(`  - ${flag}`));
+    log.info("Risks:");
+    plan.risk_flags.forEach((flag) => log.info(`  - ${flag}`));
   }
   if (plan.file_focus.length > 0) {
-    console.log("Focus files:");
+    log.info("Focus files:");
     plan.file_focus.forEach((entry) => {
-      console.log(`  - ${entry.file}: ${entry.reason} (urgency: ${entry.urgency})`);
+      log.info(`  - ${entry.file}: ${entry.reason} (urgency: ${entry.urgency})`);
     });
   }
   if (insights.length > 0) {
-    console.log("Reverie highlights:");
+    log.info("Reverie highlights:");
     insights.slice(0, 3).forEach((match) => {
-      console.log(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      log.info(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
     });
   }
 }
@@ -478,34 +482,34 @@ function renderFileAssessment(
   insights: ReverieInsight[],
   diagnostics?: FileDiagnostics,
 ): void {
-  console.log(`\n${LOG_LABEL} File: ${assessment.file}`);
-  console.log(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
-  console.log(`Intent: ${assessment.change_intent || "(not captured)"}`);
-  console.log(`Necessity: ${assessment.necessity} | Minimally invasive: ${assessment.minimally_invasive ? "yes" : "no"} | Risk: ${assessment.risk_level}`);
+  log.info(`\nFile: ${assessment.file}`);
+  log.info(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
+  log.info(`Intent: ${assessment.change_intent || "(not captured)"}`);
+  log.info(`Necessity: ${assessment.necessity} | Minimally invasive: ${assessment.minimally_invasive ? "yes" : "no"} | Risk: ${assessment.risk_level}`);
   if (assessment.unnecessary_changes.length > 0) {
-    console.log("Unnecessary changes:");
-    assessment.unnecessary_changes.forEach((item) => console.log(`  - ${item}`));
+    log.info("Unnecessary changes:");
+    assessment.unnecessary_changes.forEach((item) => log.info(`  - ${item}`));
   }
   if (assessment.recommendations.length > 0) {
-    console.log("Recommendations:");
-    assessment.recommendations.forEach((item) => console.log(`  - ${item}`));
+    log.info("Recommendations:");
+    assessment.recommendations.forEach((item) => log.info(`  - ${item}`));
   }
   if (insights.length > 0) {
-    console.log("Reverie cues:");
+    log.info("Reverie cues:");
     insights.slice(0, 2).forEach((match) => {
-      console.log(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      log.info(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
     });
   }
   if (diagnostics && diagnostics.diagnostics.length > 0) {
-    console.log("Diagnostics:");
+    log.info("Diagnostics:");
     diagnostics.diagnostics.slice(0, MAX_DIAGNOSTICS_PER_FILE).forEach((diag) => {
       const { line, character } = diag.range.start;
       const location = `${line + 1}:${character + 1}`;
       const source = diag.source ? ` · ${diag.source}` : "";
-      console.log(`  - [${diag.severity.toUpperCase()}] ${diag.message} (${location}${source})`);
+      log.info(`  - [${diag.severity.toUpperCase()}] ${diag.message} (${location}${source})`);
     });
     if (diagnostics.diagnostics.length > MAX_DIAGNOSTICS_PER_FILE) {
-      console.log("  - …");
+      log.info("  - …");
     }
   }
 }
