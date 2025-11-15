@@ -77,6 +77,12 @@ let reverieReady = false;
 // Create scoped logger for diff-agent
 const log = logger.scope("reviewer");
 
+// Helper to log user-facing content (results) with visual distinction
+function logResult(message: string): void {
+  // Use a visual separator to distinguish user-facing results from agent progress
+  console.log(`\n${message}`);
+}
+
 const BRANCH_PLAN_OUTPUT_TYPE: JsonSchemaDefinition = {
   type: "json_schema",
   name: "DiffBranchOverview",
@@ -454,31 +460,35 @@ async function collectDiagnosticsForChanges(context: RepoDiffSummary): Promise<M
 }
 
 function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, insights: ReverieInsight[]): void {
-  log.info(`\nBranch Intent Summary`);
-  log.info(`Branch ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
-  log.info(`Intent: ${plan.intent_summary || "(missing)"}`);
+  logResult(`\n${"=".repeat(80)}`);
+  logResult(`📋 BRANCH ANALYSIS`);
+  logResult(`${"=".repeat(80)}`);
+  logResult(`Branch: ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
+  logResult(`\nIntent: ${plan.intent_summary || "(missing)"}`);
   if (plan.objectives.length > 0) {
-    log.info("Objectives:");
+    logResult(`\nObjectives:`);
     plan.objectives.forEach((obj, idx) => {
-      log.info(`  ${idx + 1}. ${obj.title} [${obj.impact_scope}] - ${obj.evidence}`);
+      logResult(`  ${idx + 1}. ${obj.title} [${obj.impact_scope}]`);
+      logResult(`     ${obj.evidence}`);
     });
   }
   if (plan.risk_flags.length > 0) {
-    log.info("Risks:");
-    plan.risk_flags.forEach((flag) => log.info(`  - ${flag}`));
+    logResult(`\nRisks:`);
+    plan.risk_flags.forEach((flag) => logResult(`  ⚠️  ${flag}`));
   }
   if (plan.file_focus.length > 0) {
-    log.info("Focus files:");
+    logResult(`\nFocus Files:`);
     plan.file_focus.forEach((entry) => {
-      log.info(`  - ${entry.file}: ${entry.reason} (urgency: ${entry.urgency})`);
+      logResult(`  📁 ${entry.file}: ${entry.reason} (urgency: ${entry.urgency})`);
     });
   }
   if (insights.length > 0) {
-    log.info("Reverie highlights:");
+    logResult(`\nReverie Highlights:`);
     insights.slice(0, 3).forEach((match) => {
-      log.info(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      logResult(`  💡 ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
     });
   }
+  logResult(`${"=".repeat(80)}\n`);
 }
 
 function renderFileAssessment(
@@ -487,36 +497,41 @@ function renderFileAssessment(
   insights: ReverieInsight[],
   diagnostics?: FileDiagnostics,
 ): void {
-  log.info(`\nFile: ${assessment.file}`);
-  log.info(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
-  log.info(`Intent: ${assessment.change_intent || "(not captured)"}`);
-  log.info(`Necessity: ${assessment.necessity} | Minimally invasive: ${assessment.minimally_invasive ? "yes" : "no"} | Risk: ${assessment.risk_level}`);
+  logResult(`\n${"-".repeat(80)}`);
+  logResult(`📄 FILE: ${assessment.file}`);
+  logResult(`${"-".repeat(80)}`);
+  logResult(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
+  logResult(`Intent: ${assessment.change_intent || "(not captured)"}`);
+  logResult(`Necessity: ${assessment.necessity} | Minimally invasive: ${assessment.minimally_invasive ? "yes" : "no"} | Risk: ${assessment.risk_level}`);
+
   if (assessment.unnecessary_changes.length > 0) {
-    log.info("Unnecessary changes:");
-    assessment.unnecessary_changes.forEach((item) => log.info(`  - ${item}`));
+    logResult(`\n⚠️  Unnecessary Changes:`);
+    assessment.unnecessary_changes.forEach((item) => logResult(`  • ${item}`));
   }
   if (assessment.recommendations.length > 0) {
-    log.info("Recommendations:");
-    assessment.recommendations.forEach((item) => log.info(`  - ${item}`));
+    logResult(`\n💡 Recommendations:`);
+    assessment.recommendations.forEach((item) => logResult(`  • ${item}`));
   }
   if (insights.length > 0) {
-    log.info("Reverie cues:");
+    logResult(`\n🔍 Reverie Cues:`);
     insights.slice(0, 2).forEach((match) => {
-      log.info(`  - ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      logResult(`  • ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
     });
   }
   if (diagnostics && diagnostics.diagnostics.length > 0) {
-    log.info("Diagnostics:");
+    logResult(`\n🔧 Diagnostics:`);
     diagnostics.diagnostics.slice(0, MAX_DIAGNOSTICS_PER_FILE).forEach((diag) => {
       const { line, character } = diag.range.start;
       const location = `${line + 1}:${character + 1}`;
       const source = diag.source ? ` · ${diag.source}` : "";
-      log.info(`  - [${diag.severity.toUpperCase()}] ${diag.message} (${location}${source})`);
+      const severityIcon = diag.severity === "error" ? "❌" : diag.severity === "warning" ? "⚠️" : "ℹ️";
+      logResult(`  ${severityIcon} [${diag.severity.toUpperCase()}] ${diag.message} (${location}${source})`);
     });
     if (diagnostics.diagnostics.length > MAX_DIAGNOSTICS_PER_FILE) {
-      log.info("  - …");
+      logResult(`  … and ${diagnostics.diagnostics.length - MAX_DIAGNOSTICS_PER_FILE} more`);
     }
   }
+  logResult(`${"-".repeat(80)}`);
 }
 
 function formatReveries(matches: ReverieInsight[]): string {
