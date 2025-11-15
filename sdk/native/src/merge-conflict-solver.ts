@@ -54,18 +54,19 @@ const LOG_SCOPE_COLORS: Record<LogScope, string> = {
   validation: "\x1b[92m", // bright green
 };
 
-function formatScope(scope: LogScope): string {
+function formatScope(scope: LogScope, subject?: string): string {
   const color = LOG_SCOPE_COLORS[scope] ?? "";
   const reset = "\x1b[0m";
-  return `${color}[merge-solver:${scope}]${reset}`;
+  const label = subject ? `${scope}:${subject}` : scope;
+  return `${color}[merge-solver:${label}]${reset}`;
 }
 
-function logInfo(scope: LogScope, message: string): void {
-  console.log(`${formatScope(scope)} ${message}`);
+function logInfo(scope: LogScope, message: string, subject?: string): void {
+  console.log(`${formatScope(scope, subject)} ${message}`);
 }
 
-function logWarn(scope: LogScope, message: string): void {
-  console.warn(`${formatScope(scope)} ${message}`);
+function logWarn(scope: LogScope, message: string, subject?: string): void {
+  console.warn(`${formatScope(scope, subject)} ${message}`);
 }
 
 function getErrorCode(error: unknown): number | undefined {
@@ -425,7 +426,7 @@ class MergeConflictSolver {
     if (this.approvalSupervisor.isAvailable()) {
       this.codex.setApprovalCallback(async (request) => this.approvalSupervisor!.handleApproval(request));
     } else {
-      logWarn("Autonomous approval supervisor unavailable; falling back to default approval policy");
+      logWarn("supervisor", "Autonomous approval supervisor unavailable; falling back to default approval policy");
     }
   }
 
@@ -467,10 +468,11 @@ class MergeConflictSolver {
 
     logInfo("merge", `Detected ${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}`);
     for (const conflict of conflicts) {
-      logInfo("worker", `Queue -> ${conflict.path}`);
+      logInfo("worker", `Queued ${conflict.path}`, conflict.path);
     }
 
     logInfo(
+      "git",
       `Comparing remotes ${this.options.originRef ?? "(none)"} and ${
         this.options.upstreamRef ?? "(none)"
       } for diverged commits`,
@@ -501,12 +503,12 @@ class MergeConflictSolver {
     logInfo("merge", "Summarizing per-file outcomes");
     for (const outcome of outcomes) {
       const icon = outcome.success ? "✅" : "⚠️";
-      logInfo("worker", `${icon} ${outcome.path}`);
+      logInfo("worker", `${icon} status`, outcome.path);
       if (outcome.summary) {
-        logInfo("worker", indent(outcome.summary.trim(), 2));
+        logInfo("worker", indent(outcome.summary.trim(), 2), outcome.path);
       }
       if (outcome.error) {
-        logWarn("worker", indent(`Error: ${outcome.error}`, 2));
+      logWarn("worker", indent(`Error: ${outcome.error}`, 2), outcome.path);
       }
     }
 
@@ -544,13 +546,13 @@ class MergeConflictSolver {
     }
     const delimiterIndex = upstreamRef.indexOf("/");
     if (delimiterIndex <= 0) {
-      logWarn("git", `Unable to parse upstream ref '${upstreamRef}'; expected format remote/branch`);
+      logWarn("git", "Unable to parse upstream ref; expected remote/branch", upstreamRef);
       return;
     }
     const remote = upstreamRef.slice(0, delimiterIndex);
     const branch = upstreamRef.slice(delimiterIndex + 1);
     if (!branch) {
-      logWarn("git", `Upstream ref '${upstreamRef}' is missing a branch component`);
+      logWarn("git", "Upstream ref missing branch component", upstreamRef);
       return;
     }
 
@@ -606,7 +608,7 @@ class MergeConflictSolver {
   }
 
   private async resolveConflict(conflict: ConflictContext): Promise<WorkerOutcome> {
-    logInfo("worker", `Dispatching worker for ${conflict.path}`);
+    logInfo("worker", "Dispatching worker", conflict.path);
     const workerThread = this.codex.startThread(this.workerThreadOptions);
     const prompt = buildWorkerPrompt(conflict, this.coordinatorPlan, {
       originRef: this.options.originRef,
@@ -624,7 +626,8 @@ class MergeConflictSolver {
       const stillConflicted = remaining.includes(conflict.path);
       logInfo(
         "worker",
-        `${conflict.path} worker completed; ${stillConflicted ? "conflict persists" : "file resolved"}`,
+        stillConflicted ? "Conflict persists" : "File resolved",
+        conflict.path,
       );
       this.approvalSupervisor?.setContext(null);
       return {
@@ -636,7 +639,7 @@ class MergeConflictSolver {
       };
     } catch (error: any) {
       this.approvalSupervisor?.setContext(null);
-      logWarn("worker", `Worker for ${conflict.path} failed: ${error}`);
+      logWarn("worker", `Worker failed: ${error}`, conflict.path);
       return {
         path: conflict.path,
         success: false,
@@ -678,7 +681,7 @@ class MergeConflictSolver {
       if (!outcome.success) {
         continue;
       }
-      logInfo("validation", `Starting validation for ${outcome.path}`);
+      logInfo("validation", "Starting validation", outcome.path);
       const thread = this.codex.startThread(this.workerThreadOptions);
       const prompt = buildValidationPrompt(outcome.path, outcome.summary ?? "");
       const turn = await thread.run(prompt);
@@ -692,7 +695,8 @@ class MergeConflictSolver {
       });
       logInfo(
         "validation",
-        `${outcome.path} validation ${status === "ok" ? "passed" : "failed"}`,
+        status === "ok" ? "Validation passed" : "Validation failed",
+        outcome.path,
       );
     }
     return validations;
@@ -717,7 +721,7 @@ class ApprovalSupervisor {
         skipGitRepoCheck: true,
       });
     } catch (error) {
-      logWarn(`Unable to start approval supervisor thread: ${error}`);
+      logWarn("supervisor", `Unable to start approval supervisor thread: ${error}`);
       this.thread = null;
     }
   }
@@ -729,13 +733,13 @@ class ApprovalSupervisor {
   setContext(context: ApprovalContext | null): void {
     this.context = context;
     if (context?.conflictPath) {
-      logInfo(`Supervisor monitoring ${context.conflictPath}`);
+      logInfo("supervisor", "Monitoring worker", context.conflictPath);
     }
   }
 
   async handleApproval(request: ApprovalRequest): Promise<boolean> {
     if (!this.thread) {
-      logWarn(`Supervisor unavailable; automatically denying ${request.type}`);
+      logWarn("supervisor", "Supervisor unavailable; auto-denying", request.type);
       return false;
     }
     const contextSummary = this.context
@@ -767,7 +771,7 @@ Respond on the first line with either "APPROVE: <short reason>" or "DENY: <short
       const turn = await this.thread.run(prompt, { outputSchema: SUPERVISOR_OUTPUT_SCHEMA });
       const parsedDecision = parseSupervisorDecision(turn.finalResponse);
       if (!parsedDecision) {
-        logWarn("Supervisor produced non-JSON response; denying request");
+        logWarn("supervisor", "Produced non-JSON response; denying request", request.type);
         return false;
       }
       const approved = parsedDecision.decision === "approve";
@@ -785,10 +789,10 @@ Respond on the first line with either "APPROVE: <short reason>" or "DENY: <short
           await coordinator.run(note);
         }
       }
-      logInfo(`Supervisor decision for ${request.type}: ${summary}`);
+      logInfo("supervisor", summary, request.type);
       return approved;
     } catch (error) {
-      logWarn(`Supervisor failed to respond; denying ${request.type}. ${error}`);
+      logWarn("supervisor", `Failed to respond; denying ${request.type}. ${error}`, request.type);
       return false;
     }
   }
