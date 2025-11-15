@@ -466,8 +466,10 @@ async function collectDiagnosticsForChanges(context: RepoDiffSummary): Promise<M
 }
 
 function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, insights: ReverieInsight[]): void {
+  // Start branch section in magenta
+  logResult(`${COLORS.branchHeader}`);
   logResult(`\n${"=".repeat(80)}`);
-  logResult(`${COLORS.branchHeader}📋 BRANCH ANALYSIS${COLORS.reset}`);
+  logResult(`📋 BRANCH ANALYSIS`);
   logResult(`${"=".repeat(80)}`);
   logResult(`Branch: ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
   logResult(`\nIntent: ${plan.intent_summary || "(missing)"}`);
@@ -494,7 +496,7 @@ function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, in
       logResult(`  💡 ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
     });
   }
-  logResult(`${"=".repeat(80)}\n`);
+  logResult(`${"=".repeat(80)}\n${COLORS.reset}`);
 }
 
 function renderFileAssessment(
@@ -503,8 +505,10 @@ function renderFileAssessment(
   insights: ReverieInsight[],
   diagnostics?: FileDiagnostics,
 ): void {
+  // Start file section in cyan
+  logResult(`${COLORS.fileHeader}`);
   logResult(`\n${"-".repeat(80)}`);
-  logResult(`${COLORS.fileHeader}📄 FILE: ${assessment.file}${COLORS.reset}`);
+  logResult(`📄 FILE: ${assessment.file}`);
   logResult(`${"-".repeat(80)}`);
   logResult(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
   logResult(`Intent: ${assessment.change_intent || "(not captured)"}`);
@@ -531,10 +535,9 @@ function renderFileAssessment(
       const location = `${line + 1}:${character + 1}`;
       const source = diag.source ? ` · ${diag.source}` : "";
 
-      // Color code based on severity
+      // Color code based on severity (temporarily override cyan base)
       let severityIcon: string;
       let colorCode: string;
-      let resetCode = "\x1b[0m";
 
       if (diag.severity === "error") {
         severityIcon = "❌";
@@ -544,16 +547,16 @@ function renderFileAssessment(
         colorCode = "\x1b[33m"; // Yellow
       } else {
         severityIcon = "ℹ️";
-        colorCode = "\x1b[36m"; // Cyan
+        colorCode = COLORS.fileHeader; // Keep cyan for info
       }
 
-      logResult(`  ${severityIcon} ${colorCode}[${diag.severity.toUpperCase()}] ${diag.message}${resetCode} (${location}${source})`);
+      logResult(`  ${severityIcon} ${colorCode}[${diag.severity.toUpperCase()}] ${diag.message}${COLORS.fileHeader} (${location}${source})`);
     });
     if (diagnostics.diagnostics.length > MAX_DIAGNOSTICS_PER_FILE) {
       logResult(`  … and ${diagnostics.diagnostics.length - MAX_DIAGNOSTICS_PER_FILE} more`);
     }
   }
-  logResult(`${"-".repeat(80)}`);
+  logResult(`${"-".repeat(80)}${COLORS.reset}`);
 }
 
 function formatReveries(matches: ReverieInsight[]): string {
