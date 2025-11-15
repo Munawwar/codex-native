@@ -166,6 +166,7 @@ type ConflictContext = {
   baseVsTheirsDiff?: string | null;
   oursVsTheirsDiff?: string | null;
   recentHistory?: string | null;
+  localIntentLog?: string | null;
 };
 
 type RemoteComparison = {
@@ -304,6 +305,7 @@ class GitRepo {
     const baseVsTheirsDiff = await this.diffStageBlobs(filePath, 1, 3);
     const oursVsTheirsDiff = await this.diffStageBlobs(filePath, 2, 3);
     const recentHistory = await this.getRecentHistory(filePath, 5);
+    const localIntentLog = await this.getLocalIntentLog(remotes?.upstreamRef, filePath, 3);
 
     return {
       path: filePath,
@@ -322,6 +324,7 @@ class GitRepo {
       baseVsTheirsDiff: limitText(baseVsTheirsDiff),
       oursVsTheirsDiff: limitText(oursVsTheirsDiff),
       recentHistory: limitText(recentHistory, 2000),
+      localIntentLog: limitText(localIntentLog, 2000),
     };
   }
 
@@ -360,6 +363,21 @@ class GitRepo {
   private async getRecentHistory(relPath: string, limit: number): Promise<string | null> {
     try {
       const { stdout } = await this.runGit(["log", "-n", String(limit), "--oneline", "--", relPath], true);
+      return stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getLocalIntentLog(upstreamRef: string | null | undefined, relPath: string, limit: number): Promise<string | null> {
+    if (!upstreamRef) {
+      return null;
+    }
+    try {
+      const { stdout } = await this.runGit(
+        ["log", "--oneline", "-n", String(limit), `${upstreamRef}..HEAD`, "--", relPath],
+        true,
+      );
       return stdout.trim() || null;
     } catch {
       return null;
@@ -954,7 +972,13 @@ function buildWorkerPrompt(
     .filter(Boolean)
     .join("\n\n");
   const combinedContext = [sections, remoteSections].filter((chunk) => chunk && chunk.length).join("\n\n");
-  const researchResources = [analysisSections, conflict.recentHistory ? `### Recent git log (last 5 commits)\n${conflict.recentHistory}` : null]
+  const researchResources = [
+    analysisSections,
+    conflict.localIntentLog
+      ? `### Local intent commits (not in upstream)\n${conflict.localIntentLog}`
+      : null,
+    conflict.recentHistory ? `### Recent git log (last 5 commits)\n${conflict.recentHistory}` : null,
+  ]
     .filter((chunk) => chunk && chunk.length)
     .join("\n\n") || "(no supplemental analysis available)";
 
@@ -977,6 +1001,7 @@ Constraints:
 - Your shell/file-write accesses are gated by an autonomous supervisor; justify sensitive steps so approvals go through.
 - Begin with a short research note referencing the diffs/logs below before modifying any code.
 - Do not run tests/builds/formatters during this resolution phase; a dedicated validation turn will follow.
+- Use the "Local intent" commit snippets below to understand why our branch diverged before editing.
 
 Helpful context:
 ${combinedContext || "(no file excerpts available)"}
