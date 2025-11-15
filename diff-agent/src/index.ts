@@ -524,8 +524,24 @@ function renderFileAssessment(
       const { line, character } = diag.range.start;
       const location = `${line + 1}:${character + 1}`;
       const source = diag.source ? ` · ${diag.source}` : "";
-      const severityIcon = diag.severity === "error" ? "❌" : diag.severity === "warning" ? "⚠️" : "ℹ️";
-      logResult(`  ${severityIcon} [${diag.severity.toUpperCase()}] ${diag.message} (${location}${source})`);
+
+      // Color code based on severity
+      let severityIcon: string;
+      let colorCode: string;
+      let resetCode = "\x1b[0m";
+
+      if (diag.severity === "error") {
+        severityIcon = "❌";
+        colorCode = "\x1b[31m"; // Red
+      } else if (diag.severity === "warning") {
+        severityIcon = "⚠️";
+        colorCode = "\x1b[33m"; // Yellow
+      } else {
+        severityIcon = "ℹ️";
+        colorCode = "\x1b[36m"; // Cyan
+      }
+
+      logResult(`  ${severityIcon} ${colorCode}[${diag.severity.toUpperCase()}] ${diag.message}${resetCode} (${location}${source})`);
     });
     if (diagnostics.diagnostics.length > MAX_DIAGNOSTICS_PER_FILE) {
       logResult(`  … and ${diagnostics.diagnostics.length - MAX_DIAGNOSTICS_PER_FILE} more`);
