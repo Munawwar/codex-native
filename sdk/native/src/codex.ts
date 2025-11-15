@@ -8,6 +8,11 @@ import {
   NativeToolInterceptorNativeContext,
   ApprovalRequest,
 } from "./nativeBinding";
+import type {
+  NativeConversationConfig,
+  NativeConversationListPage,
+  NativeConversationSummary,
+} from "./nativeBinding";
 import type { StreamedTurn, Turn } from "./thread";
 import { Thread } from "./thread";
 import { ThreadOptions } from "./threadOptions";
@@ -23,6 +28,16 @@ import { formatDiagnosticsForTool } from "./lsp/format";
 export type NativeToolInterceptorContext = {
   invocation: NativeToolInvocation;
   callBuiltin: (invocation?: NativeToolInvocation) => Promise<NativeToolResult>;
+};
+
+export type ConversationSummary = NativeConversationSummary;
+
+export type ConversationListPage = NativeConversationListPage;
+
+export type ConversationListOptions = ThreadOptions & {
+  pageSize?: number;
+  cursor?: string;
+  modelProviders?: string[];
 };
 
 /**
@@ -128,6 +143,23 @@ export class Codex {
     }
   }
 
+  private buildConversationConfig(options: ThreadOptions = {}): NativeConversationConfig {
+    return {
+      model: options.model,
+      oss: options.oss,
+      sandboxMode: options.sandboxMode,
+      approvalMode: options.approvalMode,
+      workspaceWriteOptions: options.workspaceWriteOptions,
+      workingDirectory: options.workingDirectory,
+      skipGitRepoCheck: options.skipGitRepoCheck,
+      reasoningEffort: options.reasoningEffort,
+      reasoningSummary: options.reasoningSummary,
+      fullAuto: options.fullAuto,
+      baseUrl: this.options.baseUrl,
+      apiKey: this.options.apiKey,
+    };
+  }
+
   private createLspManagerForTools(): LspManager | null {
     const cwd =
       typeof process !== "undefined" && typeof process.cwd === "function"
@@ -231,6 +263,35 @@ export class Codex {
    */
   resumeThread(id: string, options: ThreadOptions = {}): Thread {
     return new Thread(this.exec, this.options, options, id);
+  }
+
+  async listConversations(options: ConversationListOptions = {}): Promise<ConversationListPage> {
+    const request = {
+      config: this.buildConversationConfig(options),
+      pageSize: options.pageSize,
+      cursor: options.cursor,
+      modelProviders: options.modelProviders,
+    };
+    return this.exec.listConversations(request);
+  }
+
+  async deleteConversation(id: string, options: ThreadOptions = {}): Promise<boolean> {
+    const result = await this.exec.deleteConversation({
+      id,
+      config: this.buildConversationConfig(options),
+    });
+    return result.deleted;
+  }
+
+  async resumeConversationFromRollout(
+    rolloutPath: string,
+    options: ThreadOptions = {},
+  ): Promise<Thread> {
+    const result = await this.exec.resumeConversationFromRollout({
+      rolloutPath,
+      config: this.buildConversationConfig(options),
+    });
+    return new Thread(this.exec, this.options, options, result.threadId);
   }
 
   /**

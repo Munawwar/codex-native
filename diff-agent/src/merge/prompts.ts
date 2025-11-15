@@ -223,55 +223,6 @@ Tasks:
 Respond with a crisp summary plus checklist.`;
 }
 
-export type CiFailurePromptInput = {
-  targetLabel: string;
-  workerSummary?: string;
-  ciLog: string;
-  snippet?: string;
-  failureLabel?: string;
-  pathHints?: string[];
-  isNewAgent?: boolean;
-};
-
-export function buildCiFailurePrompt(input: CiFailurePromptInput): string {
-  const {
-    targetLabel,
-    workerSummary,
-    ciLog,
-    snippet,
-    failureLabel,
-    pathHints,
-    isNewAgent,
-  } = input;
-  const introTarget = failureLabel && failureLabel !== targetLabel ? `${targetLabel} (${failureLabel})` : targetLabel;
-  const ownershipNote = isNewAgent
-    ? "You are a CI specialist picking up this failure for the first time."
-    : "Continue from your previous merge context for this path.";
-  const hintsBlock = pathHints?.length
-    ? `Path/test hints: ${pathHints.join(", ")}`
-    : "Path/test hints: (not detected)";
-  const snippetBlock = snippet ? `\n\nFocused snippet:\n${snippet}` : "";
-  return `# pnpm run ci regression follow-up – ${introTarget}
-
-${ownershipNote}
-
-Previous merge summary:
-${workerSummary && workerSummary.trim().length ? workerSummary : "(no summary provided)"}
-
-${hintsBlock}${snippetBlock}
-
-Full pnpm run ci digest (prefix + summaries):
-${ciLog || "(no log output captured)"}
-
-Tasks:
-1. Use the snippet and hints to determine the failing test/module.
-2. Explain why the failure occurs and propose concrete fixes (code/config/tests).
-3. Outline the exact commands/tests you will run after applying the fix (rerun pnpm run ci or targeted tests as needed).
-4. If this failure belongs to another subsystem, document that clearly and reassign with justification.
-
-Respond with a structured summary plus next steps so the orchestrator can decide how to re-run CI.`;
-}
-
 export function buildValidationPrompt(path: string, workerSummary: string): string {
   return `# Targeted Validation for ${path}
 

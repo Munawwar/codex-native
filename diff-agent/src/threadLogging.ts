@@ -1,10 +1,11 @@
-import type { Thread, ThreadEvent, ThreadItem, TurnOptions } from "@codex-native/sdk";
+import type { Thread, ThreadEvent, ThreadItem, TurnOptions, Usage } from "@codex-native/sdk";
 
 const THREAD_EVENT_TEXT_LIMIT = 400;
 
 export type ThreadLoggingSink = {
   info(message: string): void;
   warn(message: string): void;
+  recordUsage?(usage: Usage): void;
 };
 
 export async function runThreadTurnWithLogs(
@@ -36,6 +37,7 @@ function logThreadEvent(event: ThreadEvent, sink: ThreadLoggingSink): void {
       sink.info(
         `Turn completed (input ${event.usage.input_tokens}, cached ${event.usage.cached_input_tokens}, output ${event.usage.output_tokens})`,
       );
+      sink.recordUsage?.(event.usage);
       return;
     case "turn.failed":
       sink.warn(`Turn failed: ${event.error.message}`);

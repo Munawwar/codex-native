@@ -13,7 +13,8 @@
   "dependencies": {
     "@codex-native/sdk": "workspace:*",
     "@openai/agents": "^0.3.0",
-    "@openai/agents-core": "^0.3.0"
+    "@openai/agents-core": "^0.3.0",
+    "@toon-format/toon": "^1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.20.6",

@@ -165,3 +165,4 @@ include!("reverie.rs");
 include!("fast_embed.rs");
 include!("tokenizer.rs");
 include!("toon.rs");
+include!("graph/mod.rs");

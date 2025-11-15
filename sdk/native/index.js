@@ -572,6 +572,7 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.AgentGraphRenderer = nativeBinding.AgentGraphRenderer
 module.exports.TuiSession = nativeBinding.TuiSession
 module.exports.callToolBuiltin = nativeBinding.callToolBuiltin
 module.exports.clearRegisteredTools = nativeBinding.clearRegisteredTools
@@ -582,6 +583,7 @@ module.exports.cloudTasksGetDiff = nativeBinding.cloudTasksGetDiff
 module.exports.cloudTasksList = nativeBinding.cloudTasksList
 module.exports.collectRepoDiffSummary = nativeBinding.collectRepoDiffSummary
 module.exports.compactThread = nativeBinding.compactThread
+module.exports.deleteConversation = nativeBinding.deleteConversation
 module.exports.emitBackgroundEvent = nativeBinding.emitBackgroundEvent
 module.exports.emitPlanUpdate = nativeBinding.emitPlanUpdate
 module.exports.evAssistantMessage = nativeBinding.evAssistantMessage
@@ -591,10 +593,12 @@ module.exports.evResponseCreated = nativeBinding.evResponseCreated
 module.exports.fastEmbedEmbed = nativeBinding.fastEmbedEmbed
 module.exports.fastEmbedInit = nativeBinding.fastEmbedInit
 module.exports.forkThread = nativeBinding.forkThread
+module.exports.listConversations = nativeBinding.listConversations
 module.exports.modifyPlan = nativeBinding.modifyPlan
 module.exports.registerApprovalCallback = nativeBinding.registerApprovalCallback
 module.exports.registerTool = nativeBinding.registerTool
 module.exports.registerToolInterceptor = nativeBinding.registerToolInterceptor
+module.exports.resumeConversationFromRollout = nativeBinding.resumeConversationFromRollout
 module.exports.reverieGetConversationInsights = nativeBinding.reverieGetConversationInsights
 module.exports.reverieIndexSemantic = nativeBinding.reverieIndexSemantic
 module.exports.reverieListConversations = nativeBinding.reverieListConversations

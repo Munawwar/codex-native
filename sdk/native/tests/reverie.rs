@@ -374,3 +374,62 @@ async fn test_reverie_search_semantic_respects_reranker_hook() {
     "expected reranker score to be propagated"
   );
 }
+
+#[tokio::test]
+async fn test_reverie_search_semantic_reranker_failure_falls_back() {
+  let (home, _convo) = make_fake_codex_home();
+  let path = home.path().to_string_lossy().to_string();
+
+  let cache_dir = tempfile::tempdir().unwrap();
+  fast_embed_init(FastEmbedInitOptions {
+    model: Some("BAAI/bge-small-en-v1.5".to_string()),
+    cache_dir: Some(cache_dir.path().to_string_lossy().to_string()),
+    max_length: Some(512),
+    show_download_progress: Some(false),
+  })
+  .await
+  .unwrap();
+
+  struct HookGuard;
+  impl Drop for HookGuard {
+    fn drop(&mut self) {
+      clear_fast_embed_rerank_hook();
+    }
+  }
+  let _guard = HookGuard;
+
+  set_fast_embed_rerank_hook(|_, _, _documents, _, _top_k| {
+    Err(napi::Error::from_reason("test reranker failure"))
+  })
+  .unwrap();
+
+  let options = ReverieSemanticSearchOptions {
+    limit: Some(5),
+    max_candidates: Some(10),
+    project_root: Some(home.path().to_string_lossy().to_string()),
+    batch_size: None,
+    normalize: Some(true),
+    cache: Some(true),
+    reranker_model: Some("BAAI/bge-reranker-v2-m3".to_string()),
+    reranker_batch_size: Some(4),
+    reranker_top_k: Some(2),
+    ..Default::default()
+  };
+
+  let results = reverie_search_semantic(
+    path,
+    "auth timeout debugging".to_string(),
+    Some(options),
+  )
+  .await
+  .unwrap();
+
+  assert!(
+    !results.is_empty(),
+    "semantic search should still succeed when reranker fails"
+  );
+  assert!(
+    results.iter().all(|entry| entry.reranker_score.is_none()),
+    "results should not include reranker scores when reranker fails"
+  );
+}

@@ -62,7 +62,7 @@ function detectDefaultRepo(): string {
 }
 
 const DEFAULT_DIFF_AGENT_REPO = detectDefaultRepo();
-const DEFAULT_MODEL = "gpt-5-codex";
+const DEFAULT_MODEL = "gpt-5.1-codex";
 const DEFAULT_MAX_FILES = 12;
 const DEFAULT_REVERIE_LIMIT = 6;
 const DEFAULT_REVERIE_MAX_CANDIDATES = 80;
@@ -177,6 +177,19 @@ async function main(): Promise<void> {
     const config = createDefaultSolverConfig(mergeRepo);
     const solver = new MergeConflictSolver(config);
     await solver.run();
+    return;
+  }
+
+  if (args.includes("--ci")) {
+    const ciRepo = assertRepo(process.cwd());
+
+    // Always use the enhanced orchestrator with auto-fix capabilities
+    const { runEnhancedCiOrchestrator } = await import("./ci/enhanced-ci-orchestrator.js");
+    await runEnhancedCiOrchestrator(ciRepo, {
+      visualize: true, // Always show visual progress
+      autoFix: true,   // Always attempt to fix issues
+      maxIterations: 5,
+    });
     return;
   }
 
@@ -506,11 +519,12 @@ function formatReveries(matches: ReverieInsight[]): string {
 }
 
 function assertRepo(candidate: string): string {
-  const repo = path.resolve(candidate);
-  if (!fs.existsSync(path.join(repo, ".git"))) {
-    throw new Error(`Repository not found at ${repo}`);
+  const resolved = path.resolve(candidate);
+  const root = findGitRoot(resolved);
+  if (!root) {
+    throw new Error(`Repository not found at ${resolved}`);
   }
-  return repo;
+  return root;
 }
 
 function findGitRoot(startDir: string): string | null {

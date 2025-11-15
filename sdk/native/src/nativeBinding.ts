@@ -46,6 +46,57 @@ export type NativeForkRequest = {
   fullAuto?: boolean;
 };
 
+export type NativeConversationConfig = {
+  model?: string;
+  oss?: boolean;
+  sandboxMode?: SandboxMode;
+  approvalMode?: ApprovalMode;
+  workspaceWriteOptions?: WorkspaceWriteOptions;
+  workingDirectory?: string;
+  skipGitRepoCheck?: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+  linuxSandboxPath?: string;
+  reasoningEffort?: ReasoningEffort;
+  reasoningSummary?: ReasoningSummary;
+  fullAuto?: boolean;
+};
+
+export type NativeConversationListRequest = {
+  config?: NativeConversationConfig;
+  pageSize?: number;
+  cursor?: string;
+  modelProviders?: string[];
+};
+
+export type NativeConversationSummary = {
+  id: string;
+  path: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type NativeConversationListPage = {
+  conversations: NativeConversationSummary[];
+  nextCursor?: string;
+  numScannedFiles: number;
+  reachedScanCap: boolean;
+};
+
+export type NativeDeleteConversationRequest = {
+  id: string;
+  config?: NativeConversationConfig;
+};
+
+export type NativeDeleteConversationResult = {
+  deleted: boolean;
+};
+
+export type NativeResumeFromRolloutRequest = {
+  rolloutPath: string;
+  config?: NativeConversationConfig;
+};
+
 export type NativeTuiRequest = {
   prompt?: string;
   images?: string[];
@@ -269,6 +320,9 @@ export type NativeBinding = {
   ): Promise<void>;
   compactThread(request: NativeRunRequest): Promise<string[]>;
   forkThread(request: NativeForkRequest): Promise<NativeForkResult>;
+  listConversations(request: NativeConversationListRequest): Promise<NativeConversationListPage>;
+  deleteConversation(request: NativeDeleteConversationRequest): Promise<NativeDeleteConversationResult>;
+  resumeConversationFromRollout(request: NativeResumeFromRolloutRequest): Promise<NativeForkResult>;
   runTui(request: NativeTuiRequest): Promise<NativeTuiExitInfo>;
   tuiTestRun?(request: {
     width: number;

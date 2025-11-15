@@ -33,6 +33,7 @@ export { Thread } from "./thread";
 export type { RunResult, RunStreamedResult, Input, UserInput, ForkOptions } from "./thread";
 
 export { Codex } from "./codex";
+export type { ConversationListOptions, ConversationListPage, ConversationSummary } from "./codex";
 
 export type { CodexOptions, NativeToolDefinition } from "./codexOptions";
 export type { NativeToolInterceptorContext } from "./codex";
@@ -121,6 +122,16 @@ export {
   tokenizerDecode,
   collectRepoDiffSummary,
 } from "./nativeBinding";
+
+// Export AgentGraphRenderer class from the native binding
+export const AgentGraphRenderer = (() => {
+  const binding = getNativeBinding();
+  return binding ? (binding as any).AgentGraphRenderer : null;
+})();
+
+// Export GitGraphRenderer for git-style ASCII graphs
+export { GitGraphRenderer, createGraphFromTree } from "./gitGraphRenderer";
+export type { GraphNode, GraphEdge, RenderOptions } from "./gitGraphRenderer";
 
 export type {
   ReverieSemanticSearchOptions,

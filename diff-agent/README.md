@@ -19,7 +19,7 @@ Environment variables:
 
 - `CX_DIFF_AGENT_REPO` (default: `/Volumes/sandisk/codex/multi-agent-codex-system`)
 - `CX_DIFF_AGENT_BASE` (default: detected upstream or `main`)
-- `CX_DIFF_AGENT_MODEL` (default: `gpt-5-codex`)
+- `CX_DIFF_AGENT_MODEL` (default: `gpt-5.1-codex`)
 - `CX_DIFF_AGENT_MAX_FILES` (default: `12`)
 
 The script prints a branch-level intent summary followed by per-file assessments and leverages Reverie search if configured via `CODEX_HOME`.

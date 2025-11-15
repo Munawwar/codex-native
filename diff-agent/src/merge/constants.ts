@@ -1,12 +1,16 @@
 import type { ApprovalMode, SandboxMode } from "@codex-native/sdk";
 
-export const DEFAULT_COORDINATOR_MODEL = "gpt-5-codex";
-export const DEFAULT_WORKER_MODEL = "gpt-5-codex-mini";
-export const DEFAULT_REVIEWER_MODEL = "gpt-5-codex";
+export const DEFAULT_COORDINATOR_MODEL = "gpt-5.1-codex";
+export const DEFAULT_WORKER_MODEL = "gpt-5.1-codex-mini";
+export const DEFAULT_REVIEWER_MODEL = "gpt-5.1-codex";
 export const DEFAULT_SANDBOX_MODE: SandboxMode = "workspace-write";
 export const DEFAULT_APPROVAL_MODE: ApprovalMode = "on-request";
 export const MAX_CONTEXT_CHARS = 5000;
 export const CI_LOG_CONTEXT_LIMIT = 15000;
+export const CI_OVERFLOW_SUMMARY_MAX_TOKENS = 100_000;
+export const CI_OVERFLOW_SUMMARY_CHARS_PER_TOKEN = 4;
+export const CI_OVERFLOW_SUMMARY_CHAR_LIMIT =
+  CI_OVERFLOW_SUMMARY_MAX_TOKENS * CI_OVERFLOW_SUMMARY_CHARS_PER_TOKEN;
 
 export const SUPERVISOR_OUTPUT_SCHEMA = {
   name: "merge_conflict_approval_decision",

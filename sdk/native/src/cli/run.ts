@@ -268,9 +268,19 @@ function validateModel(model: string | undefined, oss: boolean): void {
     }
     return;
   }
-  if (trimmed !== "gpt-5" && trimmed !== "gpt-5-codex") {
+  const allowed = new Set([
+    "gpt-5",
+    "gpt-5-codex",
+    "gpt-5-codex-mini",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-mini",
+  ]);
+  if (!allowed.has(trimmed)) {
     throw new Error(
-      `Invalid model "${trimmed}". Supported models are "gpt-5" or "gpt-5-codex".`,
+      `Invalid model "${trimmed}". Supported models are ${Array.from(allowed)
+        .map((m) => `"${m}"`)
+        .join(", " )}.`,
     );
   }
 }

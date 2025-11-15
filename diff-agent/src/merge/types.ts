@@ -96,4 +96,18 @@ export type CiFailure = {
   pathHints: string[];
 };
 
+export type CiCoordinatorTask = {
+  label: string;
+  owner?: string;
+  scope?: string;
+  commands: string[];
+  notes?: string;
+  blockedBy?: string[];
+};
+
+export type CiCoordinatorPlan = {
+  summary: string;
+  tasks: CiCoordinatorTask[];
+};
+
 export type ThreadProvider = () => Thread | null;

@@ -11,7 +11,8 @@ import { execFile } from "node:child_process";
 import process from "node:process";
 import { promisify } from "node:util";
 
-import { Codex, type Thread, type ThreadOptions } from "@codex-native/sdk";
+import { Codex, type Thread, type ThreadOptions, type Usage } from "@codex-native/sdk";
+import { AgentGraphRenderer } from "@codex-native/sdk";
 
 import { runThreadTurnWithLogs } from "./threadLogging.js";
 import {
@@ -21,6 +22,7 @@ import {
   DEFAULT_SANDBOX_MODE,
   DEFAULT_APPROVAL_MODE,
   CI_LOG_CONTEXT_LIMIT,
+  CI_OVERFLOW_SUMMARY_MAX_TOKENS,
 } from "./merge/constants.js";
 import type {
   SolverConfig,
@@ -35,17 +37,21 @@ import {
   buildCoordinatorPrompt,
   buildWorkerPrompt,
   buildReviewerPrompt,
-  buildCiFailurePrompt,
   buildValidationPrompt,
   parseValidationSummary,
 } from "./merge/prompts.js";
+import { buildCiFailurePrompt } from "./ci/prompts.js";
 import {
   buildCiSnippetSection,
+  clampOverflowForSummary,
   extractCiFailures,
   matchCiFailureToOutcome,
 } from "./merge/ci.js";
 import { ApprovalSupervisor } from "./merge/supervisor.js";
-import { createThreadLogger, logInfo, logWarn } from "./merge/logging.js";
+import { createThreadLogger, logInfo, logWarn, type LogScope } from "./merge/logging.js";
+import { ThreadManager } from "./shared/threadManager.js";
+import { collectRepoSnapshot } from "./shared/snapshot.js";
+import { TokenTracker } from "./shared/tokenTracker.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +67,9 @@ export class MergeConflictSolver {
   private readonly codex: Codex;
   private readonly git: GitRepo;
   private readonly approvalSupervisor: ApprovalSupervisor | null;
+  private readonly threads: ThreadManager;
+  private readonly tokenTracker = new TokenTracker();
+  private readonly graphRenderer = new AgentGraphRenderer();
   private coordinatorThread: Thread | null = null;
   private coordinatorPlan: string | null = null;
   private remoteComparison: RemoteComparison | null = null;
@@ -75,6 +84,7 @@ export class MergeConflictSolver {
       apiKey: options.apiKey,
     });
     this.git = new GitRepo(options.workingDirectory);
+    this.threads = new ThreadManager(this.codex, options.workingDirectory);
     this.approvalSupervisor = new ApprovalSupervisor(
       this.codex,
       {
@@ -89,6 +99,65 @@ export class MergeConflictSolver {
     } else {
       logWarn("supervisor", "Autonomous approval supervisor unavailable; falling back to default approval policy");
     }
+  }
+
+  private initializeGraph(): void {
+    // Add the coordinator thread to the graph
+    this.graphRenderer.addAgent({
+      id: "coordinator",
+      name: "Coordinator",
+      state: "running",
+      turnCount: 0,
+    });
+  }
+
+  private updateCoordinatorState(state: string): void {
+    this.graphRenderer.updateAgentState("coordinator", state);
+  }
+
+  private addWorkerThread(workerId: string, conflictPath: string): void {
+    this.graphRenderer.addAgent({
+      id: workerId,
+      name: `Worker: ${conflictPath}`,
+      state: "running",
+      parentId: "coordinator",
+      turnCount: 0,
+      currentActivity: "Starting conflict resolution",
+    });
+  }
+
+  private updateWorkerState(workerId: string, state: string, turnCount?: number): void {
+    this.graphRenderer.updateAgentState(workerId, state);
+  }
+
+  private updateWorkerActivity(workerId: string, activity: string): void {
+    this.graphRenderer.updateAgentActivity(workerId, activity);
+  }
+
+  private updateWorkerProgress(workerId: string, progress: string): void {
+    this.graphRenderer.updateAgentProgress(workerId, progress);
+  }
+
+  private addCiThread(ciId: string): void {
+    this.graphRenderer.addAgent({
+      id: ciId,
+      name: "CI Runner",
+      state: "running",
+      parentId: "coordinator",
+      turnCount: 0,
+    });
+  }
+
+  private updateCiState(ciId: string, state: string): void {
+    this.graphRenderer.updateAgentState(ciId, state);
+  }
+
+  private renderGraph(): void {
+    this.graphRenderer.buildGraph();
+    const graphOutput = this.graphRenderer.renderAscii();
+    console.log("\n🤖 Agent Execution Graph:");
+    console.log(graphOutput);
+    console.log("");
   }
 
   private get coordinatorThreadOptions(): ThreadOptions {
@@ -116,6 +185,9 @@ export class MergeConflictSolver {
   }
 
   async run(): Promise<void> {
+    // Initialize graph with coordinator
+    this.initializeGraph();
+
     await this.ensureUpstreamMerge();
     logInfo("git", "Collecting merge conflicts via git diff --diff-filter=U");
     const conflicts = await this.git.collectConflicts({
@@ -124,6 +196,9 @@ export class MergeConflictSolver {
     });
     if (conflicts.length === 0) {
       logInfo("merge", "No merge conflicts detected. Exiting early.");
+      this.updateCoordinatorState("completed");
+      this.renderGraph();
+      this.logTokenTotals();
       return;
     }
 
@@ -133,6 +208,9 @@ export class MergeConflictSolver {
       logInfo("worker", `Queued ${conflict.path}`, conflict.path);
     }
 
+    this.graphRenderer.updateAgentActivity("coordinator", `Analyzing ${conflicts.length} conflicts`);
+    this.graphRenderer.updateAgentProgress("coordinator", `0/${conflicts.length} resolved`);
+
     logInfo(
       "git",
       `Comparing remotes ${this.options.originRef ?? "(none)"} and ${
@@ -140,29 +218,24 @@ export class MergeConflictSolver {
       } for diverged commits`,
     );
     this.remoteComparison = await this.git.compareRefs(this.options.originRef, this.options.upstreamRef);
-    const snapshot = await this.buildSnapshot(conflicts, this.remoteComparison);
+    const snapshot = await collectRepoSnapshot(this.git, conflicts, this.remoteComparison);
+
+    this.graphRenderer.updateAgentActivity("coordinator", "Starting coordinator thread");
     await this.startCoordinator(snapshot);
     this.syncCoordinatorBoard([]);
 
+    this.graphRenderer.updateAgentActivity("coordinator", "Dispatching worker threads");
     const outcomes: WorkerOutcome[] = [];
-    for (const conflict of conflicts) {
+    for (let i = 0; i < conflicts.length; i++) {
+      const conflict = conflicts[i];
+      this.graphRenderer.updateAgentProgress("coordinator", `${i}/${conflicts.length} workers dispatched`);
       const outcome = await this.resolveConflict(conflict);
       outcomes.push(outcome);
-      if (this.coordinatorThread) {
-        const update = outcome.success
-          ? `Conflict resolved for ${conflict.path}. Summary:\n${outcome.summary ?? "(no summary)"}`
-          : `Conflict still open for ${conflict.path}. ${
-              outcome.error ? `Error: ${outcome.error}` : "The file is still marked as conflicted."
-            }`;
-        await runThreadTurnWithLogs(
-          this.coordinatorThread,
-          createThreadLogger("coordinator"),
-          `Status update for ${conflict.path} from worker thread ${outcome.threadId ?? "n/a"}:\n${update}`,
-        );
-      }
       this.syncCoordinatorBoard(outcomes);
+      this.graphRenderer.updateAgentProgress("coordinator", `${outcomes.filter(o => o.success).length}/${conflicts.length} resolved`);
     }
 
+    this.graphRenderer.updateAgentActivity("coordinator", "Running reviewer analysis");
     const reviewSummary = await this.runReviewer(outcomes, this.remoteComparison);
     const remaining = await this.git.listConflictPaths();
 
@@ -184,6 +257,7 @@ export class MergeConflictSolver {
     }
 
     if (remaining.length > 0) {
+      this.graphRenderer.updateAgentActivity("coordinator", `Failed: ${remaining.length} conflicts remain`);
       logWarn(
         "merge",
         `Conflicts still present in ${remaining.length} file${remaining.length === 1 ? "" : "s"}: ${remaining.join(
@@ -192,18 +266,28 @@ export class MergeConflictSolver {
       );
       process.exitCode = 1;
     } else {
+      this.graphRenderer.updateAgentActivity("coordinator", "All conflicts resolved, running validation");
       logInfo("merge", "All conflicts resolved according to git diff --name-only --diff-filter=U");
       const validationOutcomes = await this.runValidationPhase(outcomes);
       if (validationOutcomes.length > 0) {
+        this.graphRenderer.updateAgentActivity("coordinator", "Running validation phase");
         await this.runReviewer(validationOutcomes, this.remoteComparison, true);
       }
+
+      this.graphRenderer.updateAgentActivity("coordinator", "Running CI verification");
       const ciResult = await this.runFullCi();
       if (ciResult.success) {
+        this.graphRenderer.updateAgentActivity("coordinator", "All verifications passed");
         logInfo("merge", "Verification stack complete (workers + pnpm run ci).");
       } else {
+        this.graphRenderer.updateAgentActivity("coordinator", "CI verification failed");
         await this.dispatchCiFailures(outcomes, ciResult.log);
       }
     }
+
+    // Final graph rendering
+    this.renderGraph();
+    this.logTokenTotals();
   }
 
   private async ensureUpstreamMerge(): Promise<void> {
@@ -247,33 +331,13 @@ export class MergeConflictSolver {
     }
   }
 
-  private async buildSnapshot(
-    conflicts: ConflictContext[],
-    remoteComparison: RemoteComparison | null,
-  ): Promise<RepoSnapshot> {
-    const [branch, statusShort, diffStat, recentCommits] = await Promise.all([
-      this.git.getBranchName(),
-      this.git.getStatusShort(),
-      this.git.getDiffStat(),
-      this.git.getRecentCommits(),
-    ]);
-    return {
-      branch,
-      statusShort,
-      diffStat,
-      recentCommits,
-      conflicts,
-      remoteComparison,
-    };
-  }
-
   private async startCoordinator(snapshot: RepoSnapshot): Promise<void> {
-    this.coordinatorThread = this.codex.startThread(this.coordinatorThreadOptions);
+    this.coordinatorThread = this.threads.start(this.coordinatorThreadOptions);
     const coordinatorPrompt = buildCoordinatorPrompt(snapshot);
     logInfo("coordinator", "Launching coordinator agent for global merge plan");
     const turn = await runThreadTurnWithLogs(
       this.coordinatorThread,
-      createThreadLogger("coordinator"),
+      this.logger("coordinator"),
       coordinatorPrompt,
     );
     this.coordinatorPlan = turn.finalResponse ?? null;
@@ -286,27 +350,50 @@ export class MergeConflictSolver {
 
   private async resolveConflict(conflict: ConflictContext): Promise<WorkerOutcome> {
     logInfo("worker", "Dispatching worker", conflict.path);
+    const workerId = `worker-${conflict.path.replace(/[^a-zA-Z0-9]/g, "-")}`;
+    this.addWorkerThread(workerId, conflict.path);
+
     const workerModel = this.selectWorkerModelForConflict(conflict);
     const workerThread = await this.acquireWorkerThread(conflict.path, workerModel);
+
+    this.updateWorkerActivity(workerId, "Analyzing conflict context");
     this.setWorkerPlan(workerThread, conflict.path);
+
     const prompt = buildWorkerPrompt(conflict, this.coordinatorPlan, {
       originRef: this.options.originRef,
       upstreamRef: this.options.upstreamRef,
     });
+
+    this.updateWorkerActivity(workerId, "Preparing resolution strategy");
     this.approvalSupervisor?.setContext({
       conflictPath: conflict.path,
       coordinatorPlan: this.coordinatorPlan,
       remoteInfo: this.remoteComparison,
       extraNotes: "Worker is preparing to resolve this file.",
     });
+
     try {
-      const turn = await runThreadTurnWithLogs(workerThread, createThreadLogger("worker", conflict.path), prompt);
+      this.updateWorkerActivity(workerId, "Executing resolution logic");
+      const turn = await runThreadTurnWithLogs(workerThread, this.logger("worker", conflict.path), prompt);
+
+      this.updateWorkerActivity(workerId, "Verifying resolution");
       const remaining = await this.git.listConflictPaths();
       const stillConflicted = remaining.includes(conflict.path);
       const summaryText = turn.finalResponse ?? "";
+
       logInfo("worker", stillConflicted ? "Conflict persists" : "File resolved", conflict.path);
+
       this.approvalSupervisor?.setContext(null);
       this.finalizeWorkerPlan(workerThread, conflict.path, !stillConflicted);
+
+      if (stillConflicted) {
+        this.updateWorkerActivity(workerId, "Resolution failed - conflict remains");
+        this.updateWorkerState(workerId, "failed");
+      } else {
+        this.updateWorkerActivity(workerId, "Resolution successful");
+        this.updateWorkerState(workerId, "completed");
+      }
+
       return {
         path: conflict.path,
         success: !stillConflicted,
@@ -315,8 +402,10 @@ export class MergeConflictSolver {
         error: stillConflicted ? "File remains conflicted after worker turn." : undefined,
       };
     } catch (error: any) {
+      this.updateWorkerActivity(workerId, `Error: ${error instanceof Error ? error.message : String(error)}`);
       this.approvalSupervisor?.setContext(null);
       this.finalizeWorkerPlan(workerThread, conflict.path, false);
+      this.updateWorkerState(workerId, "failed");
       logWarn("worker", `Worker failed: ${error}`, conflict.path);
       return {
         path: conflict.path,
@@ -333,7 +422,7 @@ export class MergeConflictSolver {
     validationMode = false,
   ): Promise<string | null> {
     logInfo(validationMode ? "validation" : "reviewer", "Launching reviewer agent");
-    const reviewerThread = this.codex.startThread(this.reviewerThreadOptions);
+    const reviewerThread = this.threads.start(this.reviewerThreadOptions);
     const remaining = await this.git.listConflictPaths();
     const status = await this.git.getStatusShort();
     const diffStat = await this.git.getDiffStat();
@@ -347,7 +436,7 @@ export class MergeConflictSolver {
     });
     const turn = await runThreadTurnWithLogs(
       reviewerThread,
-      createThreadLogger(validationMode ? "validation" : "reviewer"),
+      this.logger(validationMode ? "validation" : "reviewer"),
       reviewerPrompt,
     );
     const summary = turn.finalResponse ?? null;
@@ -364,9 +453,9 @@ export class MergeConflictSolver {
         continue;
       }
       logInfo("validation", "Starting validation", outcome.path);
-      const thread = this.codex.startThread(this.workerThreadOptions);
+      const thread = this.threads.start(this.workerThreadOptions);
       const prompt = buildValidationPrompt(outcome.path, outcome.summary ?? "");
-      const turn = await runThreadTurnWithLogs(thread, createThreadLogger("validation", outcome.path), prompt);
+      const turn = await runThreadTurnWithLogs(thread, this.logger("validation", outcome.path), prompt);
       const { status, summary } = parseValidationSummary(turn.finalResponse ?? "");
       validations.push({
         path: outcome.path,
@@ -385,21 +474,35 @@ export class MergeConflictSolver {
   }
 
   private async runFullCi(): Promise<{ success: boolean; log: string }> {
+    const ciId = "ci-runner";
+    this.addCiThread(ciId);
+    this.graphRenderer.updateAgentActivity(ciId, "Initializing CI pipeline");
+
     logInfo("merge", "Running pnpm run ci for full verification suite");
+
+    this.graphRenderer.updateAgentActivity(ciId, "Running test suite and linters");
+
     try {
       const { stdout, stderr } = await execFileAsync("pnpm", ["run", "ci"], {
         cwd: this.options.workingDirectory,
       });
+
+      this.graphRenderer.updateAgentActivity(ciId, "CI pipeline completed successfully");
       logInfo("merge", "pnpm run ci completed successfully");
+
       const combined = [stdout?.toString() ?? "", stderr?.toString() ?? ""]
         .filter((segment) => segment.length > 0)
         .join("\n");
+
+      this.updateCiState(ciId, "completed");
       return { success: true, log: combined };
     } catch (error: any) {
+      this.graphRenderer.updateAgentActivity(ciId, `CI failed: ${error?.code ? `exit code ${error.code}` : 'unknown error'}`);
       const stdout = error?.stdout ? error.stdout.toString() : "";
       const stderr = error?.stderr ? error.stderr.toString() : "";
       const combined = [stdout, stderr].filter((segment) => segment.length > 0).join("\n");
       logWarn("merge", `pnpm run ci failed${error?.code ? ` (exit ${error.code})` : ""}`);
+      this.updateCiState(ciId, "failed");
       return { success: false, log: combined };
     }
   }
@@ -430,7 +533,7 @@ export class MergeConflictSolver {
           ciLog: preparedLog,
         });
         try {
-          await runThreadTurnWithLogs(thread, createThreadLogger("worker", outcome.path), prompt);
+          await runThreadTurnWithLogs(thread, this.logger("worker", outcome.path), prompt);
         } catch (error) {
           logWarn("worker", `Failed to push CI failure context: ${error}`, outcome.path);
         }
@@ -456,7 +559,7 @@ export class MergeConflictSolver {
           pathHints: failure.pathHints,
         });
         try {
-          await runThreadTurnWithLogs(thread, createThreadLogger("worker", matchedOutcome.path), prompt);
+          await runThreadTurnWithLogs(thread, this.logger("worker", matchedOutcome.path), prompt);
         } catch (error) {
           logWarn("worker", `Failed to push CI failure context: ${error}`, matchedOutcome.path);
         }
@@ -475,7 +578,7 @@ export class MergeConflictSolver {
         isNewAgent: true,
       });
       try {
-        await runThreadTurnWithLogs(ciThread, createThreadLogger("worker", failure.label), prompt);
+        await runThreadTurnWithLogs(ciThread, this.logger("worker", failure.label), prompt);
         this.setCiPlan(ciThread, failure.label, true);
       } catch (error) {
         logWarn("worker", `CI specialist thread failed: ${error}`, failure.label);
@@ -484,25 +587,50 @@ export class MergeConflictSolver {
   }
 
   private async prepareOverflowCiLog(ciLog: string, snippetSection: string | null): Promise<string> {
-    logInfo("merge", `CI log is ${ciLog.length} chars (limit ${CI_LOG_CONTEXT_LIMIT}); summarizing overflow with codex-mini.`);
-    const prefix = ciLog.slice(0, CI_LOG_CONTEXT_LIMIT);
-    const overflow = ciLog.slice(CI_LOG_CONTEXT_LIMIT);
-    const summary = await this.summarizeCiOverflow(overflow);
-    const summarySection = summary
-      ? `\n\n[Overflow summary via codex-mini; ${overflow.length} chars condensed]\n${summary}`
-      : "\n\n[Overflow summary unavailable due to summarizer error]";
-    const withSummary = `${prefix}${summarySection}`;
-    return snippetSection ? `${withSummary}\n\n${snippetSection}` : withSummary;
+    const tokenCapLabel = CI_OVERFLOW_SUMMARY_MAX_TOKENS.toLocaleString();
+    logInfo(
+      "merge",
+      `CI log is ${ciLog.length} chars (limit ${CI_LOG_CONTEXT_LIMIT}); summarizing overflow with codex-mini (~${tokenCapLabel} token cap).`,
+    );
+    const suffix = ciLog.slice(-CI_LOG_CONTEXT_LIMIT);
+    const overflow = ciLog.slice(0, ciLog.length - suffix.length);
+    let body = suffix;
+    if (overflow.length > 0) {
+      const { chunk, skippedPrefix } = clampOverflowForSummary(overflow);
+      const summary = await this.summarizeCiOverflow({
+        chunk,
+        totalOverflowChars: overflow.length,
+        skippedPrefix,
+      });
+      const chunkDescriptor = skippedPrefix
+        ? `last ${chunk.length} chars (skipped ${skippedPrefix} leading chars)`
+        : `${chunk.length} chars`;
+      const summarySection = summary
+        ? `[Overflow summary via codex-mini (~${tokenCapLabel} token cap); ${overflow.length} older chars condensed using ${chunkDescriptor}]\n${summary}\n\n`
+        : "[Overflow summary unavailable due to summarizer error]\n\n";
+      body = `${summarySection}${suffix}`;
+    }
+    const withSummary = snippetSection ? `${body}\n\n${snippetSection}` : body;
+    return withSummary;
   }
 
-  private async summarizeCiOverflow(overflow: string): Promise<string | null> {
+  private async summarizeCiOverflow(params: {
+    chunk: string;
+    totalOverflowChars: number;
+    skippedPrefix: number;
+  }): Promise<string | null> {
+    const { chunk, totalOverflowChars, skippedPrefix } = params;
+    const tokenCapLabel = CI_OVERFLOW_SUMMARY_MAX_TOKENS.toLocaleString();
     try {
-      const summaryThread = this.codex.startThread({
+      const summaryThread = this.threads.start({
         ...this.workerThreadOptions,
         model: this.options.workerModelLow ?? DEFAULT_WORKER_MODEL,
       });
-      const prompt = `Summarize the following CI log overflow (length ${overflow.length} chars) into concise bullets highlighting failing crates/tests and key errors. Limit to 300 words.\n\nOverflow log:\n${overflow}`;
-      const turn = await runThreadTurnWithLogs(summaryThread, createThreadLogger("worker", "ci-overflow"), prompt);
+      const coverageNote = skippedPrefix
+        ? `Overflow totals ${totalOverflowChars} chars; only the last ${chunk.length} chars are provided (skipped ${skippedPrefix}) to stay within the ~${tokenCapLabel}-token mini-model window.`
+        : `Overflow totals ${totalOverflowChars} chars and fits within the ~${tokenCapLabel}-token mini-model window.`;
+      const prompt = `Summarize the following CI log overflow into concise bullets highlighting failing crates/tests and key errors. Limit to 300 words. ${coverageNote}\n\nOverflow log (truncated as described):\n${chunk}`;
+      const turn = await runThreadTurnWithLogs(summaryThread, this.logger("worker", "ci-overflow"), prompt);
       return turn.finalResponse?.trim() || null;
     } catch (error) {
       logWarn("merge", `Failed to summarize CI overflow: ${error}`);
@@ -578,7 +706,7 @@ export class MergeConflictSolver {
     };
     if (this.coordinatorThread) {
       try {
-        const forked = await this.coordinatorThread.fork({
+        const forked = await this.threads.fork(this.coordinatorThread, {
           nthUserMessage: this.coordinatorUserMessageCount,
           threadOptions,
         });
@@ -588,7 +716,7 @@ export class MergeConflictSolver {
         logWarn("worker", `Unable to fork coordinator for ${filePath}; starting standalone thread`, filePath);
       }
     }
-    const thread = this.codex.startThread(threadOptions);
+    const thread = this.threads.start(threadOptions);
     this.workerThreads.set(filePath, thread);
     return thread;
   }
@@ -605,7 +733,7 @@ export class MergeConflictSolver {
     let thread: Thread;
     if (this.coordinatorThread) {
       try {
-        thread = await this.coordinatorThread.fork({
+        thread = await this.threads.fork(this.coordinatorThread, {
           nthUserMessage: this.coordinatorUserMessageCount,
           threadOptions,
         });
@@ -615,7 +743,7 @@ export class MergeConflictSolver {
         logWarn("worker", `Unable to fork coordinator for CI thread "${label}"; starting standalone`, label);
       }
     }
-    thread = this.codex.startThread(threadOptions);
+    thread = this.threads.start(threadOptions);
     this.ciThreads.set(label, thread);
     return thread;
   }
@@ -710,6 +838,21 @@ export class MergeConflictSolver {
       // noop
     }
   }
+
+  private logger(scope: LogScope, subject?: string) {
+    const base = createThreadLogger(scope, subject);
+    return {
+      ...base,
+      recordUsage: (usage: Usage) => {
+        this.tokenTracker.record(usage);
+      },
+    };
+  }
+
+  private logTokenTotals(): void {
+    logInfo("merge", `Token usage: ${this.tokenTracker.summary()}`);
+  }
+
 }
 
 export function createDefaultSolverConfig(workingDirectory: string): SolverConfig {
@@ -718,7 +861,7 @@ export function createDefaultSolverConfig(workingDirectory: string): SolverConfi
     coordinatorModel: DEFAULT_COORDINATOR_MODEL,
     workerModel: DEFAULT_WORKER_MODEL,
     reviewerModel: DEFAULT_REVIEWER_MODEL,
-    supervisorModel: "gpt-5-codex",
+    supervisorModel: "gpt-5.1-codex",
     workerModelHigh: DEFAULT_REVIEWER_MODEL,
     workerModelLow: DEFAULT_WORKER_MODEL,
     highReasoningMatchers: ["^codex-rs/core/", "^codex-rs/app-server/", "^codex-rs/common/"],
@@ -729,6 +872,6 @@ export function createDefaultSolverConfig(workingDirectory: string): SolverConfi
     apiKey: process.env.CODEX_API_KEY,
     skipGitRepoCheck: false,
     originRef: process.env.CX_MERGE_ORIGIN_REF ?? "HEAD",
-    upstreamRef: process.env.CX_MERGE_UPSTREAM_REF ?? "origin/main",
+    upstreamRef: process.env.CX_MERGE_UPSTREAM_REF ?? "upstream/main",
   };
 }

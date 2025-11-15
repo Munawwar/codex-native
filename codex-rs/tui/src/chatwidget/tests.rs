@@ -2238,7 +2238,12 @@ fn background_event_updates_status_header() {
 
     assert!(chat.bottom_pane.status_indicator_visible());
     assert_eq!(chat.current_status_header, "Waiting for `vim`");
-    assert!(drain_insert_history(&mut rx).is_empty());
+    let history_cells = drain_insert_history(&mut rx);
+    assert_eq!(history_cells.len(), 1);
+    assert_eq!(
+        lines_to_single_string(&history_cells[0]),
+        "ℹ Waiting for `vim`\n"
+    );
 }
 
 #[test]

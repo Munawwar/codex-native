@@ -75,6 +75,12 @@ path = "../../codex-rs/tui"
 [dependencies.codex-apply-patch]
 path = "../../codex-rs/apply-patch"
 
+[dependencies.git-graph]
+version = "0.7.0"
+
+[dependencies.git2]
+version = "0.20"
+
 [build-dependencies]
 napi-build = "2"
 
@@ -97,3 +103,4 @@ strip = "symbols"
 [patch.crates-io]
 ratatui = { git = "https://github.com/nornagon/ratatui", branch = "nornagon-v0.29.0-patch" }
 crossterm = { git = "https://github.com/nornagon/crossterm", branch = "nornagon/color-query" }
+git-graph = { path = "../../third_party/git-graph" }

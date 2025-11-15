@@ -1,8 +1,8 @@
 import * as process from "node:process";
 import type { MultiAgentConfig } from "./types.js";
 
-export const DEFAULT_MODEL = "gpt-5-codex";
-export const DEFAULT_MINI_MODEL = "gpt-5-codex-mini";
+export const DEFAULT_MODEL = "gpt-5.1-codex";
+export const DEFAULT_MINI_MODEL = "gpt-5.1-codex-mini";
 export const FALLBACK_BASE_BRANCH = "main";
 export const MAX_CONTEXT_LINES = 140;
 export const MAX_CONTEXT_CHARS = 4800;

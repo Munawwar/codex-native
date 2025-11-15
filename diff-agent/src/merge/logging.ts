@@ -34,6 +34,10 @@ export function logWarn(scope: LogScope, message: string, subject?: string): voi
   console.warn(`${formatScope(scope, subject)} ${message}`);
 }
 
+export function logError(scope: LogScope, message: string, subject?: string): void {
+  console.error(`${formatScope(scope, subject)} ${message}`);
+}
+
 export function createThreadLogger(scope: LogScope, subject?: string): ThreadLoggingSink {
   return {
     info: (message) => logInfo(scope, message, subject),

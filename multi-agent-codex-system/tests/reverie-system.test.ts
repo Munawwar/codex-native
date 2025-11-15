@@ -151,3 +151,41 @@ test("injectReverie posts formatted summary exactly once", async () => {
   await reverie.injectReverie(mockThread, [], "noop");
   assert.equal(runCalls.length, 1, "empty reveries should not emit follow-up note");
 });
+
+test("ReverieSystem does not set reranker options when not configured", async () => {
+  let lastSearchOptions: ReverieSemanticSearchOptions | null = null;
+
+  const mockSearch = async (
+    _home: string,
+    _context: string,
+    options?: ReverieSemanticSearchOptions,
+  ) => {
+    lastSearchOptions = options ?? null;
+    return [];
+  };
+
+  const config: MultiAgentConfig = {
+    workingDirectory: process.cwd(),
+    skipGitRepoCheck: true,
+    embedder: {
+      initOptions: { model: "test-model" },
+      embedRequest: { normalize: true, cache: true, batchSize: 16 },
+    },
+  };
+
+  const reverie = new ReverieSystem(config, {
+    searchSemantic: mockSearch,
+    indexSemantic: async () => {
+      throw new Error("indexSemantic should not be called in this test");
+    },
+    fastEmbedInit: async () => {
+      // no-op for tests
+    },
+  });
+
+  await reverie.searchReveriesFromText("triage reranker behavior");
+
+  assert.ok(lastSearchOptions, "semantic search should be invoked with options");
+  assert.equal(lastSearchOptions?.rerankerModel, undefined);
+  assert.equal(lastSearchOptions?.rerankerBatchSize, undefined);
+});

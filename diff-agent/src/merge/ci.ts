@@ -1,5 +1,6 @@
 import {
   CI_LOG_CONTEXT_LIMIT,
+  CI_OVERFLOW_SUMMARY_CHAR_LIMIT,
   CI_SNIPPET_CONTEXT_LINES,
   CI_SNIPPET_KEYWORDS,
   CI_SNIPPET_MAX_SECTIONS,
@@ -97,4 +98,17 @@ export function prepareCiLogWithSnippets(ciLog: string, snippetSection: string |
     return snippetSection ? `${ciLog}\n\n${snippetSection}` : ciLog;
   }
   return ciLog; // caller will handle summarization when overflow occurs
+}
+
+export function clampOverflowForSummary(overflow: string): { chunk: string; skippedPrefix: number } {
+  if (!overflow) {
+    return { chunk: "", skippedPrefix: 0 };
+  }
+  if (overflow.length <= CI_OVERFLOW_SUMMARY_CHAR_LIMIT) {
+    return { chunk: overflow, skippedPrefix: 0 };
+  }
+  return {
+    chunk: overflow.slice(-CI_OVERFLOW_SUMMARY_CHAR_LIMIT),
+    skippedPrefix: overflow.length - CI_OVERFLOW_SUMMARY_CHAR_LIMIT,
+  };
 }
