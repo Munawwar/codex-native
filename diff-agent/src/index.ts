@@ -77,10 +77,16 @@ let reverieReady = false;
 // Create scoped logger for diff-agent
 const log = logger.scope("reviewer");
 
+// ANSI color codes for section headers
+const COLORS = {
+  branchHeader: "\x1b[1m\x1b[35m",  // Bold magenta for branch analysis
+  fileHeader: "\x1b[1m\x1b[36m",    // Bold cyan for file analysis
+  reset: "\x1b[0m",
+};
+
 // Helper to log user-facing content (results) with visual distinction
 function logResult(message: string): void {
-  // Use a visual separator to distinguish user-facing results from agent progress
-  console.log(`\n${message}`);
+  console.log(`${message}`);
 }
 
 const BRANCH_PLAN_OUTPUT_TYPE: JsonSchemaDefinition = {
@@ -461,7 +467,7 @@ async function collectDiagnosticsForChanges(context: RepoDiffSummary): Promise<M
 
 function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, insights: ReverieInsight[]): void {
   logResult(`\n${"=".repeat(80)}`);
-  logResult(`📋 BRANCH ANALYSIS`);
+  logResult(`${COLORS.branchHeader}📋 BRANCH ANALYSIS${COLORS.reset}`);
   logResult(`${"=".repeat(80)}`);
   logResult(`Branch: ${context.branch} vs ${context.baseBranch} (merge-base ${context.mergeBase})`);
   logResult(`\nIntent: ${plan.intent_summary || "(missing)"}`);
@@ -498,7 +504,7 @@ function renderFileAssessment(
   diagnostics?: FileDiagnostics,
 ): void {
   logResult(`\n${"-".repeat(80)}`);
-  logResult(`📄 FILE: ${assessment.file}`);
+  logResult(`${COLORS.fileHeader}📄 FILE: ${assessment.file}${COLORS.reset}`);
   logResult(`${"-".repeat(80)}`);
   logResult(`Status: ${change.status}${change.previousPath ? ` (from ${change.previousPath})` : ""}`);
   logResult(`Intent: ${assessment.change_intent || "(not captured)"}`);
