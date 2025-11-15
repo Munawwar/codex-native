@@ -45,6 +45,10 @@ AGENTS.override.md
 .jest/
 *.tsbuildinfo
 .fastembed_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
 # logs
 *.log
