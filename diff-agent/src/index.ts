@@ -395,7 +395,7 @@ async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieC
     branchInsights.forEach((insight, idx) => {
       const preview = truncateText(insight.excerpt.replace(/\s+/g, " ").trim(), 80);
       const insightText = insight.insights[0] || "Context from past work";
-      log.info(`    ${idx + 1}. [${Math.round(insight.relevance * 100)}%] ${insightText}`);
+      log.info(`    ${idx + 1}. [${insight.relevance.toFixed(2)}] ${insightText}`);
       log.info(`       "${preview}"`);
     });
   }
@@ -413,7 +413,7 @@ async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieC
       matches.slice(0, 3).forEach((match, idx) => {
         const preview = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 80);
         const insightText = match.insights[0] || "Context";
-        log.info(`    ${idx + 1}. [${Math.round(match.relevance * 100)}%] ${insightText}`);
+        log.info(`    ${idx + 1}. [${match.relevance.toFixed(2)}] ${insightText}`);
         log.info(`       "${preview}"`);
       });
       if (matches.length > 3) {
@@ -805,7 +805,7 @@ function formatReveries(matches: ReverieInsight[]): string {
     .map((match, idx) => {
       const insight = match.insights[0] || "Context from past work";
       const excerptPreview = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 150);
-      return `#${idx + 1} (${Math.round(match.relevance * 100)}%) ${insight}\n   Excerpt: ${excerptPreview}`;
+      return `#${idx + 1} (score: ${match.relevance.toFixed(2)}) ${insight}\n   Excerpt: ${excerptPreview}`;
     })
     .join("\n");
 }
