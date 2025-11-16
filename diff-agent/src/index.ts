@@ -350,7 +350,7 @@ async function main(): Promise<void> {
 
 async function performReview(runner: Runner, context: RepoDiffSummary): Promise<void> {
   log.info(`Collecting reverie context from past conversations...`);
-  const reverieContext = await collectReverieContext(context);
+  const reverieContext = await collectReverieContext(context, runner);
 
   log.info(`Analyzing branch intent with ${reverieContext.branch.length} reverie insights...`);
   const branchPlan = await analyzeBranchIntent(runner, context, reverieContext.branch);
@@ -386,7 +386,40 @@ function createRunner(
   return new Runner({ modelProvider: provider });
 }
 
-async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieContext> {
+/**
+ * Use LLM to evaluate if a reverie is actually relevant and useful
+ */
+async function gradeReverieRelevance(
+  runner: Runner,
+  searchContext: string,
+  insight: ReverieInsight
+): Promise<boolean> {
+  const graderAgent = new Agent({
+    name: "ReverieGrader",
+    instructions: `You evaluate whether conversation history excerpts are relevant.
+Respond with ONLY "yes" or "no" - nothing else.`
+  });
+
+  const prompt = `SEARCH CONTEXT:
+${searchContext}
+
+REVERIE EXCERPT:
+${insight.excerpt.slice(0, 400)}
+
+Is this reverie relevant and useful? Consider:
+- Technical context about files/changes?
+- Substantive (not greetings/generic)?
+- Helps understand intent/implementation?
+
+Answer: `;
+
+  const result = await runner.run(graderAgent, prompt);
+
+  const response = result.finalOutput?.trim().toLowerCase() || "";
+  return response === "yes" || response.startsWith("yes");
+}
+
+async function collectReverieContext(context: RepoDiffSummary, runner: Runner): Promise<ReverieContext> {
   // Initialize model once before all searches to avoid memory spikes
   await ensureReverieReady();
 
@@ -400,16 +433,29 @@ async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieC
   log.info(`Searching reverie for branch context...`);
   const branchInsights = await searchReveries(branchContext, context.repoPath);
 
-  // Filter to only valid insights that will actually be sent to the agent
-  const validBranchInsights = branchInsights.filter(match => isValidReverieExcerpt(match.excerpt));
+  // Basic quality filter first
+  const basicFiltered = branchInsights.filter(match => isValidReverieExcerpt(match.excerpt));
 
-  log.info(`Found ${branchInsights.length} matches, ${validBranchInsights.length} valid for agent context`);
+  log.info(`Found ${branchInsights.length} matches, ${basicFiltered.length} pass basic quality checks`);
+  log.info(`Using LLM to grade relevance...`);
 
-  // Log only the winning reveries that will be sent to the agent (with longer previews)
+  // LLM-based relevance grading
+  const gradingPromises = basicFiltered.map(insight =>
+    gradeReverieRelevance(runner, branchContext, insight)
+      .then(isRelevant => ({ insight, isRelevant }))
+  );
+
+  const gradedResults = await Promise.all(gradingPromises);
+  const validBranchInsights = gradedResults
+    .filter(r => r.isRelevant)
+    .map(r => r.insight);
+
+  log.info(`LLM approved ${validBranchInsights.length}/${basicFiltered.length} reveries as relevant`);
+
+  // Log only the LLM-approved reveries (with longer previews)
   if (validBranchInsights.length > 0) {
     log.info(`  Reveries sent to agent:`);
     validBranchInsights.forEach((insight, idx) => {
-      // Show longer preview (200 chars) since these are the important ones
       const preview = truncateText(insight.excerpt.replace(/\s+/g, " ").trim(), 200);
       const insightText = insight.insights[0] || "Context from past work";
       log.info(`    ${idx + 1}. [${insight.relevance.toFixed(2)}] ${insightText}`);

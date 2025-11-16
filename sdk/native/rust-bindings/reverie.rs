@@ -701,41 +701,38 @@ fn derive_insights_for_semantic(head_records_toon: &[String], tail_records_toon:
 
     let trimmed = record.trim();
 
-    // Skip empty or very short records (less than 50 chars)
-    if trimmed.len() < 50 {
+    // Quality check: require substantive content (100+ chars minimum)
+    if trimmed.len() < 100 {
       continue;
     }
 
-    // Skip records that look like system instructions or boilerplate
+    // Quality check: skip if looks like metadata/JSON/code blocks
+    if trimmed.starts_with('{')
+      || trimmed.starts_with('[')
+      || trimmed.starts_with("```")
+      || trimmed.starts_with("type:")
+      || trimmed.starts_with("id:")
+    {
+      continue;
+    }
+
     let lowercase = trimmed.to_lowercase();
-    if lowercase.contains("# codex workspace agent guide")
-      || lowercase.contains("## core expectations")
-      || lowercase.contains("# agents.md instructions")
-      || lowercase.contains("agents.md instructions for")
-      || lowercase.contains("<environment_context>")
-      || lowercase.contains("<system>")
-      || lowercase.contains("<instructions>")
-      || lowercase.contains("codex-rs folder where the rust code lives")
-      || lowercase.contains("install repo helpers")
-      || lowercase.contains("cargo-insta")
-      || lowercase.contains("approval_policy")
-      || lowercase.contains("sandbox_mode")
-      || lowercase.contains("network_access")
-      || lowercase.contains("writable_roots")
-      || lowercase.contains("input_text,\"#")
-      || lowercase.contains("input_text,\"<")
+
+    // Quality check: skip if starts with common system/thinking markers
+    if lowercase.starts_with("**")
+      || lowercase.starts_with("context")
+      || lowercase.starts_with("hello")
+      || lowercase.starts_with("#")
+      || lowercase.starts_with("<")
     {
       continue;
     }
 
-    // Skip records that are just metadata or very generic (but keep timestamps)
-    if lowercase.starts_with("type:")
-      || lowercase.starts_with("id:")
-      || lowercase.contains("checking for code changes")
-      || lowercase.contains("trigger read_file")
-      || lowercase.contains("apply options")
-    {
-      continue;
+    // Quality check: require lexical diversity (not just repetitive text)
+    let unique_words: HashSet<&str> = lowercase.split_whitespace().collect();
+    let total_words = lowercase.split_whitespace().count();
+    if total_words > 0 && (unique_words.len() as f64 / total_words as f64) < 0.4 {
+      continue; // Skip if less than 40% unique words (too repetitive)
     }
 
     // Deduplicate by checking if we've seen similar content
