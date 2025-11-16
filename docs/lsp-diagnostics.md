@@ -34,6 +34,7 @@ When running the Codex TUI (via the native SDK or the CLI), Codex listens for ba
   - File changes emitted as `file_change` items (e.g., after `apply_patch`).
   - MCP `read_file`/`read_file_v2` tool calls.
 - After each such event, it:
+
   - Collects diagnostics for the affected files from LSP servers.
   - Emits a background event whose message starts with:
 
@@ -55,4 +56,3 @@ In the TUI:
   - A file is read via tools (`read_file` / MCP file tools), or
   - A patch modifies files and a `file_change` item is emitted.
 - Core Rust `read_file` behavior in `codex-rs` remains unchanged; the diagnostics wiring above is layered on top via the Native SDK and background events, without altering the underlying tool protocol.
-

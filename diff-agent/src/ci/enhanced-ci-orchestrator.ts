@@ -21,7 +21,6 @@ import {
   type Thread,
   type ThreadOptions,
   type Usage,
-  AgentGraphRenderer,
   LspManager,
   type FileDiagnostics,
   type ForkOptions,
@@ -67,7 +66,6 @@ export class EnhancedCiOrchestrator {
   private tokenTracker: TokenTracker;
   private coordinatorThread?: Thread;
   private fixAgents = new Map<string, FixAgent>();
-  private graphRenderer?: any; // AgentGraphRenderer instance
   private currentCiProcess?: ChildProcess;
   private cancelRequested = false;
   private fixIteration = 0;
@@ -79,10 +77,6 @@ export class EnhancedCiOrchestrator {
     });
     this.git = new GitRepo(config.workingDirectory);
     this.tokenTracker = new TokenTracker(config.coordinatorModel);
-
-    if (config.visualize && AgentGraphRenderer) {
-      this.graphRenderer = new (AgentGraphRenderer as any)();
-    }
   }
 
   async run(): Promise<void> {
@@ -108,7 +102,6 @@ export class EnhancedCiOrchestrator {
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       this.fixIteration = iteration;
-      this.updateVisualization();
 
       logInfo("coordinator", `\n📍 Iteration ${iteration}/${maxIterations}`);
 
@@ -215,16 +208,6 @@ Ready to begin. I'll dispatch specialized fix agents once CI failures are identi
     const initTurn = await this.coordinatorThread.run(sharedContextPrompt);
     this.tokenTracker.record(initTurn.usage);
     logInfo("coordinator", `Shared context established. Usage: ${(this.tokenTracker.usagePercentage() * 100).toFixed(1)}%`);
-
-    if (this.graphRenderer) {
-      this.graphRenderer.addAgent({
-        id: "coordinator",
-        name: "CI Orchestrator",
-        state: "running",
-        currentActivity: "Initialized and ready",
-        progress: "0 fixes",
-      });
-    }
   }
 
   private async runCi(): Promise<{ success: boolean; log: string }> {
@@ -367,17 +350,6 @@ Each agent will inherit our shared repository context plus their specific failur
       } catch (error) {
         logWarn("coordinator", `Failed to fork agent for ${failure.label}: ${error}`);
         continue;
-      }
-
-      if (this.graphRenderer) {
-        this.graphRenderer.addAgent({
-          id: agentId,
-          name: `Fix: ${failure.label}`,
-          state: "running",
-          parentId: "coordinator",
-          currentActivity: "Starting investigation",
-          progress: "0%",
-        });
       }
     }
 
@@ -889,43 +861,8 @@ Begin investigating and fixing now.`;
 
   private updateAgentStatus(agent: FixAgent, status: FixAgent["status"]): void {
     agent.status = status;
-
-    if (this.graphRenderer) {
-      const activityMap = {
-        pending: "Waiting to start",
-        investigating: "Investigating failure",
-        fixing: "Applying fixes",
-        validating: "Validating changes",
-        completed: "Fix completed",
-        failed: "Fix failed",
-        delegated: "Delegated to specialist",
-      };
-
-      this.graphRenderer.updateAgentActivity(agent.id, activityMap[status]);
-
-      if (status === "completed" || status === "failed") {
-        this.graphRenderer.updateAgentState(
-          agent.id,
-          status === "completed" ? "completed" : "failed",
-        );
-      }
-    }
   }
 
-  private updateVisualization(): void {
-    if (!this.graphRenderer) return;
-
-    const completedCount = Array.from(this.fixAgents.values()).filter(
-      (a) => a.status === "completed",
-    ).length;
-
-    this.graphRenderer.updateAgentProgress(
-      "coordinator",
-      `Iteration ${this.fixIteration}, ${completedCount} fixes applied`,
-    );
-
-    console.log("\n" + this.graphRenderer.renderAscii() + "\n");
-  }
 
   private async runFinalReview(snapshot: RepoSnapshot, success: boolean): Promise<void> {
     const reviewThread = this.codex.startThread({
@@ -983,11 +920,6 @@ Please provide:
     logInfo("coordinator", `  Failed fixes: ${stats.failed}`);
     logInfo("coordinator", `  Total files modified: ${stats.filesFixed}`);
     logInfo("coordinator", `  Token usage: ${this.tokenTracker.summary()}`);
-
-    if (this.graphRenderer) {
-      console.log("\n🎯 Final Agent Graph:");
-      console.log(this.graphRenderer.renderAscii());
-    }
   }
 
   /**

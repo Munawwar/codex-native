@@ -18,6 +18,7 @@ fn truncate_before_nth_user_message(history: InitialHistory, n: usize) -> Initia
 ```
 
 **Key Insight**: `nthUserMessage` is 0-indexed and counts from the START, not the end.
+
 - Cannot use negative indices
 - `nthUserMessage: 0` = start fresh (no history)
 - `nthUserMessage: 1` = keep first exchange
@@ -28,6 +29,7 @@ fn truncate_before_nth_user_message(history: InitialHistory, n: usize) -> Initia
 ### Analyzed Real Tasks
 
 From CI reports and examples:
+
 1. **Codespell fixes** - Need: file paths, error pattern
 2. **Type errors** - Need: affected files, type definitions context
 3. **Lint failures** - Need: lint rules, file context
@@ -37,18 +39,21 @@ From CI reports and examples:
 ### Essential Context for ALL Agents
 
 ✅ **Shared baseline** (established by coordinator):
+
 - Repository structure (branch, status, diffstat)
 - Recent commits (what changed recently)
 - General codebase orientation
 - List of current failures
 
 ✅ **Failure-specific** (added during specialization):
+
 - Specific error message
 - Path hints to affected files
 - Reverie insights about that failure type
 - Focus instruction
 
 ❌ **NOT needed** (bloat to avoid):
+
 - Full 1MB CI report (only need summary)
 - Entire conversation history
 - Other agents' work-in-progress
@@ -57,6 +62,7 @@ From CI reports and examples:
 ## Fork Point Strategy Analysis
 
 ### Option 1: Fork from Beginning (nthUserMessage = 0)
+
 ```
 ❌ NO SHARED CONTEXT
 ├─ Each agent rebuilds understanding from scratch
@@ -65,6 +71,7 @@ From CI reports and examples:
 ```
 
 ### Option 2: Fork from Last Message (nthUserMessage = 1 after shared context)
+
 ```
 ✅ OPTIMAL BALANCE
 ├─ Coordinator: Establish shared context (15-20K tokens)
@@ -78,6 +85,7 @@ Remaining budget: 240-250K tokens (plenty of room)
 ```
 
 ### Option 3: Fork from First 3 Messages (nthUserMessage = 3)
+
 ```
 ⚠️  POTENTIALLY TOO MUCH
 ├─ If coordinator has 3+ exchanges, might include:
@@ -93,10 +101,10 @@ Remaining budget: 240-250K tokens (plenty of room)
 
 ```typescript
 class CoordinatorPhases {
-  INITIALIZATION = 0;      // System setup, no content yet
-  SHARED_CONTEXT = 1;      // ← FORK POINT for fix agents
+  INITIALIZATION = 0; // System setup, no content yet
+  SHARED_CONTEXT = 1; // ← FORK POINT for fix agents
   FAILURES_IDENTIFIED = 2; // After CI run, before delegation
-  ITERATION_REVIEW = 3;    // After agents report back
+  ITERATION_REVIEW = 3; // After agents report back
 }
 ```
 
@@ -187,16 +195,17 @@ if (this.coordinatorTokenTracker.shouldHandoff()) {  // 85% full
 
 ## Comparison: Our Approach vs Alternatives
 
-| Approach | Shared Context | Token Efficiency | Agent Effectiveness |
-|----------|---------------|------------------|---------------------|
-| **Fresh threads** | ❌ None | ⚠️ Redundant discovery | ⚠️ Each rebuilds understanding |
-| **Fork from start (n=0)** | ❌ None | ❌ Same as fresh | ❌ Same as fresh |
-| **Fork from shared (n=1)** | ✅ Yes | ✅ Optimal | ✅ Agents start informed |
-| **Fork from all history** | ⚠️ Too much | ❌ Context bloat | ⚠️ Inherits irrelevant info |
+| Approach                   | Shared Context | Token Efficiency       | Agent Effectiveness            |
+| -------------------------- | -------------- | ---------------------- | ------------------------------ |
+| **Fresh threads**          | ❌ None        | ⚠️ Redundant discovery | ⚠️ Each rebuilds understanding |
+| **Fork from start (n=0)**  | ❌ None        | ❌ Same as fresh       | ❌ Same as fresh               |
+| **Fork from shared (n=1)** | ✅ Yes         | ✅ Optimal             | ✅ Agents start informed       |
+| **Fork from all history**  | ⚠️ Too much    | ❌ Context bloat       | ⚠️ Inherits irrelevant info    |
 
 ## Real-World Example: Fix Codespell Failure
 
 ### Without Smart Forking (Fresh Thread)
+
 ```
 Agent starts: 0K tokens
 1. Run `git status` to understand repo → 2K
@@ -208,6 +217,7 @@ Total: 13K tokens (8K wasted on discovery)
 ```
 
 ### With Smart Forking (Fork at Shared Context)
+
 ```
 Agent inherits: 17K tokens (branch, commits, diffstat, failures overview)
 1. Already knows repo state → 0K (cached!)
@@ -223,6 +233,7 @@ Net new: 3K tokens per agent
 ## Recommendations
 
 ### ✅ DO
+
 1. **Fork from shared context** (`nthUserMessage = 1`) after coordinator establishes baseline
 2. **Track message indices** to know exactly where shared context ends
 3. **Add specialization** after forking (failure-specific details + reveries)
@@ -230,6 +241,7 @@ Net new: 3K tokens per agent
 5. **Use handoffs** for validation and aggregation
 
 ### ❌ DON'T
+
 1. **Don't fork from beginning** (n=0) - wastes context opportunity
 2. **Don't fork from full history** - inherits irrelevant coordination messages
 3. **Don't include full CI reports** - use summaries only
@@ -239,6 +251,7 @@ Net new: 3K tokens per agent
 ## Conclusion
 
 **Our current implementation is CORRECT**:
+
 - Fork fix agents from `nthUserMessage = 1` after shared context
 - This gives agents essential baseline WITHOUT bloat
 - Leaves plenty of room for investigation and fixes

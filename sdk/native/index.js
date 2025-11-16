@@ -572,7 +572,6 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
-module.exports.AgentGraphRenderer = nativeBinding.AgentGraphRenderer
 module.exports.AgentOrchestrator = nativeBinding.AgentOrchestrator
 module.exports.AgentView = nativeBinding.AgentView
 module.exports.LayoutManager = nativeBinding.LayoutManager
