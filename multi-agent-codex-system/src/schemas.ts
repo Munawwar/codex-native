@@ -6,8 +6,8 @@ const IntentionSchema = z.object({
     .enum(["Feature", "Refactor", "BugFix", "Performance", "Security", "DevEx", "Architecture", "Testing"])
     .or(z.string())
     .describe("High-level intention category"),
-  title: z.string().min(5).max(160),
-  summary: z.string().min(10).max(800),
+  title: z.string().min(5),
+  summary: z.string().min(10),
   impactScope: z.enum(["local", "module", "system"]).or(z.string()).default("module"),
   evidence: z.array(z.string()).default([]).or(z.string().transform(s => [])),
 });
@@ -16,12 +16,12 @@ const IntentionListSchema = z.array(IntentionSchema).min(1).max(12);
 
 const RecommendationSchema = z.object({
   category: z.enum(["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"]).or(z.string()),
-  title: z.string().min(5).max(160),
+  title: z.string().min(5),
   priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   effort: z.enum(["Low", "Medium", "High"]).or(z.string()).default("Medium"),
-  description: z.string().min(10).max(400),
-  location: nullableStringWithDefault(200),
-  example: nullableStringWithDefault(400),
+  description: z.string().min(10),
+  location: z.string().optional().or(z.literal(null)).transform((value) => value ?? ""),
+  example: z.string().optional().or(z.literal(null)).transform((value) => value ?? ""),
 });
 export type Recommendation = z.output<typeof RecommendationSchema>;
 const RecommendationListSchema = z.array(RecommendationSchema).min(1).max(10);
@@ -29,23 +29,23 @@ const RecommendationListSchema = z.array(RecommendationSchema).min(1).max(10);
 const CiIssueSchema = z.object({
   source: z.enum(["lint", "tests", "build", "security"]).or(z.string()),
   severity: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
-  title: z.string().min(5).max(160),
-  summary: z.string().min(10).max(400),
+  title: z.string().min(5),
+  summary: z.string().min(10),
   suggestedCommands: z.array(z.string()).default([]),
   files: z.array(z.string()).default([]),
-  owner: z.string().min(2).max(160).optional().or(z.literal(null)),
+  owner: z.string().min(2).optional().or(z.literal(null)),
   autoFixable: z.boolean().default(false),
 });
 export type CiIssue = z.output<typeof CiIssueSchema>;
 const CiIssueListSchema = z.array(CiIssueSchema).min(1).max(12);
 
 const CiFixSchema = z.object({
-  title: z.string().min(5).max(160),
+  title: z.string().min(5),
   priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   steps: z.array(z.string()).default([]),
-  owner: z.string().min(2).max(160).optional().or(z.literal(null)),
+  owner: z.string().min(2).optional().or(z.literal(null)),
   commands: z.array(z.string()).default([]),
-  etaHours: z.number().min(0).max(40).optional(),
+  etaHours: z.number().min(0).optional(),
 });
 export type CiFix = z.output<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
@@ -134,8 +134,8 @@ const IntentionOutputType: JsonSchemaDefinition = {
   schema: buildResponseSchema(
     {
       category: { type: "string", enum: ["Feature", "Refactor", "BugFix", "Performance", "Security", "DevEx", "Architecture", "Testing"] },
-      title: stringField(5, 160),
-      summary: stringField(10, 800),
+      title: stringField(5),
+      summary: stringField(10),
       impactScope: { type: "string", enum: ["local", "module", "system"] },
       evidence: stringArrayField(),
     },
@@ -150,12 +150,12 @@ const RecommendationOutputType: JsonSchemaDefinition = {
   schema: buildResponseSchema(
     {
       category: { type: "string", enum: ["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"] },
-      title: stringField(5, 160),
+      title: stringField(5),
       priority: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
       effort: { type: "string", enum: ["Low", "Medium", "High"] },
-      description: stringField(10, 400),
-      location: { schema: optionalStringField(200), optional: true },
-      example: { schema: optionalStringField(400), optional: true },
+      description: stringField(10),
+      location: { schema: optionalStringField(), optional: true },
+      example: { schema: optionalStringField(), optional: true },
     },
     { maxItems: 10 },
   ),
@@ -169,11 +169,11 @@ const CiIssueOutputType: JsonSchemaDefinition = {
     {
       source: { type: "string" },
       severity: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
-      title: stringField(5, 160),
-      summary: stringField(10, 400),
+      title: stringField(5),
+      summary: stringField(10),
       suggestedCommands: stringArrayField(),
       files: stringArrayField(),
-      owner: { schema: optionalStringField({ min: 2, max: 160 }), optional: true },
+      owner: { schema: optionalStringField({ min: 2 }), optional: true },
       autoFixable: { type: "boolean" },
     },
     { maxItems: 12 },
@@ -186,12 +186,12 @@ const CiFixOutputType: JsonSchemaDefinition = {
   strict: true,
   schema: buildResponseSchema(
     {
-      title: stringField(5, 160),
+      title: stringField(5),
       priority: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
       steps: stringArrayField(),
-      owner: { schema: optionalStringField({ min: 2, max: 160 }), optional: true },
+      owner: { schema: optionalStringField({ min: 2 }), optional: true },
       commands: { schema: stringArrayField(), optional: true },
-      etaHours: { schema: { type: "number", minimum: 0, maximum: 40 }, optional: true },
+      etaHours: { schema: { type: "number", minimum: 0 }, optional: true },
     },
     { maxItems: 15 },
   ),

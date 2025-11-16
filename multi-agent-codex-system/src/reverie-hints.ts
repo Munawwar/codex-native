@@ -315,13 +315,32 @@ class ReverieHintManager {
   }
 
   private deduplicateMatches(matches: AggregatedMatch[]): AggregatedMatch[] {
-    // Extract ReverieResults for deduplication
-    const results = matches.map((m) => m.result);
-    const deduplicated = deduplicateReverieInsights(results);
+    // Group by excerpt fingerprint
+    const byFingerprint = new Map<string, AggregatedMatch[]>();
 
-    // Rebuild AggregatedMatches from deduplicated results
-    const deduplicatedIds = new Set(deduplicated.map((r) => r.conversationId));
-    return matches.filter((m) => deduplicatedIds.has(m.result.conversationId));
+    for (const match of matches) {
+      const fingerprint = match.result.excerpt
+        .slice(0, 100)
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+
+      if (!byFingerprint.has(fingerprint)) {
+        byFingerprint.set(fingerprint, []);
+      }
+      byFingerprint.get(fingerprint)!.push(match);
+    }
+
+    // Keep the match with highest bestRelevance from each group
+    const deduplicated: AggregatedMatch[] = [];
+    for (const group of byFingerprint.values()) {
+      const best = group.reduce((prev, curr) =>
+        curr.bestRelevance > prev.bestRelevance ? curr : prev
+      );
+      deduplicated.push(best);
+    }
+
+    // Sort by score descending
+    return deduplicated.sort((a, b) => b.score - a.score);
   }
 
   private mergeMatches(

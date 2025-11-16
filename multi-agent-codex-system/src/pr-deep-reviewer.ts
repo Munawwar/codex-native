@@ -309,9 +309,12 @@ Return a JSON array of recommendations following the Recommendation schema (cate
         logWithLabel(REVIEW_LABEL, "🔄 Review turn started");
         break;
       case "turn.completed":
+        const total = event.usage.input_tokens + event.usage.output_tokens;
+        const cached = event.usage.cached_input_tokens;
+        const freshInput = event.usage.input_tokens - cached;
         logWithLabel(
           REVIEW_LABEL,
-          `✅ Review turn completed (usage: ${event.usage.input_tokens + event.usage.output_tokens} tokens)`,
+          `✅ Review turn completed (usage: ${total.toLocaleString()} tokens | input: ${event.usage.input_tokens.toLocaleString()} [${cached.toLocaleString()} cached, ${freshInput.toLocaleString()} fresh] | output: ${event.usage.output_tokens.toLocaleString()})`,
         );
         break;
       case "turn.failed":
