@@ -43,7 +43,6 @@ const CiFixSchema = z.object({
   priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   steps: z.array(z.string()).default([]),
   commands: z.array(z.string()).default([]),
-  etaHours: z.number().min(0).optional(),
 });
 export type CiFix = z.output<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
@@ -183,7 +182,6 @@ const CiFixOutputType: JsonSchemaDefinition = {
       priority: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
       steps: stringArrayField(),
       commands: stringArrayField(),
-      etaHours: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
     },
     { maxItems: 15 },
   ),

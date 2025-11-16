@@ -74,7 +74,6 @@ class CICheckerSystem {
         const detailParts = [
           fix.steps?.length ? `Steps: ${fix.steps.join(" | ")}` : null,
           fix.commands?.length ? `Commands: ${fix.commands.join(" | ")}` : null,
-          typeof fix.etaHours === "number" ? `ETA: ${fix.etaHours}h` : null,
         ].filter(Boolean) as string[];
         const suffix = detailParts.length ? ` — ${detailParts.join("; ")}` : "";
         return `#${idx + 1} [${fix.priority}] ${fix.title}${suffix}`;
@@ -165,10 +164,10 @@ Respond with a JSON array of CiIssue objects. Set "source" to "security" for eve
 You synthesize issues from multiple checkers and output an ordered remediation plan.
 
 ## Task
-Cluster issues by priority, propose owners, commands, and ETA.
+Cluster issues by priority, propose commands.
 
 ## JSON Output
-Respond with a JSON array of CiFix objects (title, priority, steps, commands, owner, etaHours).`,
+Respond with a JSON array of CiFix objects (title, priority, steps, commands).`,
     });
 
     const prompts = {
