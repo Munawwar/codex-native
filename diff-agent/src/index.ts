@@ -389,6 +389,17 @@ async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieC
   const branchInsights = await searchReveries(branchContext, context.repoPath);
   log.info(`Found ${branchInsights.length} relevant reverie matches for branch`);
 
+  // Log branch reverie details
+  if (branchInsights.length > 0) {
+    log.info(`  Branch reverie context:`);
+    branchInsights.forEach((insight, idx) => {
+      const preview = truncateText(insight.excerpt.replace(/\s+/g, " ").trim(), 80);
+      const insightText = insight.insights[0] || "Context from past work";
+      log.info(`    ${idx + 1}. [${Math.round(insight.relevance * 100)}%] ${insightText}`);
+      log.info(`       "${preview}"`);
+    });
+  }
+
   const perFile = new Map<string, ReverieInsight[]>();
   log.info(`Searching reverie for ${context.changedFiles.length} individual files...`);
   for (const change of context.changedFiles) {
@@ -398,6 +409,16 @@ async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieC
     if (matches.length > 0) {
       perFile.set(change.path, matches);
       log.info(`  ${change.path}: ${matches.length} matches`);
+      // Log per-file reverie details
+      matches.slice(0, 3).forEach((match, idx) => {
+        const preview = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 80);
+        const insightText = match.insights[0] || "Context";
+        log.info(`    ${idx + 1}. [${Math.round(match.relevance * 100)}%] ${insightText}`);
+        log.info(`       "${preview}"`);
+      });
+      if (matches.length > 3) {
+        log.info(`    ... and ${matches.length - 3} more`);
+      }
     }
   }
   log.info(`Reverie context collection complete (${perFile.size} files with context)`);
