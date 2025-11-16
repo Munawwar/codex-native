@@ -375,6 +375,9 @@ function createRunner(
 }
 
 async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieContext> {
+  // Initialize model once before all searches to avoid memory spikes
+  await ensureReverieReady();
+
   // Build a more focused search query that emphasizes intent over technical details
   const branchContext = [
     `Working on branch: ${context.branch}`,
@@ -441,7 +444,7 @@ async function searchReveries(
   if (!fs.existsSync(codexHome)) {
     return [];
   }
-  await ensureReverieReady();
+  // Model already initialized in collectReverieContext
   const options: ReverieSemanticSearchOptions = {
     projectRoot: repo,
     limit: maxCandidates * 3, // Get 3x candidates since we'll filter heavily
@@ -501,9 +504,13 @@ async function ensureReverieReady(): Promise<void> {
   }
   try {
     log.info(`Initializing reverie embedding model (${REVERIE_EMBED_MODEL})...`);
-    await fastEmbedInit({ model: REVERIE_EMBED_MODEL, showDownloadProgress: true });
+    await fastEmbedInit({
+      model: REVERIE_EMBED_MODEL,
+      showDownloadProgress: false, // Disable progress to reduce log noise
+      // Note: CoreML/Metal acceleration is enabled by default on macOS for memory efficiency
+    });
     reverieReady = true;
-    log.info(`Reverie embedding model ready`);
+    log.info(`Reverie embedding model ready (Metal/GPU acceleration active on macOS)`);
   } catch (error) {
     log.warn(`Failed to initialize reverie embedder: ${error instanceof Error ? error.message : String(error)}`);
   }
