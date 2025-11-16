@@ -775,7 +775,12 @@ function formatReveries(matches: ReverieInsight[]): string {
     return "(No meaningful reverie context found)";
   }
 
-  return validMatches
+  // Sort by timestamp (oldest to newest) to maintain chronological order
+  const sortedMatches = validMatches.sort((a, b) =>
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  return sortedMatches
     .map((match, idx) => {
       const insight = match.insights[0] || "Context from past work";
       const excerptPreview = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 150);
