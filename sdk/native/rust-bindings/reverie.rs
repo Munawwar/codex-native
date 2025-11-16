@@ -691,16 +691,70 @@ fn extract_insight_from_json(value: &serde_json::Value) -> Option<String> {
 
 fn derive_insights_for_semantic(head_records_toon: &[String], tail_records_toon: &[String]) -> Vec<String> {
   let mut insights = Vec::new();
-  // TOON-encoded records are already in LLM-friendly format, just use them directly
+  let mut seen_prefixes: HashSet<String> = HashSet::new();
+
+  // TOON-encoded records are already in LLM-friendly format, but filter for quality
   for record in head_records_toon.iter().chain(tail_records_toon.iter()) {
     if insights.len() >= MAX_INSIGHTS_PER_CONVERSATION {
       break;
     }
-    // Skip empty records
-    if !record.trim().is_empty() {
-      insights.push(record.chars().take(400).collect());
+
+    let trimmed = record.trim();
+
+    // Skip empty or very short records (less than 50 chars)
+    if trimmed.len() < 50 {
+      continue;
     }
+
+    // Skip records that look like system instructions or boilerplate
+    let lowercase = trimmed.to_lowercase();
+    if lowercase.contains("# codex workspace agent guide")
+      || lowercase.contains("## core expectations")
+      || lowercase.contains("# agents.md instructions")
+      || lowercase.contains("agents.md instructions for")
+      || lowercase.contains("<environment_context>")
+      || lowercase.contains("<system>")
+      || lowercase.contains("<instructions>")
+      || lowercase.contains("codex-rs folder where the rust code lives")
+      || lowercase.contains("install repo helpers")
+      || lowercase.contains("cargo-insta")
+      || lowercase.contains("approval_policy")
+      || lowercase.contains("sandbox_mode")
+      || lowercase.contains("network_access")
+      || lowercase.contains("writable_roots")
+      || lowercase.contains("input_text,\"#")
+      || lowercase.contains("input_text,\"<")
+    {
+      continue;
+    }
+
+    // Skip records that are just metadata or very generic (but keep timestamps)
+    if lowercase.starts_with("type:")
+      || lowercase.starts_with("id:")
+      || lowercase.contains("checking for code changes")
+      || lowercase.contains("trigger read_file")
+      || lowercase.contains("apply options")
+    {
+      continue;
+    }
+
+    // Deduplicate by checking if we've seen similar content
+    // Take first 60 chars as a fingerprint (after any timestamp)
+    let content_start = if lowercase.starts_with("timestamp:") {
+      trimmed.find('\n').map(|pos| pos + 1).unwrap_or(0)
+    } else {
+      0
+    };
+    let prefix: String = trimmed.chars().skip(content_start).take(60).collect();
+
+    if seen_prefixes.contains(&prefix) {
+      continue;
+    }
+
+    seen_prefixes.insert(prefix);
+    insights.push(trimmed.chars().take(400).collect());
   }
+
   insights
 }
 
