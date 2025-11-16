@@ -7,6 +7,10 @@ pub struct FastEmbedInitOptions {
   pub cache_dir: Option<String>,
   pub max_length: Option<u32>,
   pub show_download_progress: Option<bool>,
+  /// Enable CoreML execution provider for Metal/ANE acceleration on macOS
+  pub use_coreml: Option<bool>,
+  /// Use Apple Neural Engine only (vs ANE + GPU)
+  pub coreml_ane_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -57,6 +61,18 @@ pub async fn fast_embed_init(opts: FastEmbedInitOptions) -> napi::Result<()> {
   }
   if let Some(show_download_progress) = opts.show_download_progress {
     init_options = init_options.with_show_download_progress(show_download_progress);
+  }
+
+  // Configure CoreML execution provider for Metal/ANE acceleration
+  #[cfg(target_os = "macos")]
+  if opts.use_coreml.unwrap_or(false) {
+    use ort::execution_providers::CoreMLExecutionProvider;
+    use ort::execution_providers::coreml::CoreMLComputeUnits;
+    let mut coreml = CoreMLExecutionProvider::default();
+    if opts.coreml_ane_only.unwrap_or(false) {
+      coreml = coreml.with_compute_units(CoreMLComputeUnits::CPUAndNeuralEngine);
+    }
+    init_options = init_options.with_execution_providers(vec![coreml.build()]);
   }
 
   let namespace = derive_fastembed_namespace(&init_options);

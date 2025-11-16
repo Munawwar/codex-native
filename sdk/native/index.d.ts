@@ -11,10 +11,51 @@ export declare class AgentGraphRenderer {
   getGraphData(): NapiAgentGraph
 }
 
+export declare class AgentOrchestrator {
+  constructor()
+  addAgent(id: string, config: AgentConfig): void
+  removeAgent(id: string): void
+  setViewMode(mode: string): void
+  switchToAgent(id: string): void
+}
+
+export declare class AgentView {
+  constructor(threadId: string, title?: string | undefined | null)
+  sendMessage(message: string): void
+  receiveMessage(message: string): void
+  updateStatus(status: string): void
+  appendOutput(output: string): void
+}
+
+export declare class LayoutManager {
+  constructor()
+  setSplit(orientation: string, ratio: number, leftId: string, rightId: string): void
+}
+
+export declare class StatusBoard {
+  constructor(layout?: string | undefined | null)
+  addTextTile(id: string, title: string, value: string): void
+  addProgressTile(id: string, title: string, value: number): void
+  updateTile(id: string, value: string): void
+}
+
+export declare class TuiApp {
+  constructor(title?: string | undefined | null, width?: number | undefined | null, height?: number | undefined | null)
+  addComponent(id: string, componentType: WidgetType): void
+  startTerminal(): void
+  stopTerminal(): void
+}
+
 export declare class TuiSession {
   wait(): Promise<TuiExitInfo>
   shutdown(): void
   get closed(): boolean
+}
+
+export interface AgentConfig {
+  name: string
+  model?: string
+  task?: string
 }
 
 export declare function callToolBuiltin(token: string, invocation?: JsToolInvocation): Promise<NativeToolResponse>
@@ -76,6 +117,13 @@ export interface DeleteConversationResult {
   deleted: boolean
 }
 
+export interface Dimensions {
+  width: number
+  height: number
+  x: number
+  y: number
+}
+
 export declare function emitBackgroundEvent(req: JsEmitBackgroundEventRequest): void
 
 export declare function emitPlanUpdate(req: JsEmitPlanUpdateRequest): void
@@ -105,6 +153,10 @@ export interface FastEmbedInitOptions {
   cacheDir?: string
   maxLength?: number
   showDownloadProgress?: boolean
+  /** Enable CoreML execution provider for Metal/ANE acceleration on macOS */
+  useCoreml?: boolean
+  /** Use Apple Neural Engine only (vs ANE + GPU) */
+  coremlAneOnly?: boolean
 }
 
 export interface ForkRequest {
@@ -181,6 +233,13 @@ export interface JsToolInvocation {
   toolName: string
   arguments?: string
   input?: string
+}
+
+export declare const enum LayoutType {
+  Split = 0,
+  Tabs = 1,
+  Grid = 2,
+  Stack = 3
 }
 
 export declare function listConversations(req: ListConversationsRequest): Promise<ConversationListPage>
@@ -306,6 +365,9 @@ export declare function reverieIndexSemantic(codexHomePath: string, options?: Re
 
 export declare function reverieListConversations(codexHomePath: string, limit?: number | undefined | null, offset?: number | undefined | null): Promise<Array<ReverieConversation>>
 
+/** Search using blocks from the current ongoing conversation to find similar past sessions */
+export declare function reverieSearchByConversation(codexHomePath: string, conversationMessages: Array<string>, options?: ReverieSemanticSearchOptions | undefined | null): Promise<Array<ReverieSearchResult>>
+
 export declare function reverieSearchConversations(codexHomePath: string, query: string, limit?: number | undefined | null): Promise<Array<ReverieSearchResult>>
 
 export interface ReverieSearchResult {
@@ -316,13 +378,13 @@ export interface ReverieSearchResult {
   rerankerScore?: number
 }
 
-export declare function reverieSearchSemantic(codexHomePath: string, contextText: string, options?: ReverieSemanticSearchOptions | undefined | null): Promise<Array<ReverieSearchResult>>
-
 export type FastEmbedRerankerModelCode =
   | "BAAI/bge-reranker-base"
   | "rozgo/bge-reranker-v2-m3"
   | "jinaai/jina-reranker-v1-turbo-en"
-  | "jinaai/jina-reranker-v2-base-multilingual";
+  | "jinaai/jina-reranker-v2-base-multilingual"
+
+export declare function reverieSearchSemantic(codexHomePath: string, contextText: string, options?: ReverieSemanticSearchOptions | undefined | null): Promise<Array<ReverieSearchResult>>
 
 export interface ReverieSemanticIndexStats {
   conversationsIndexed: number
@@ -455,6 +517,17 @@ export interface TuiTestViewport {
 export interface UpdateActionInfo {
   kind: string
   command: string
+}
+
+export declare const enum WidgetType {
+  Text = 0,
+  Chat = 1,
+  Terminal = 2,
+  ProgressBar = 3,
+  StatusLine = 4,
+  Table = 5,
+  FileTree = 6,
+  Markdown = 7
 }
 
 export interface WorkspaceWriteOptions {
