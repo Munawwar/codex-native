@@ -96,6 +96,75 @@ function logResult(message: string): void {
   console.log(`${message}`);
 }
 
+/**
+ * Check if a reverie excerpt contains meaningful conversation context
+ * vs system prompts, boilerplate, or low-value content
+ */
+function isValidReverieExcerpt(excerpt: string): boolean {
+  if (!excerpt || excerpt.trim().length < 20) {
+    return false;
+  }
+
+  // Skip excerpts that are primarily system prompts or boilerplate
+  const skipPatterns = [
+    "# AGENTS.md instructions",
+    "AGENTS.md instructions for",
+    "<INSTRUCTIONS>",
+    "<environment_context>",
+    "<system>",
+    "Sandbox env vars",
+    "Tool output:",
+    "approval_policy",
+    "sandbox_mode",
+    "network_access",
+    "<cwd>",
+    "</cwd>",
+    "CODEX_SAN",
+    "# Codex Workspace Agent Guide",
+    "## Core Expectations",
+    "Crates in `codex-rs` use the `codex-` prefix",
+    "Install repo helpers",
+    "CI Fix Orchestrator",
+    "CI Remediation Orchestrator",
+    "Branch Intent Analyst",
+    "File Diff Inspector",
+    "You are coordinating an automated",
+    "Respond strictly with JSON",
+    "Judge whether each change",
+  ];
+
+  const normalized = excerpt.toLowerCase();
+
+  // Check if excerpt is mostly boilerplate
+  const boilerplateCount = skipPatterns.filter(pattern =>
+    normalized.includes(pattern.toLowerCase())
+  ).length;
+
+  // If ANY boilerplate patterns found, skip this excerpt (stricter filtering)
+  if (boilerplateCount >= 1) {
+    return false;
+  }
+
+  // Skip excerpts with weird percentage indicators that appear in tool outputs
+  // (like "(130%)" or "(89%)" at the end)
+  if (/\(\d{2,3}%\)\s*$/.test(excerpt.trim())) {
+    return false;
+  }
+
+  // Skip excerpts that look like JSON output
+  if (excerpt.trim().startsWith("{") && excerpt.includes('"file"')) {
+    return false;
+  }
+
+  // Skip excerpts that are mostly XML/HTML tags
+  const tagCount = (excerpt.match(/<[^>]+>/g) || []).length;
+  if (tagCount > 3) {
+    return false;
+  }
+
+  return true;
+}
+
 const BRANCH_PLAN_OUTPUT_TYPE: JsonSchemaDefinition = {
   type: "json_schema",
   name: "DiffBranchOverview",
@@ -232,21 +301,30 @@ async function main(): Promise<void> {
 
   log.info(`Found ${context.changedFiles.length} changed files`);
   const runner = createRunner(resolvedRepo, { model, baseUrl, apiKey });
-  log.info(`Collecting reverie context...`);
+  log.info(`Using model: ${model}`);
+
+  log.info(`Collecting reverie context from past conversations...`);
   const reverieContext = await collectReverieContext(context);
-  log.info(`Analyzing branch intent...`);
+
+  log.info(`Analyzing branch intent with ${reverieContext.branch.length} reverie insights...`);
   const branchPlan = await analyzeBranchIntent(runner, context, reverieContext.branch);
 
   renderBranchReport(context, branchPlan, reverieContext.branch);
 
+  log.info(`Collecting LSP diagnostics for changed files...`);
   const diagnosticsByFile = await collectDiagnosticsForChanges(context);
+  log.info(`LSP diagnostics collected for ${diagnosticsByFile.size} files`);
 
+
+  log.info(`Assessing ${context.changedFiles.length} file changes...`);
   for (const change of context.changedFiles) {
+    log.info(`  Analyzing ${change.path}...`);
     const insights = reverieContext.perFile.get(change.path) ?? [];
     const assessment = await assessFileChange(runner, context, change, branchPlan, insights);
     const diagnostics = diagnosticsByFile.get(normalizeRepoPath(change.path));
     renderFileAssessment(assessment, change, insights, diagnostics);
   }
+  log.info(`Analysis complete`);
 }
 
 function createRunner(
@@ -264,22 +342,56 @@ function createRunner(
 }
 
 async function collectReverieContext(context: RepoDiffSummary): Promise<ReverieContext> {
+  // Build a more focused search query that emphasizes intent over technical details
   const branchContext = [
-    `Branch: ${context.branch} -> Base: ${context.baseBranch}`,
-    `Status:\n${context.statusSummary}`,
-    `Diff stat:\n${context.diffStat}`,
-    `Recent commits:\n${context.recentCommits}`,
-  ].join("\n\n");
+    `Working on branch: ${context.branch}`,
+    `Files changed: ${context.changedFiles.map(f => f.path).join(", ")}`,
+    `Recent work: ${context.recentCommits.split("\n").slice(0, 3).join(" ")}`,
+  ].join("\n");
+
+  log.info(`Searching reverie for branch context...`);
   const branchInsights = await searchReveries(branchContext, context.repoPath);
+  log.info(`Found ${branchInsights.length} relevant reverie matches for branch`);
+
   const perFile = new Map<string, ReverieInsight[]>();
+  log.info(`Searching reverie for ${context.changedFiles.length} individual files...`);
   for (const change of context.changedFiles) {
-    const snippet = `${change.path}\nStatus: ${change.status}\n\n${change.diff.slice(0, 4_000)}`;
+    // Focus search on file path and key code symbols, not full diff
+    const snippet = `File: ${change.path}\nImplementing changes related to: ${extractKeySymbols(change.diff)}`;
     const matches = await searchReveries(snippet, context.repoPath, DEFAULT_REVERIE_LIMIT, DEFAULT_REVERIE_MAX_CANDIDATES / 2);
     if (matches.length > 0) {
       perFile.set(change.path, matches);
+      log.info(`  ${change.path}: ${matches.length} matches`);
     }
   }
+  log.info(`Reverie context collection complete (${perFile.size} files with context)`);
   return { branch: branchInsights, perFile };
+}
+
+/**
+ * Extract key symbols and terms from a diff to make search queries more targeted
+ */
+function extractKeySymbols(diff: string): string {
+  // Extract function/class names, avoiding boilerplate patterns
+  const symbols = new Set<string>();
+
+  // Match function/class definitions
+  const functionMatch = diff.match(/(?:function|class|const|let|var|export|interface|type)\s+(\w+)/g);
+  if (functionMatch) {
+    functionMatch.forEach(match => {
+      const name = match.split(/\s+/).pop();
+      if (name && name.length > 2 && !name.match(/^(true|false|null|undefined|const|let|var)$/)) {
+        symbols.add(name);
+      }
+    });
+  }
+
+  // If no symbols found, return a generic placeholder
+  if (symbols.size === 0) {
+    return "code changes";
+  }
+
+  return Array.from(symbols).slice(0, 5).join(", ");
 }
 
 async function searchReveries(
@@ -299,25 +411,55 @@ async function searchReveries(
   await ensureReverieReady();
   const options: ReverieSemanticSearchOptions = {
     projectRoot: repo,
-    limit,
-    maxCandidates,
+    limit: maxCandidates * 3, // Get 3x candidates since we'll filter heavily
+    maxCandidates: maxCandidates * 3,
     rerankerModel: REVERIE_RERANKER_MODEL,
     rerankerTopK: 20,
     rerankerBatchSize: 8,
   };
   try {
     const matches = await reverieSearchSemantic(codexHome, normalized, options);
-    return matches.slice(0, limit).map((match) => ({
+    const insights = matches.map((match) => ({
       conversationId: match.conversation?.id || "unknown",
       timestamp: match.conversation?.createdAt || new Date().toISOString(),
       relevance: typeof match.relevanceScore === "number" ? match.relevanceScore : 0,
       excerpt: match.matchingExcerpts?.[0] || "",
       insights: Array.isArray(match.insights) ? match.insights : [],
     }));
+
+    // Filter out system prompts and boilerplate aggressively
+    const validInsights = insights.filter(insight => isValidReverieExcerpt(insight.excerpt));
+
+    // Deduplicate similar excerpts
+    const deduplicated = deduplicateInsights(validInsights);
+
+    log.info(`  Filtered ${insights.length} → ${validInsights.length} → ${deduplicated.length} (after dedup)`);
+
+    return deduplicated.slice(0, limit);
   } catch (error) {
     log.warn(`Reverie search failed: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
+}
+
+/**
+ * Remove duplicate or very similar reverie insights
+ */
+function deduplicateInsights(insights: ReverieInsight[]): ReverieInsight[] {
+  const seen = new Set<string>();
+  const result: ReverieInsight[] = [];
+
+  for (const insight of insights) {
+    // Create a fingerprint based on first 100 chars
+    const fingerprint = insight.excerpt.slice(0, 100).toLowerCase().replace(/\s+/g, " ");
+
+    if (!seen.has(fingerprint)) {
+      seen.add(fingerprint);
+      result.push(insight);
+    }
+  }
+
+  return result;
 }
 
 async function ensureReverieReady(): Promise<void> {
@@ -325,8 +467,10 @@ async function ensureReverieReady(): Promise<void> {
     return;
   }
   try {
+    log.info(`Initializing reverie embedding model (${REVERIE_EMBED_MODEL})...`);
     await fastEmbedInit({ model: REVERIE_EMBED_MODEL, showDownloadProgress: true });
     reverieReady = true;
+    log.info(`Reverie embedding model ready`);
   } catch (error) {
     log.warn(`Failed to initialize reverie embedder: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -363,7 +507,7 @@ async function assessFileChange(
   const reviewer = new Agent<unknown, JsonSchemaDefinition>({
     name: "FileChangeInspector",
     outputType: FILE_ASSESSMENT_OUTPUT_TYPE,
-    instructions: `# File Diff Inspector\n\nJudge whether each change pushes the branch's goals forward.\n- Capture the developer's intent for this file.\n- Decide if the change was necessary, questionable, or unnecessary.\n- Note if it stays minimally invasive (touching only what's needed).\n- List specific unnecessary chunks when you spot churn.\n- Recommend fixes, removals, or follow-ups for risky areas.\n\nRespond as JSON only.`,
+    instructions: `# File Diff Inspector\n\nYour role is to assess whether each file change aligns with the stated branch objectives and provides value.\n\nGuidelines:\n- Capture the developer's intent for this specific file change\n- Evaluate if the change is necessary (advances branch goals), questionable (unclear value), or unnecessary (doesn't contribute to objectives)\n- Assess if the change is minimally invasive - does it touch only what's needed, or does it include unrelated modifications?\n- Flag specific unnecessary chunks only when you spot clear scope creep or churn that doesn't serve the file's stated intent\n- Provide constructive recommendations for improvements, refactoring, or follow-up work\n- Consider that intentional improvements and style modernizations are often necessary for maintainability\n\nBe balanced and fair in your assessment. Changes that improve code quality, fix technical debt, or align with documented style guides should be marked as "required" even if not strictly necessary for the feature.\n\nRespond as JSON only.`,
   });
   const input = buildFilePrompt(context, change, plan, insights);
   const fallback: FileAssessment = {
@@ -497,16 +641,21 @@ function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, in
       logResult(`  📁 ${entry.file}: ${entry.reason} (urgency: ${entry.urgency})`);
     });
   }
-  if (insights.length > 0) {
+  // Filter and display valid reverie insights
+  const validInsights = insights.filter(match => isValidReverieExcerpt(match.excerpt));
+  if (validInsights.length > 0) {
     logResult(`\nReverie Highlights:`);
-    insights.slice(0, 3).forEach((match) => {
-      const insight = match.insights.join("; ") || "No specific insights";
+    validInsights.slice(0, 3).forEach((match) => {
+      const insight = match.insights.join("; ") || "Context from past work";
       logResult(`  💡 ${insight} (${Math.round(match.relevance * 100)}%)`);
       if (match.excerpt && match.excerpt.trim()) {
         const truncated = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 200);
         logResult(`     ${COLORS.reverie}${truncated}${COLORS.branchHeader}`);
       }
     });
+  } else if (insights.length > 0) {
+    // Had insights but they were all filtered out as low-quality
+    logResult(`\n${COLORS.reverie}(Reverie found ${insights.length} matches but they were system prompts/boilerplate)${COLORS.branchHeader}`);
   }
   logResult(`${"=".repeat(80)}\n${COLORS.reset}`);
 }
@@ -534,10 +683,12 @@ function renderFileAssessment(
     logResult(`\n💡 Recommendations:`);
     assessment.recommendations.forEach((item) => logResult(`  • ${item}`));
   }
-  if (insights.length > 0) {
+  // Filter and display valid reverie insights for this file
+  const validInsights = insights.filter(match => isValidReverieExcerpt(match.excerpt));
+  if (validInsights.length > 0) {
     logResult(`\n🔍 Reverie Cues:`);
-    insights.slice(0, 2).forEach((match) => {
-      const insight = match.insights.join("; ") || "No specific insights";
+    validInsights.slice(0, 2).forEach((match) => {
+      const insight = match.insights.join("; ") || "Context from past work";
       logResult(`  • ${insight} (${Math.round(match.relevance * 100)}%)`);
       if (match.excerpt && match.excerpt.trim()) {
         const truncated = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 200);
@@ -577,10 +728,18 @@ function renderFileAssessment(
 }
 
 function formatReveries(matches: ReverieInsight[]): string {
-  return matches
+  // Only include valid excerpts in the formatted output
+  const validMatches = matches.filter(match => isValidReverieExcerpt(match.excerpt));
+
+  if (validMatches.length === 0) {
+    return "(No meaningful reverie context found)";
+  }
+
+  return validMatches
     .map((match, idx) => {
-      const title = match.insights[0] || match.excerpt || "Insight";
-      return `#${idx + 1} (${Math.round(match.relevance * 100)}%) ${title}`;
+      const insight = match.insights[0] || "Context from past work";
+      const excerptPreview = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 150);
+      return `#${idx + 1} (${Math.round(match.relevance * 100)}%) ${insight}\n   Excerpt: ${excerptPreview}`;
     })
     .join("\n");
 }

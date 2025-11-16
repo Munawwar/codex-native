@@ -158,6 +158,7 @@ fn ensure_apply_patch_aliases() -> napi::Result<()> {
 include!("tools.rs");
 include!("run.rs");
 include!("tui.rs");
+include!("tui_components.rs");
 include!("git.rs");
 include!("cloud_tasks.rs");
 include!("events.rs");
