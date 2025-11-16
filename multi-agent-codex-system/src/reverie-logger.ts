@@ -15,7 +15,7 @@ import type { ReverieResult } from "./types.js";
  * @returns Truncated and normalized text
  *
  * @example
- * truncateText("Hello    world\n\nfoo", 10) // "Hello worl..."
+ * truncateText("Hello    world\n\nfoo", 10) // "Hello wor..."
  * truncateText("short", 100) // "short"
  * truncateText("", 10) // ""
  */
