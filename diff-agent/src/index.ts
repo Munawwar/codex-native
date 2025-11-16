@@ -81,8 +81,15 @@ const log = logger.scope("reviewer");
 const COLORS = {
   branchHeader: "\x1b[1m\x1b[35m",  // Bold magenta for branch analysis
   fileHeader: "\x1b[1m\x1b[36m",    // Bold cyan for file analysis
+  reverie: "\x1b[90m",               // Dark grey for reverie context
   reset: "\x1b[0m",
 };
+
+// Helper to truncate text for display
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "…";
+}
 
 // Helper to log user-facing content (results) with visual distinction
 function logResult(message: string): void {
@@ -493,7 +500,12 @@ function renderBranchReport(context: RepoDiffSummary, plan: BranchIntentPlan, in
   if (insights.length > 0) {
     logResult(`\nReverie Highlights:`);
     insights.slice(0, 3).forEach((match) => {
-      logResult(`  💡 ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      const insight = match.insights.join("; ") || "No specific insights";
+      logResult(`  💡 ${insight} (${Math.round(match.relevance * 100)}%)`);
+      if (match.excerpt && match.excerpt.trim()) {
+        const truncated = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 200);
+        logResult(`     ${COLORS.reverie}${truncated}${COLORS.branchHeader}`);
+      }
     });
   }
   logResult(`${"=".repeat(80)}\n${COLORS.reset}`);
@@ -525,7 +537,12 @@ function renderFileAssessment(
   if (insights.length > 0) {
     logResult(`\n🔍 Reverie Cues:`);
     insights.slice(0, 2).forEach((match) => {
-      logResult(`  • ${match.insights.join("; ") || match.excerpt} (${Math.round(match.relevance * 100)}%)`);
+      const insight = match.insights.join("; ") || "No specific insights";
+      logResult(`  • ${insight} (${Math.round(match.relevance * 100)}%)`);
+      if (match.excerpt && match.excerpt.trim()) {
+        const truncated = truncateText(match.excerpt.replace(/\s+/g, " ").trim(), 200);
+        logResult(`    ${COLORS.reverie}${truncated}${COLORS.fileHeader}`);
+      }
     });
   }
   if (diagnostics && diagnostics.diagnostics.length > 0) {
