@@ -163,6 +163,7 @@ pub async fn reverie_search_conversations(
     let mut matching_excerpts = Vec::new();
     let mut insights = Vec::new();
 
+    // Use JSON records for regex matching (excerpts)
     for record in conv.head_records.iter().chain(conv.tail_records.iter()) {
       for mat in regex.find_iter(record) {
         relevance_score += 1.0;
@@ -170,11 +171,12 @@ pub async fn reverie_search_conversations(
         let excerpt_end = (mat.end() + 50).min(record.len());
         matching_excerpts.push(format!("...{}...", &record[excerpt_start..excerpt_end]));
       }
+    }
 
-      if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(record)
-        && let Some(content) = extract_insight_from_json(&json_value)
-      {
-        insights.push(content);
+    // Use TOON records for insights (LLM-friendly format)
+    for record in conv.head_records_toon.iter().chain(conv.tail_records_toon.iter()) {
+      if !record.trim().is_empty() {
+        insights.push(record.clone());
       }
     }
 
@@ -266,7 +268,7 @@ pub async fn reverie_search_semantic(
       continue;
     }
 
-    let insights = derive_insights_for_semantic(&conversation.head_records, &conversation.tail_records);
+    let insights = derive_insights_for_semantic(&conversation.head_records_toon, &conversation.tail_records_toon);
     let message_chunks = build_compact_document(&conversation, &insights, Some(query_context.keyword_text()));
 
     if message_chunks.is_empty() {
@@ -383,7 +385,7 @@ pub async fn reverie_index_semantic(
     if !conversation_matches_project(&conversation.head_records, project_root.as_deref()) {
       continue;
     }
-    let insights = derive_insights_for_semantic(&conversation.head_records, &conversation.tail_records);
+    let insights = derive_insights_for_semantic(&conversation.head_records_toon, &conversation.tail_records_toon);
     let doc_chunks = build_compact_document(&conversation, &insights, None); // No query during indexing
     if doc_chunks.is_empty() {
       continue;
@@ -687,17 +689,16 @@ fn extract_insight_from_json(value: &serde_json::Value) -> Option<String> {
   Some(text)
 }
 
-fn derive_insights_for_semantic(head_records: &[String], tail_records: &[String]) -> Vec<String> {
+fn derive_insights_for_semantic(head_records_toon: &[String], tail_records_toon: &[String]) -> Vec<String> {
   let mut insights = Vec::new();
-  for record in head_records.iter().chain(tail_records.iter()) {
+  // TOON-encoded records are already in LLM-friendly format, just use them directly
+  for record in head_records_toon.iter().chain(tail_records_toon.iter()) {
     if insights.len() >= MAX_INSIGHTS_PER_CONVERSATION {
       break;
     }
-    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(record)
-      && !is_metadata_record(&json_value)
-      && let Some(content) = extract_insight_from_json(&json_value)
-    {
-      insights.push(content.chars().take(400).collect());
+    // Skip empty records
+    if !record.trim().is_empty() {
+      insights.push(record.chars().take(400).collect());
     }
   }
   insights
@@ -753,15 +754,13 @@ fn build_compact_document(
     .map(|(text, _score)| text)
     .collect();
 
-  // Fallback: if no valid messages found, try head/tail records with strict filtering
+  // Fallback: if no valid messages found, use TOON records (LLM-friendly format)
   if message_chunks.is_empty() {
     message_chunks = conversation
-      .head_records
+      .head_records_toon
       .iter()
-      .chain(conversation.tail_records.iter())
-      .filter(|line| !contains_instruction_marker(line))
-      .filter(|line| !line.contains("\"type\":\"session_meta\""))
-      .filter(|line| !line.trim().starts_with("{\"output\":"))
+      .chain(conversation.tail_records_toon.iter())
+      .filter(|line| !line.trim().is_empty())
       .take(MAX_MESSAGES)
       .cloned()
       .collect();
