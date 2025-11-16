@@ -93,6 +93,8 @@ export { CodexProvider, codexTool } from "./agents";
 export type { CodexProviderOptions, CodexToolOptions } from "./agents";
 export { formatStream } from "./agents";
 export type { FormattedStream, FormatStreamOptions, ToolCallEvent } from "./agents";
+export { ClaudeAgent } from "./agents";
+export type { ClaudeAgentOptions, DelegationResult } from "./agents";
 
 // Cloud tasks (remote agent tasks; applied locally)
 export { CloudTasks } from "./cloudTasks";

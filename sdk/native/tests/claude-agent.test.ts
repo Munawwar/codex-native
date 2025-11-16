@@ -1,0 +1,210 @@
+/**
+ * Test ClaudeAgent for delegating tasks to Claude Code
+ *
+ * This test demonstrates the agent delegation pattern where ClaudeAgent
+ * provides a high-level interface for task delegation and resumption.
+ */
+
+import { describe, expect, it, beforeAll, jest } from "@jest/globals";
+import { setupNativeBinding } from "./testHelpers";
+
+// Setup native binding for tests
+setupNativeBinding();
+
+let ClaudeAgent: any;
+let Thread: any;
+
+beforeAll(async () => {
+  const imports = await import("../src/index");
+  ClaudeAgent = imports.ClaudeAgent;
+  Thread = imports.Thread;
+});
+
+describe("ClaudeAgent", () => {
+  it("should create an agent with default options", async () => {
+    const agent = new ClaudeAgent();
+    expect(agent).toBeDefined();
+  });
+
+  it("should create an agent with custom options", async () => {
+    const agent = new ClaudeAgent({
+      model: "claude-sonnet-4-5-20250929",
+      workingDirectory: "/tmp/test",
+      maxRetries: 3,
+    });
+    expect(agent).toBeDefined();
+  });
+
+  it("should have delegate method", async () => {
+    const agent = new ClaudeAgent();
+    expect(agent.delegate).toBeDefined();
+    expect(typeof agent.delegate).toBe("function");
+  });
+
+  it("should have resume method", async () => {
+    const agent = new ClaudeAgent();
+    expect(agent.resume).toBeDefined();
+    expect(typeof agent.resume).toBe("function");
+  });
+
+  it("should have workflow method", async () => {
+    const agent = new ClaudeAgent();
+    expect(agent.workflow).toBeDefined();
+    expect(typeof agent.workflow).toBe("function");
+  });
+
+  it("should handle delegation with mock Thread", async () => {
+    // Mock Thread.prototype.run
+    // @ts-ignore
+    // @ts-ignore
+    const mockRun = jest.fn().mockResolvedValue({
+      items: [],
+      finalResponse: "Task completed successfully",
+      usage: {
+        input_tokens: 100,
+        cached_input_tokens: 0,
+        output_tokens: 50,
+      },
+    });
+
+    // Mock Thread.prototype.id
+    Object.defineProperty(Thread.prototype, 'id', {
+      get: jest.fn(() => "test-thread-123"),
+      configurable: true,
+    });
+
+    (Thread.prototype as any).run = mockRun;
+
+    const agent = new ClaudeAgent();
+    const result = await agent.delegate("Create an add function");
+
+    expect(result).toBeDefined();
+    expect(result.success).toBe(true);
+    expect(result.threadId).toBe("test-thread-123");
+    expect(result.output).toBe("Task completed successfully");
+    expect(mockRun).toHaveBeenCalledWith("Create an add function");
+  });
+
+  it("should handle resume with thread ID", async () => {
+    // @ts-ignore
+    const mockRun = jest.fn().mockResolvedValue({
+      items: [],
+      finalResponse: "Error handling added",
+      usage: {
+        input_tokens: 120,
+        cached_input_tokens: 0,
+        output_tokens: 60,
+      },
+    });
+
+    Object.defineProperty(Thread.prototype, 'id', {
+      get: jest.fn(() => "test-thread-123"),
+      configurable: true,
+    });
+
+    (Thread.prototype as any).run = mockRun;
+
+    const agent = new ClaudeAgent();
+    const result = await agent.resume("test-thread-123", "Add error handling");
+
+    expect(result).toBeDefined();
+    expect(result.success).toBe(true);
+    expect(result.threadId).toBe("test-thread-123");
+    expect(result.output).toBe("Error handling added");
+  });
+
+  it("should handle errors gracefully", async () => {
+    // @ts-ignore
+    const mockRun = jest.fn().mockRejectedValue(new Error("API error"));
+
+    (Thread.prototype as any).run = mockRun;
+
+    const agent = new ClaudeAgent({ maxRetries: 0 });
+    const result = await agent.delegate("This will fail");
+
+    expect(result).toBeDefined();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("API error");
+    expect(result.output).toBe("");
+  });
+
+  it("should support multi-step workflows", async () => {
+    let callCount = 0;
+    // @ts-ignore
+    const mockRun = jest.fn().mockImplementation(async () => {
+      callCount++;
+      return {
+        items: [],
+        finalResponse: `Step ${callCount} completed`,
+        usage: {
+          input_tokens: 100 * callCount,
+          cached_input_tokens: 0,
+          output_tokens: 50 * callCount,
+        },
+      };
+    });
+
+    Object.defineProperty(Thread.prototype, 'id', {
+      get: jest.fn(() => "test-thread-123"),
+      configurable: true,
+    });
+
+    (Thread.prototype as any).run = mockRun;
+
+    const agent = new ClaudeAgent();
+    const results = await agent.workflow([
+      "Create a function",
+      "Add error handling",
+      "Add tests",
+    ]);
+
+    expect(results).toHaveLength(3);
+    expect(results[0].success).toBe(true);
+    expect(results[0].output).toBe("Step 1 completed");
+    expect(results[1].success).toBe(true);
+    expect(results[1].output).toBe("Step 2 completed");
+    expect(results[2].success).toBe(true);
+    expect(results[2].output).toBe("Step 3 completed");
+    expect(mockRun).toHaveBeenCalledTimes(3);
+  });
+
+  it("should stop workflow on first failure", async () => {
+    let callCount = 0;
+    // @ts-ignore
+    const mockRun = jest.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 2) {
+        throw new Error("Step 2 failed");
+      }
+      return {
+        items: [],
+        finalResponse: `Step ${callCount} completed`,
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 0,
+          output_tokens: 50,
+        },
+      };
+    });
+
+    Object.defineProperty(Thread.prototype, 'id', {
+      get: jest.fn(() => "test-thread-123"),
+      configurable: true,
+    });
+
+    (Thread.prototype as any).run = mockRun;
+
+    const agent = new ClaudeAgent({ maxRetries: 0 });
+    const results = await agent.workflow([
+      "Step 1",
+      "Step 2 (will fail)",
+      "Step 3 (should not run)",
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].success).toBe(true);
+    expect(results[1].success).toBe(false);
+    expect(results[1].error).toBe("Step 2 failed");
+    expect(mockRun).toHaveBeenCalledTimes(2); // Should not call step 3
+  });
+});
