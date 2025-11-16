@@ -1,18 +1,23 @@
 /**
- * ClaudeAgent - High-level agent for delegating work to Claude Code CLI
+ * ClaudeAgent - High-level agent wrapper with approval callback support
  *
- * This class provides a simple interface for delegating tasks to Claude Code
- * by invoking the CLI in headless mode with JSON output. It handles:
+ * This class provides a simple interface for delegating tasks with built-in
+ * approval callback support. It wraps the Thread API to provide:
  * - Task delegation with automatic retries
  * - Conversation tracking and resumption
  * - Multi-turn workflows with feedback
- * - Approval callbacks via MCP server bridge
+ * - Intelligent approval handling via callbacks
  *
  * @example
  * ```typescript
  * const agent = new ClaudeAgent({
- *   model: 'claude-sonnet-4-5-20250929',
- *   workingDirectory: './workspace'
+ *   model: 'gpt-5-codex',
+ *   workingDirectory: './workspace',
+ *   onApprovalRequest: async (request) => {
+ *     console.log(`Approval needed for ${request.type}`);
+ *     // Use AI or custom logic to decide
+ *     return true; // approve
+ *   }
  * });
  *
  * // Delegate a task
@@ -24,24 +29,25 @@
  * ```
  */
 
-import { exec, spawn, ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { ApprovalMode, SandboxMode } from "../threadOptions";
+import { Codex } from "../codex";
+import type { RunResult } from "../thread";
+import type { ThreadOptions, ApprovalMode, SandboxMode } from "../threadOptions";
+import type { ThreadItem } from "../items";
+import type { Usage } from "../events";
 import type { ApprovalRequest } from "../nativeBinding";
-
-const execAsync = promisify(exec);
 
 export interface ClaudeAgentOptions {
   /**
-   * Model to use
+   * Model to use (e.g., 'gpt-5-codex', 'gpt-5.1-codex')
    */
   model?: string;
 
   /**
    * Approval mode
+   * - 'on-request': Ask for approval when needed (default)
+   * - 'never': Auto-approve everything (dangerous)
+   * - 'on-failure': Only ask if a command fails
+   * - 'unless-trusted': Ask unless command is trusted
    */
   approvalMode?: ApprovalMode;
 
@@ -74,23 +80,36 @@ export interface ClaudeAgentOptions {
    * Callback to handle approval requests from the agent.
    * Return true to approve, false to deny.
    *
-   * When provided, an MCP server is automatically started to bridge approval
-   * requests between the Claude CLI process and this callback.
+   * The callback receives an ApprovalRequest with:
+   * - type: "shell" | "file_write" | "network_access"
+   * - details: object with request-specific information
+   *
+   * @example
+   * ```typescript
+   * onApprovalRequest: async (request) => {
+   *   if (request.type === 'shell') {
+   *     console.log(`Command: ${request.details.command}`);
+   *     // Use AI to decide
+   *     return await aiApprover.review(request);
+   *   }
+   *   return true; // auto-approve other types
+   * }
+   * ```
    */
   onApprovalRequest?: (request: ApprovalRequest) => boolean | Promise<boolean>;
 }
 
 /**
- * Result from delegating a task to Claude Code CLI
+ * Result from delegating a task
  */
 export interface DelegationResult {
   /**
-   * Session ID for resuming the conversation
+   * Thread ID for resuming the conversation
    */
   threadId?: string;
 
   /**
-   * Final text response from Claude Code
+   * Final text response
    */
   output: string;
 
@@ -103,217 +122,60 @@ export interface DelegationResult {
    * Error message if any
    */
   error?: string;
-}
 
-interface ClaudeCLIResponse {
-  type: string;
-  subtype: string;
-  total_cost_usd?: number;
-  is_error: boolean;
-  duration_ms?: number;
-  result: string;
-  session_id?: string;
+  /**
+   * Full items from the thread (includes tool calls, file changes, etc.)
+   */
+  items?: ThreadItem[];
+
+  /**
+   * Token usage information
+   */
+  usage?: Usage | null;
+
+  /**
+   * The raw Thread RunResult for full compatibility
+   */
+  threadResult?: RunResult;
 }
 
 /**
- * ClaudeAgent provides a high-level interface for delegating work to Claude Code CLI
+ * ClaudeAgent provides a high-level interface for task delegation with approval support
  */
 export class ClaudeAgent {
+  private codex: Codex;
   private options: Required<Pick<ClaudeAgentOptions, "model" | "approvalMode" | "sandboxMode" | "maxRetries" | "timeout">>;
   private workingDirectory?: string;
   private appendSystemPrompt?: string;
   private approvalHandler?: (request: ApprovalRequest) => boolean | Promise<boolean>;
-  private approvalServer?: ChildProcess;
-  private mcpConfigPath?: string;
 
   constructor(options: ClaudeAgentOptions = {}) {
+    this.codex = new Codex();
     this.options = {
-      model: options.model || "claude-sonnet-4-5-20250929",
+      model: options.model || "gpt-5-codex",
       approvalMode: options.approvalMode || "on-request",
       sandboxMode: options.sandboxMode || "workspace-write",
       maxRetries: options.maxRetries || 1,
-      timeout: options.timeout || 300000, // 5 minutes for Claude CLI
+      timeout: options.timeout || 120000,
     };
-    this.workingDirectory = options.workingDirectory || process.cwd();
+    this.workingDirectory = options.workingDirectory;
     this.appendSystemPrompt = options.appendSystemPrompt;
     this.approvalHandler = options.onApprovalRequest;
   }
 
   /**
-   * Start MCP approval server for handling approval requests
-   * Returns the path to the MCP config file
-   */
-  private async startApprovalServer(): Promise<string> {
-    if (!this.approvalHandler) {
-      throw new Error("Approval handler not configured");
-    }
-
-    return new Promise((resolve, reject) => {
-      // Create MCP server script
-      const serverScriptPath = join(tmpdir(), `mcp-approval-server-${Date.now()}.mjs`);
-      const serverCode = `
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-
-const server = new Server(
-  {
-    name: 'codex-approval-server',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: 'approve',
-        description: 'Request approval for an action. Returns approval decision.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            type: {
-              type: 'string',
-              description: 'The type of action (shell, file_write, network_access)',
-            },
-            details: {
-              type: 'object',
-              description: 'Details about the action',
-            },
-          },
-          required: ['type'],
-        },
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name === 'approve') {
-    const args = request.params.arguments;
-
-    // Send to parent process for review
-    process.send({ type: 'approval_request', data: args });
-
-    // Wait for decision
-    return new Promise((resolve) => {
-      process.once('message', (msg) => {
-        if (msg.type === 'approval_decision') {
-          const approved = msg.data.approved;
-          const reason = msg.data.reason || 'No reason provided';
-
-          resolve({
-            content: [
-              {
-                type: 'text',
-                text: approved
-                  ? \`✅ APPROVED: \${reason}\`
-                  : \`❌ DENIED: \${reason}\`,
-              },
-            ],
-          });
-        }
-      });
-    });
-  }
-
-  throw new Error(\`Unknown tool: \${request.params.name}\`);
-});
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
-`;
-
-      // Write server script to temp file
-      writeFileSync(serverScriptPath, serverCode);
-
-      // Create MCP config
-      const mcpConfig = {
-        "mcpServers": {
-          "codex-approval-server": {
-            "command": "npx",
-            "args": ["tsx", serverScriptPath],
-          },
-        },
-      };
-
-      // Write MCP config to temp file
-      this.mcpConfigPath = join(tmpdir(), `mcp-config-${Date.now()}.json`);
-      writeFileSync(this.mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-
-      // Start server as child process with IPC for approval routing
-      this.approvalServer = spawn("npx", ["tsx", serverScriptPath], {
-        stdio: ["pipe", "pipe", "pipe", "ipc"],
-        cwd: this.workingDirectory,
-      });
-
-      // Handle approval requests
-      this.approvalServer.on("message", async (msg: any) => {
-        if (msg.type === "approval_request" && this.approvalHandler) {
-          const request: ApprovalRequest = {
-            type: msg.data.type || "shell",
-            details: msg.data.details,
-          };
-
-          try {
-            const approved = await this.approvalHandler(request);
-            this.approvalServer!.send({
-              type: "approval_decision",
-              data: { approved, reason: approved ? "Approved by handler" : "Denied by handler" },
-            });
-          } catch (error: any) {
-            // Fail closed
-            this.approvalServer!.send({
-              type: "approval_decision",
-              data: { approved: false, reason: `Error: ${error.message}` },
-            });
-          }
-        }
-      });
-
-      this.approvalServer.on("error", (err) => {
-        reject(new Error(`Approval server error: ${err.message}`));
-      });
-
-      // Give server time to start, then resolve with MCP config path
-      setTimeout(() => {
-        if (this.mcpConfigPath) {
-          resolve(this.mcpConfigPath);
-        } else {
-          reject(new Error("MCP config path not set"));
-        }
-      }, 1000);
-    });
-  }
-
-  /**
-   * Stop approval server and clean up temp files
-   */
-  private stopApprovalServer(): void {
-    if (this.approvalServer) {
-      this.approvalServer.kill();
-      this.approvalServer = undefined;
-    }
-    if (this.mcpConfigPath) {
-      try {
-        unlinkSync(this.mcpConfigPath);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-      this.mcpConfigPath = undefined;
-    }
-  }
-
-  /**
-   * Delegate a task to Claude Code
+   * Delegate a task to the agent
+   *
+   * @param task - The task description or prompt
+   * @returns Promise resolving to the delegation result
+   *
+   * @example
+   * ```typescript
+   * const result = await agent.delegate('Create a test file');
+   * if (result.success) {
+   *   console.log(result.output);
+   * }
+   * ```
    */
   async delegate(task: string): Promise<DelegationResult> {
     return this.executeTask(task);
@@ -321,6 +183,15 @@ await server.connect(transport);
 
   /**
    * Resume a previous conversation with feedback
+   *
+   * @param threadId - The thread ID from a previous delegation
+   * @param feedback - Additional feedback or instructions
+   * @returns Promise resolving to the delegation result
+   *
+   * @example
+   * ```typescript
+   * const update = await agent.resume(result.threadId, 'Add error handling');
+   * ```
    */
   async resume(threadId: string, feedback: string): Promise<DelegationResult> {
     return this.executeTask(feedback, threadId);
@@ -329,115 +200,72 @@ await server.connect(transport);
   /**
    * Execute a task with retry logic
    */
-  private async executeTask(prompt: string, sessionId?: string): Promise<DelegationResult> {
+  private async executeTask(prompt: string, threadId?: string): Promise<DelegationResult> {
     let lastError: Error | undefined;
-    let serverStarted = false;
-    let mcpConfigPath: string | undefined;
 
-    try {
-      // Start approval server if handler is configured AND we're not bypassing permissions
-      if (this.approvalHandler && !this.approvalServer && this.options.approvalMode !== "never") {
-        mcpConfigPath = await this.startApprovalServer();
-        serverStarted = true;
-      }
+    for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
+      try {
+        const threadOptions: ThreadOptions = {
+          model: this.options.model,
+          approvalMode: this.options.approvalMode,
+          sandboxMode: this.options.sandboxMode,
+        };
 
-      for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
-        try {
-          // Build Claude CLI command
-          // Escape prompt for shell: replace quotes and newlines
-          const escapedPrompt = prompt
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"')
-            .replace(/\n/g, '\\n')
-            .replace(/\r/g, '\\r')
-            .replace(/\t/g, '\\t');
+        if (this.workingDirectory) {
+          threadOptions.workingDirectory = this.workingDirectory;
+        }
 
-          let command: string;
-          if (sessionId) {
-            command = `claude --resume ${sessionId} "${escapedPrompt}" --output-format json`;
-          } else {
-            command = `claude -p "${escapedPrompt}" --output-format json`;
-          }
+        // Create or resume thread
+        const thread = threadId
+          ? this.codex.resumeThread(threadId, threadOptions)
+          : this.codex.startThread(threadOptions);
 
-          // Add model if specified
-          if (this.options.model) {
-            command += ` --model ${this.options.model}`;
-          }
+        // Register approval handler if provided
+        if (this.approvalHandler) {
+          thread.onApprovalRequest(this.approvalHandler);
+        }
 
-          // Add approval mode
-          if (this.options.approvalMode === "never") {
-            command += ` --dangerously-skip-permissions`;
-          }
+        const result: RunResult = await thread.run(prompt);
 
-          // Add MCP config for approval server (if callback provided)
-          if (mcpConfigPath && this.approvalHandler) {
-            command += ` --mcp-config "${mcpConfigPath}" --strict-mcp-config`;
-            command += ` --permission-prompt-tool mcp__codex-approval-server__approve`;
-          }
-
-          // Execute Claude CLI
-          console.log(`[ClaudeAgent] Executing: ${command}`);
-
-          let stdout: string;
-          let stderr: string;
-
-          try {
-            const result = await execAsync(command, {
-              cwd: this.workingDirectory,
-              maxBuffer: 10 * 1024 * 1024,
-              timeout: this.options.timeout,
-              env: { ...process.env, FORCE_COLOR: "0" }, // Disable colors for JSON parsing
-            });
-            stdout = result.stdout;
-            stderr = result.stderr;
-          } catch (execError: any) {
-            console.error(`[ClaudeAgent] Execution error:`, execError.message);
-            throw new Error(`Claude CLI execution failed: ${execError.message}`);
-          }
-
-          if (stderr) {
-            console.error(`[ClaudeAgent] stderr: ${stderr}`);
-          }
-
-          console.log(`[ClaudeAgent] stdout length: ${stdout.length}`);
-          console.log(`[ClaudeAgent] stdout preview: ${stdout.substring(0, 200)}`);
-
-          const response = JSON.parse(stdout) as ClaudeCLIResponse;
-
-          if (response.is_error) {
-            throw new Error(`Claude CLI error: ${response.result}`);
-          }
-
-          // Return result with thread ID from session
-          return {
-            threadId: response.session_id,
-            output: response.result || "",
-            success: true,
-          };
-        } catch (error: any) {
-          lastError = error;
-          if (attempt < this.options.maxRetries) {
-            // Wait before retry with exponential backoff
-            await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-          }
+        // Return Thread-compatible result with full information
+        return {
+          threadId: thread.id || undefined,
+          output: result.finalResponse || "",
+          success: true,
+          items: result.items,
+          usage: result.usage,
+          threadResult: result,
+        };
+      } catch (error: any) {
+        lastError = error;
+        if (attempt < this.options.maxRetries) {
+          // Wait before retry with exponential backoff
+          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
         }
       }
-
-      return {
-        output: "",
-        success: false,
-        error: lastError?.message || "Unknown error",
-      };
-    } finally {
-      // Clean up approval server if we started it
-      if (serverStarted) {
-        this.stopApprovalServer();
-      }
     }
+
+    return {
+      output: "",
+      success: false,
+      error: lastError?.message || "Unknown error",
+    };
   }
 
   /**
    * Execute a multi-step workflow with automatic feedback
+   *
+   * @param steps - Array of task descriptions to execute in sequence
+   * @returns Promise resolving to array of results for each step
+   *
+   * @example
+   * ```typescript
+   * const results = await agent.workflow([
+   *   'Create a test file',
+   *   'Add some content',
+   *   'Run tests'
+   * ]);
+   * ```
    */
   async workflow(steps: string[]): Promise<DelegationResult[]> {
     const results: DelegationResult[] = [];
@@ -460,4 +288,71 @@ await server.connect(transport);
     return results;
   }
 
+  /**
+   * Extract tool use items from a delegation result
+   * Useful for seeing what commands/tools were executed
+   *
+   * @param result - The delegation result
+   * @returns Array of tool uses with name and input
+   */
+  static getToolUses(result: DelegationResult): Array<{ name: string; input: any }> {
+    if (!result.items) return [];
+
+    return result.items
+      .filter((item) => item.type === "command_execution" || item.type === "mcp_tool_call")
+      .map((item: any) => ({
+        name: item.command || item.tool_name || "unknown",
+        input: item.input || item.arguments || {},
+      }));
+  }
+
+  /**
+   * Extract file changes from a delegation result
+   * Useful for seeing what files were modified
+   *
+   * @param result - The delegation result
+   * @returns Array of file changes with path and status
+   */
+  static getFileChanges(result: DelegationResult): Array<{ path: string; status: string }> {
+    if (!result.items) return [];
+
+    return result.items
+      .filter((item) => item.type === "file_change")
+      .map((item: any) => ({
+        path: item.path || "unknown",
+        status: item.status || "modified",
+      }));
+  }
+
+  /**
+   * Get a summary of what actions were taken
+   *
+   * @param result - The delegation result
+   * @returns Summary string with output, tools used, files modified, and token usage
+   */
+  static getSummary(result: DelegationResult): string {
+    const toolUses = ClaudeAgent.getToolUses(result);
+    const fileChanges = ClaudeAgent.getFileChanges(result);
+
+    const parts: string[] = [result.output];
+
+    if (toolUses.length > 0) {
+      parts.push(
+        `\nTools used: ${toolUses.map((t) => t.name).join(", ")}`
+      );
+    }
+
+    if (fileChanges.length > 0) {
+      parts.push(
+        `\nFiles modified: ${fileChanges.map((f) => f.path).join(", ")}`
+      );
+    }
+
+    if (result.usage) {
+      const tokens = result.usage.input_tokens + result.usage.output_tokens;
+      parts.push(`\nTokens: ${tokens}`);
+    }
+
+    return parts.join("");
+  }
 }

@@ -24,7 +24,7 @@
  */
 
 import { Agent, Runner } from "@openai/agents";
-import { Codex, CodexProvider, type ApprovalRequest } from "../src/index.js";
+import { ClaudeAgent, CodexProvider, type ApprovalRequest } from "../src/index.js";
 
 // ANSI color codes
 const colors = {
@@ -262,18 +262,15 @@ Format your plan as numbered steps with clear actions.`,
       return approved;
     };
 
-    // Create Claude thread with approval callback
+    // Create Claude agent with approval callback
     logger.claude("Starting execution with approval flow...");
-    const codex = new Codex();
-    const thread = codex.startThread({
+    const claudeAgent = new ClaudeAgent({
       model: "gpt-5-codex",
       workingDirectory: process.cwd(),
       approvalMode: "on-request",
       sandboxMode: "workspace-write",
+      onApprovalRequest: approvalHandler,
     });
-
-    // Register approval callback
-    thread.onApprovalRequest(approvalHandler);
 
     const executionPrompt = `Execute this plan:
 
@@ -281,16 +278,22 @@ ${plan}
 
 Work through each step carefully.`;
 
-    const result = await thread.run(executionPrompt);
+    const result = await claudeAgent.delegate(executionPrompt);
 
-    logger.pushIndent();
-    logger.claude("Result:");
-    logger.pushIndent();
-    result.finalResponse.split("\n").slice(0, 10).forEach((line) => {
-      if (line.trim()) logger.claude(line);
-    });
-    logger.popIndent();
-    logger.popIndent();
+    if (result.success) {
+      logger.pushIndent();
+      logger.claude("Result:");
+      logger.pushIndent();
+      result.output.split("\n").slice(0, 10).forEach((line) => {
+        if (line.trim()) logger.claude(line);
+      });
+      logger.popIndent();
+      logger.popIndent();
+    } else {
+      logger.pushIndent();
+      logger.claude(`Error: ${result.error}`);
+      logger.popIndent();
+    }
 
     logger.header("WORKFLOW COMPLETE");
     logger.system("Dual-agent collaboration with approvals finished");
