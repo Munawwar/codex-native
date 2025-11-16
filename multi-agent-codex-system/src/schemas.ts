@@ -58,29 +58,25 @@ const CiFixResponseSchema = z.object({ items: CiFixListSchema });
 type JsonSchemaProperty = { schema: Record<string, any>; optional?: boolean };
 type JsonSchemaProperties = Record<string, JsonSchemaProperty | Record<string, any>>;
 
-function stringField(min?: number, max?: number) {
+function stringField(min?: number) {
   const schema: Record<string, any> = { type: "string" as const };
   if (typeof min === "number") {
     schema.minLength = min;
   }
-  if (typeof max === "number") {
-    schema.maxLength = max;
-  }
   return schema;
 }
 
-function nullableStringWithDefault(max: number) {
+function nullableStringWithDefault() {
   return z
     .string()
-    .max(max)
     .optional()
     .or(z.literal(null))
     .transform((value) => value ?? "");
 }
 
-function optionalStringField(bounds?: number | { min?: number; max?: number }) {
-  const { min, max } = typeof bounds === "number" ? { min: undefined, max: bounds } : bounds ?? {};
-  const base = stringField(min, max);
+function optionalStringField(bounds?: number | { min?: number }) {
+  const { min } = typeof bounds === "number" ? { min: bounds } : bounds ?? {};
+  const base = stringField(min);
   return { anyOf: [base, { type: "null" as const }] };
 }
 

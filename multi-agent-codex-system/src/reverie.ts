@@ -189,32 +189,76 @@ class ReverieSystem {
       });
       const runner = new Runner({ modelProvider: provider });
 
+      const gradingSchema = {
+        type: "object" as const,
+        properties: {
+          is_relevant: {
+            type: "boolean" as const,
+            description: "True if excerpt contains specific technical details relevant to the work context",
+          },
+          reasoning: {
+            type: "string" as const,
+            description: "Brief explanation (1-2 sentences) of why the excerpt was approved or rejected",
+          },
+        },
+        required: ["is_relevant", "reasoning"],
+        additionalProperties: false,
+      };
+
       const graderAgent = new Agent({
         name: "ReverieGrader",
         instructions: `You are a STRICT filter for conversation excerpts. Only approve excerpts with SPECIFIC technical details.
-REJECT: greetings, thinking markers (**, ##), JSON objects, generic phrases, metadata.
-APPROVE: Only excerpts with specific code details, file paths, error messages, implementation discussions.
-Respond with ONLY "yes" or "no".`,
+
+REJECT excerpts containing:
+- Greetings and pleasantries
+- Thinking markers (**, ##, <thinking>)
+- JSON objects or structured data dumps
+- Generic phrases ("Context from past work", "working on this", etc.)
+- Metadata and system information
+- Boilerplate text
+
+APPROVE ONLY excerpts with:
+- Specific code/file references (file paths, function names, variable names)
+- Technical decisions and rationale
+- Error messages and debugging details
+- Implementation specifics and algorithms
+- Architecture patterns and design choices
+
+Return a JSON object with:
+- is_relevant: boolean indicating if this excerpt should be kept
+- reasoning: brief 1-2 sentence explanation of your decision`,
+        outputType: {
+          type: "json_schema" as const,
+          schema: gradingSchema,
+          name: "ReverieGrading",
+          strict: true,
+        },
       });
 
       const prompt = `Context: ${searchContext}
 
-Excerpt: "${insight.excerpt.slice(0, 400)}"
+Excerpt to grade:
+"""
+${insight.excerpt.slice(0, 400)}
+"""
 
-Does this excerpt contain SPECIFIC technical details relevant to the work?
-Must have: actual code/file references, technical decisions, error details, implementation specifics.
-Reject if: greeting, thinking marker, JSON object, generic phrase ("Context from past work"), metadata.
-
-Answer: `;
+Evaluate whether this excerpt contains specific technical details relevant to the work context.`;
 
       const result = await runner.run(graderAgent, prompt);
 
-      const response = result.finalOutput?.trim().toLowerCase() || "";
-      return response === "yes" || response.startsWith("yes");
+      // Parse structured output
+      if (result.finalOutput && typeof result.finalOutput === "object") {
+        const grading = result.finalOutput as { is_relevant: boolean; reasoning: string };
+        return grading.is_relevant;
+      }
+
+      // Fallback: if structured output fails, default to rejecting (conservative)
+      console.warn("Reverie grading failed to return structured output, defaulting to reject");
+      return false;
     } catch (error) {
       console.warn("Failed to grade reverie relevance:", error);
-      // On error, default to accepting the insight (conservative approach)
-      return true;
+      // On error, default to rejecting (conservative approach)
+      return false;
     }
   }
 

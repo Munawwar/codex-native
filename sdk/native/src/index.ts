@@ -111,6 +111,62 @@ export type {
 export { Logger, ScopedLogger, logger, createThreadLogger, runThreadTurnWithLogs, LogLevel } from "./logging";
 export type { LogScope, LoggerConfig, LogOutput, ThreadLoggingSink, LogEntry } from "./logging";
 
+// Reverie semantic search and quality filtering
+export {
+  DEFAULT_REVERIE_LIMIT,
+  DEFAULT_REVERIE_MAX_CANDIDATES,
+  REVERIE_EMBED_MODEL,
+  REVERIE_RERANKER_MODEL,
+  REVERIE_CANDIDATE_MULTIPLIER,
+  REVERIE_LLM_GRADE_THRESHOLD,
+  DEFAULT_RERANKER_TOP_K,
+  DEFAULT_RERANKER_BATCH_SIZE,
+  isValidReverieExcerpt,
+  deduplicateReverieInsights,
+  applyQualityPipeline,
+  logReverieSearch,
+  logReverieFiltering,
+  logReverieInsights,
+  logReverieHintQuality,
+  logLLMGrading,
+  logApprovedReveries,
+  logMultiLevelSearch,
+  logLevelResults,
+  logMultiLevelSummary,
+  truncateText,
+  gradeReverieRelevance,
+  gradeReveriesInParallel,
+  extractKeySymbols,
+  searchReveries,
+  applyReveriePipeline,
+  applyFileReveriePipeline,
+  searchMultiLevel,
+  searchProjectLevel,
+  searchBranchLevel,
+  searchFileLevel,
+  buildProjectContext,
+  buildBranchContext,
+  buildFileContext,
+  contextToQuery,
+  formatFileList,
+} from "./reverie";
+export type {
+  ReverieInsight,
+  ReverieSearchOptions,
+  GradingOptions,
+  ReverieFilterStats,
+  ReverieResult,
+  QualityFilterStats,
+  AgentRunner,
+  ReveriePipelineOptions,
+  ReveriePipelineResult,
+  ReverieSearchLevel,
+  ProjectLevelContext,
+  BranchLevelContext,
+  FileLevelContext,
+  ReverieContext,
+} from "./reverie";
+
 // SSE test helpers (exposed for TypeScript tests)
 // Re-export the native binding functions directly
 import { getNativeBinding } from "./nativeBinding";

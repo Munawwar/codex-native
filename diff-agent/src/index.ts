@@ -12,11 +12,21 @@ import {
   logger,
   LspManager,
   reverieSearchSemantic,
+  // Reverie utilities
+  isValidReverieExcerpt,
+  deduplicateReverieInsights,
+  extractKeySymbols,
+  gradeReverieRelevance,
+  searchReveries,
+  DEFAULT_REVERIE_LIMIT,
+  DEFAULT_REVERIE_MAX_CANDIDATES,
   type FileDiagnostics,
   type LspManagerOptions,
   type RepoDiffSummary,
   type RepoDiffFileChange,
   type ReverieSemanticSearchOptions,
+  type ReverieInsight,
+  type GradingOptions,
 } from "@codex-native/sdk";
 import type { FastEmbedRerankerModelCode } from "@codex-native/sdk";
 import { createDefaultSolverConfig, MergeConflictSolver } from "./merge-conflict-solver.js";
@@ -50,14 +60,7 @@ type DiffComplexity = {
   };
 };
 
-type ReverieInsight = {
-  conversationId: string;
-  timestamp: string;
-  relevance: number;
-  excerpt: string;
-  insights: string[];
-};
-
+// Diff-agent specific type for organizing reverie insights
 type ReverieContext = {
   branch: ReverieInsight[];
   perFile: Map<string, ReverieInsight[]>;
@@ -78,8 +81,7 @@ function detectDefaultRepo(): string {
 const DEFAULT_DIFF_AGENT_REPO = detectDefaultRepo();
 const DEFAULT_MODEL = "gpt-5.1-codex-mini";
 const DEFAULT_MAX_FILES = 12;
-const DEFAULT_REVERIE_LIMIT = 6;
-const DEFAULT_REVERIE_MAX_CANDIDATES = 80;
+// Note: DEFAULT_REVERIE_LIMIT and DEFAULT_REVERIE_MAX_CANDIDATES now imported from SDK
 const REVERIE_EMBED_MODEL = "BAAI/bge-large-en-v1.5"; // Testing large model on CPU (CoreML disabled)
 const REVERIE_RERANKER_MODEL: FastEmbedRerankerModelCode = "rozgo/bge-reranker-v2-m3";
 const LOG_LABEL = "[DiffAgent]";
@@ -108,74 +110,7 @@ function logResult(message: string): void {
   console.log(`${message}`);
 }
 
-/**
- * Check if a reverie excerpt contains meaningful conversation context
- * vs system prompts, boilerplate, or low-value content
- */
-function isValidReverieExcerpt(excerpt: string): boolean {
-  if (!excerpt || excerpt.trim().length < 20) {
-    return false;
-  }
-
-  // Skip excerpts that are primarily system prompts or boilerplate
-  const skipPatterns = [
-    "# AGENTS.md instructions",
-    "AGENTS.md instructions for",
-    "<INSTRUCTIONS>",
-    "<environment_context>",
-    "<system>",
-    "Sandbox env vars",
-    "Tool output:",
-    "approval_policy",
-    "sandbox_mode",
-    "network_access",
-    "<cwd>",
-    "</cwd>",
-    "CODEX_SAN",
-    "# Codex Workspace Agent Guide",
-    "## Core Expectations",
-    "Crates in `codex-rs` use the `codex-` prefix",
-    "Install repo helpers",
-    "CI Fix Orchestrator",
-    "CI Remediation Orchestrator",
-    "Branch Intent Analyst",
-    "File Diff Inspector",
-    "You are coordinating an automated",
-    "Respond strictly with JSON",
-    "Judge whether each change",
-  ];
-
-  const normalized = excerpt.toLowerCase();
-
-  // Check if excerpt is mostly boilerplate
-  const boilerplateCount = skipPatterns.filter(pattern =>
-    normalized.includes(pattern.toLowerCase())
-  ).length;
-
-  // If ANY boilerplate patterns found, skip this excerpt (stricter filtering)
-  if (boilerplateCount >= 1) {
-    return false;
-  }
-
-  // Skip excerpts with weird percentage indicators that appear in tool outputs
-  // (like "(130%)" or "(89%)" at the end)
-  if (/\(\d{2,3}%\)\s*$/.test(excerpt.trim())) {
-    return false;
-  }
-
-  // Skip excerpts that look like JSON output
-  if (excerpt.trim().startsWith("{") && excerpt.includes('"file"')) {
-    return false;
-  }
-
-  // Skip excerpts that are mostly XML/HTML tags
-  const tagCount = (excerpt.match(/<[^>]+>/g) || []).length;
-  if (tagCount > 3) {
-    return false;
-  }
-
-  return true;
-}
+// isValidReverieExcerpt is now imported from @codex-native/sdk
 
 const BRANCH_PLAN_OUTPUT_TYPE: JsonSchemaDefinition = {
   type: "json_schema",
@@ -386,37 +321,7 @@ function createRunner(
   return new Runner({ modelProvider: provider });
 }
 
-/**
- * Use LLM to evaluate if a reverie is actually relevant and useful
- */
-async function gradeReverieRelevance(
-  runner: Runner,
-  searchContext: string,
-  insight: ReverieInsight
-): Promise<boolean> {
-  const graderAgent = new Agent({
-    name: "ReverieGrader",
-    instructions: `You are a STRICT filter for conversation excerpts. Only approve excerpts with SPECIFIC technical details.
-REJECT: greetings, thinking markers (**, ##), JSON objects, generic phrases, metadata.
-APPROVE: Only excerpts with specific code details, file paths, error messages, implementation discussions.
-Respond with ONLY "yes" or "no".`
-  });
-
-  const prompt = `Context: ${searchContext}
-
-Excerpt: "${insight.excerpt.slice(0, 400)}"
-
-Does this excerpt contain SPECIFIC technical details relevant to the work?
-Must have: actual code/file references, technical decisions, error details, implementation specifics.
-Reject if: greeting, thinking marker, JSON object, generic phrase ("Context from past work"), metadata.
-
-Answer: `;
-
-  const result = await runner.run(graderAgent, prompt);
-
-  const response = result.finalOutput?.trim().toLowerCase() || "";
-  return response === "yes" || response.startsWith("yes");
-}
+// gradeReverieRelevance is now imported from @codex-native/sdk
 
 async function collectReverieContext(context: RepoDiffSummary, runner: Runner): Promise<ReverieContext> {
   // Initialize model once before all searches to avoid memory spikes
@@ -430,16 +335,22 @@ async function collectReverieContext(context: RepoDiffSummary, runner: Runner): 
   ].join("\n");
 
   log.info(`Searching reverie for branch context...`);
-  const branchInsights = await searchReveries(branchContext, context.repoPath);
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const branchInsights = await searchReveries(codexHome, branchContext, context.repoPath, {
+    limit: DEFAULT_REVERIE_LIMIT,
+    maxCandidates: DEFAULT_REVERIE_MAX_CANDIDATES,
+    useReranker: true,
+    rerankerModel: REVERIE_RERANKER_MODEL,
+    rerankerTopK: 20,
+    rerankerBatchSize: 8,
+  });
 
-  // Basic quality filter first
-  const basicFiltered = branchInsights.filter(match => isValidReverieExcerpt(match.excerpt));
-
+  // SDK searchReveries already applies quality filtering and deduplication
   // Only LLM-grade high-scoring candidates (relevance >= 0.7) to save API calls
-  const highScoring = basicFiltered.filter(match => match.relevance >= 0.7);
-  const lowScoring = basicFiltered.filter(match => match.relevance < 0.7);
+  const highScoring = branchInsights.filter(match => match.relevance >= 0.7);
+  const lowScoring = branchInsights.filter(match => match.relevance < 0.7);
 
-  log.info(`Found ${branchInsights.length} matches, ${basicFiltered.length} pass basic quality, ${highScoring.length} high-scoring`);
+  log.info(`Found ${branchInsights.length} matches (SDK pre-filtered), ${highScoring.length} high-scoring`);
   log.info(`Using LLM to grade ${highScoring.length} high-scoring reveries...`);
 
   // LLM-based relevance grading (only for high-scoring candidates)
@@ -471,14 +382,20 @@ async function collectReverieContext(context: RepoDiffSummary, runner: Runner): 
   for (const change of context.changedFiles) {
     // Focus search on file path and key code symbols, not full diff
     const snippet = `File: ${change.path}\nImplementing changes related to: ${extractKeySymbols(change.diff)}`;
-    const matches = await searchReveries(snippet, context.repoPath, DEFAULT_REVERIE_LIMIT, DEFAULT_REVERIE_MAX_CANDIDATES / 2);
+    const matches = await searchReveries(codexHome, snippet, context.repoPath, {
+      limit: DEFAULT_REVERIE_LIMIT,
+      maxCandidates: DEFAULT_REVERIE_MAX_CANDIDATES / 2,
+      useReranker: true,
+      rerankerModel: REVERIE_RERANKER_MODEL,
+      rerankerTopK: 20,
+      rerankerBatchSize: 8,
+    });
 
     if (matches.length > 0) {
-      // Apply same filtering as branch-level reveries
-      const basicFiltered = matches.filter(match => isValidReverieExcerpt(match.excerpt));
-      const highScoring = basicFiltered.filter(match => match.relevance >= 0.7);
+      // SDK searchReveries already applies quality filtering and deduplication
+      const highScoring = matches.filter(match => match.relevance >= 0.7);
 
-      log.info(`  ${change.path}: ${matches.length} matches, ${basicFiltered.length} pass basic quality, ${highScoring.length} high-scoring`);
+      log.info(`  ${change.path}: ${matches.length} matches (SDK pre-filtered), ${highScoring.length} high-scoring`);
 
       if (highScoring.length > 0) {
         log.info(`    Using LLM to grade ${highScoring.length} high-scoring reveries...`);
@@ -514,99 +431,12 @@ async function collectReverieContext(context: RepoDiffSummary, runner: Runner): 
   return { branch: validBranchInsights, perFile };
 }
 
-/**
- * Extract key symbols and terms from a diff to make search queries more targeted
- */
-function extractKeySymbols(diff: string): string {
-  // Extract function/class names, avoiding boilerplate patterns
-  const symbols = new Set<string>();
+// extractKeySymbols is now imported from @codex-native/sdk
 
-  // Match function/class definitions
-  const functionMatch = diff.match(/(?:function|class|const|let|var|export|interface|type)\s+(\w+)/g);
-  if (functionMatch) {
-    functionMatch.forEach(match => {
-      const name = match.split(/\s+/).pop();
-      if (name && name.length > 2 && !name.match(/^(true|false|null|undefined|const|let|var)$/)) {
-        symbols.add(name);
-      }
-    });
-  }
+// searchReveries is now imported from @codex-native/sdk
+// Note: SDK signature is searchReveries(codexHome, query, projectRoot, options?)
 
-  // If no symbols found, return a generic placeholder
-  if (symbols.size === 0) {
-    return "code changes";
-  }
-
-  return Array.from(symbols).slice(0, 5).join(", ");
-}
-
-async function searchReveries(
-  text: string,
-  repo: string,
-  limit = DEFAULT_REVERIE_LIMIT,
-  maxCandidates = DEFAULT_REVERIE_MAX_CANDIDATES,
-): Promise<ReverieInsight[]> {
-  const normalized = text.trim();
-  if (!normalized) {
-    return [];
-  }
-  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  if (!fs.existsSync(codexHome)) {
-    return [];
-  }
-  // Model already initialized in collectReverieContext
-  const options: ReverieSemanticSearchOptions = {
-    projectRoot: repo,
-    limit: maxCandidates * 3, // Get 3x candidates since we'll filter heavily
-    maxCandidates: maxCandidates * 3,
-    rerankerModel: REVERIE_RERANKER_MODEL,
-    rerankerTopK: 20,
-    rerankerBatchSize: 8,
-  };
-  try {
-    const matches = await reverieSearchSemantic(codexHome, normalized, options);
-    const insights = matches.map((match) => ({
-      conversationId: match.conversation?.id || "unknown",
-      timestamp: match.conversation?.createdAt || new Date().toISOString(),
-      relevance: typeof match.relevanceScore === "number" ? match.relevanceScore : 0,
-      excerpt: match.matchingExcerpts?.[0] || "",
-      insights: Array.isArray(match.insights) ? match.insights : [],
-    }));
-
-    // Filter out system prompts and boilerplate aggressively
-    const validInsights = insights.filter(insight => isValidReverieExcerpt(insight.excerpt));
-
-    // Deduplicate similar excerpts
-    const deduplicated = deduplicateInsights(validInsights);
-
-    log.info(`  Filtered ${insights.length} → ${validInsights.length} → ${deduplicated.length} (after dedup)`);
-
-    return deduplicated.slice(0, limit);
-  } catch (error) {
-    log.warn(`Reverie search failed: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
-  }
-}
-
-/**
- * Remove duplicate or very similar reverie insights
- */
-function deduplicateInsights(insights: ReverieInsight[]): ReverieInsight[] {
-  const seen = new Set<string>();
-  const result: ReverieInsight[] = [];
-
-  for (const insight of insights) {
-    // Create a fingerprint based on first 100 chars
-    const fingerprint = insight.excerpt.slice(0, 100).toLowerCase().replace(/\s+/g, " ");
-
-    if (!seen.has(fingerprint)) {
-      seen.add(fingerprint);
-      result.push(insight);
-    }
-  }
-
-  return result;
-}
+// deduplicateReverieInsights is now imported from @codex-native/sdk
 
 async function ensureReverieReady(): Promise<void> {
   if (reverieReady) {
