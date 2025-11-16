@@ -289,20 +289,30 @@ async function main(): Promise<void> {
 
   const resolvedRepo = assertRepo(repoPath);
   log.info(`Collecting diff summary for ${resolvedRepo}...`);
+
+  // First try to get uncommitted/unstaged changes
   const context = await collectRepoDiffSummary({
     cwd: resolvedRepo,
     baseBranchOverride: baseOverride,
     maxFiles,
   });
+
+  // If no uncommitted changes, we already have the branch diff in context
+  // (collectRepoDiffSummary compares HEAD with merge-base, not just uncommitted changes)
   if (context.changedFiles.length === 0) {
-    log.info(`No changed files detected between ${context.mergeBase} and HEAD`);
+    log.info(`No changes found in branch ${context.branch} vs ${context.baseBranch} (merge-base: ${context.mergeBase})`);
+    log.info(`This means your branch is up-to-date with the base or you're on the base branch`);
     return;
   }
 
-  log.info(`Found ${context.changedFiles.length} changed files`);
+  log.info(`Found ${context.changedFiles.length} uncommitted changes`);
   const runner = createRunner(resolvedRepo, { model, baseUrl, apiKey });
   log.info(`Using model: ${model}`);
 
+  await performReview(runner, context);
+}
+
+async function performReview(runner: Runner, context: RepoDiffSummary): Promise<void> {
   log.info(`Collecting reverie context from past conversations...`);
   const reverieContext = await collectReverieContext(context);
 
@@ -314,7 +324,6 @@ async function main(): Promise<void> {
   log.info(`Collecting LSP diagnostics for changed files...`);
   const diagnosticsByFile = await collectDiagnosticsForChanges(context);
   log.info(`LSP diagnostics collected for ${diagnosticsByFile.size} files`);
-
 
   log.info(`Assessing ${context.changedFiles.length} file changes...`);
   for (const change of context.changedFiles) {
@@ -507,7 +516,7 @@ async function assessFileChange(
   const reviewer = new Agent<unknown, JsonSchemaDefinition>({
     name: "FileChangeInspector",
     outputType: FILE_ASSESSMENT_OUTPUT_TYPE,
-    instructions: `# File Diff Inspector\n\nYour role is to assess whether each file change aligns with the stated branch objectives and provides value.\n\nGuidelines:\n- Capture the developer's intent for this specific file change\n- Evaluate if the change is necessary (advances branch goals), questionable (unclear value), or unnecessary (doesn't contribute to objectives)\n- Assess if the change is minimally invasive - does it touch only what's needed, or does it include unrelated modifications?\n- Flag specific unnecessary chunks only when you spot clear scope creep or churn that doesn't serve the file's stated intent\n- Provide constructive recommendations for improvements, refactoring, or follow-up work\n- Consider that intentional improvements and style modernizations are often necessary for maintainability\n\nBe balanced and fair in your assessment. Changes that improve code quality, fix technical debt, or align with documented style guides should be marked as "required" even if not strictly necessary for the feature.\n\nRespond as JSON only.`,
+    instructions: `# File Diff Inspector\n\nYour role is to assess whether each file change aligns with the stated branch objectives and provides value.\n\nGuidelines:\n- Capture the developer's intent for this specific file change\n- Evaluate if the change is necessary (advances branch goals), questionable (unclear value), or unnecessary (doesn't contribute to objectives)\n- Assess if the change is minimally invasive - does it touch only what's needed, or does it include unrelated modifications?\n- Flag specific unnecessary chunks only when you spot clear scope creep or churn that doesn't serve the file's stated intent\n- Provide constructive recommendations for improvements, refactoring, or follow-up work\n- Consider that intentional improvements and style modernizations are often necessary for maintainability\n\nArchitectural Preferences:\n- PREFER changes in sdk/native/* over codex-rs/* to keep core changes minimal\n- When reviewing codex-rs/* changes, scrutinize whether they could be implemented in the SDK layer instead\n- Flag codex-rs/* modifications as "questionable" if the same functionality could be achieved via SDK wrappers or bindings\n- Mark codex-rs/* changes as "required" only when they genuinely need core functionality changes\n\nBe balanced and fair in your assessment. Changes that improve code quality, fix technical debt, or align with documented style guides should be marked as "required" even if not strictly necessary for the feature.\n\nRespond as JSON only.`,
   });
   const input = buildFilePrompt(context, change, plan, insights);
   const fallback: FileAssessment = {
