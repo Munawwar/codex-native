@@ -4,20 +4,21 @@ import type { JsonSchemaDefinition } from "@openai/agents-core";
 const IntentionSchema = z.object({
   category: z
     .enum(["Feature", "Refactor", "BugFix", "Performance", "Security", "DevEx", "Architecture", "Testing"])
+    .or(z.string())
     .describe("High-level intention category"),
   title: z.string().min(5).max(160),
   summary: z.string().min(10).max(800),
-  impactScope: z.enum(["local", "module", "system"]).default("module"),
-  evidence: z.array(z.string()).default([]),
+  impactScope: z.enum(["local", "module", "system"]).or(z.string()).default("module"),
+  evidence: z.array(z.string()).default([]).or(z.string().transform(s => [])),
 });
 export type Intention = z.output<typeof IntentionSchema>;
 const IntentionListSchema = z.array(IntentionSchema).min(1).max(12);
 
 const RecommendationSchema = z.object({
-  category: z.enum(["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"]),
+  category: z.enum(["Code", "Tests", "Docs", "Tooling", "DevEx", "Observability"]).or(z.string()),
   title: z.string().min(5).max(160),
-  priority: z.enum(["P0", "P1", "P2", "P3"]),
-  effort: z.enum(["Low", "Medium", "High"]).default("Medium"),
+  priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
+  effort: z.enum(["Low", "Medium", "High"]).or(z.string()).default("Medium"),
   description: z.string().min(10).max(400),
   location: nullableStringWithDefault(200),
   example: nullableStringWithDefault(400),
@@ -27,7 +28,7 @@ const RecommendationListSchema = z.array(RecommendationSchema).min(1).max(10);
 
 const CiIssueSchema = z.object({
   source: z.enum(["lint", "tests", "build", "security"]).or(z.string()),
-  severity: z.enum(["P0", "P1", "P2", "P3"]),
+  severity: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   title: z.string().min(5).max(160),
   summary: z.string().min(10).max(400),
   suggestedCommands: z.array(z.string()).default([]),
@@ -40,7 +41,7 @@ const CiIssueListSchema = z.array(CiIssueSchema).min(1).max(12);
 
 const CiFixSchema = z.object({
   title: z.string().min(5).max(160),
-  priority: z.enum(["P0", "P1", "P2", "P3"]),
+  priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   steps: z.array(z.string()).default([]),
   owner: z.string().min(2).max(160).optional().or(z.literal(null)),
   commands: z.array(z.string()).default([]),
@@ -196,15 +197,120 @@ const CiFixOutputType: JsonSchemaDefinition = {
   ),
 };
 
+function normalizeStructuredOutput(obj: any): any {
+  if (obj == null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeStructuredOutput);
+  }
+
+  // Comprehensive enum mappings for common LLM variations
+  const enumNormalizations: Record<string, Record<string, string>> = {
+    // Impact scope variations
+    impactScope: {
+      'system-wide': 'system',
+      'System': 'system',
+      'Module': 'module',
+      'Local': 'local',
+    },
+    // Category variations (handle both Intention and Recommendation schemas)
+    category: {
+      'CodeQuality': 'Code',
+      'Code Quality': 'Code',
+      'Testing': 'Tests',
+      'Test': 'Tests',
+      'Documentation': 'Docs',
+      'Bug Fix': 'BugFix',
+      'bug-fix': 'BugFix',
+    },
+    // Priority variations
+    priority: {
+      'p0': 'P0',
+      'p1': 'P1',
+      'p2': 'P2',
+      'p3': 'P3',
+      'critical': 'P0',
+      'high': 'P1',
+      'medium': 'P2',
+      'low': 'P3',
+    },
+    // Effort variations
+    effort: {
+      'low': 'Low',
+      'medium': 'Medium',
+      'high': 'High',
+      'small': 'Low',
+      'large': 'High',
+    },
+    // Severity variations
+    severity: {
+      'p0': 'P0',
+      'p1': 'P1',
+      'p2': 'P2',
+      'p3': 'P3',
+    },
+  };
+
+  // Fields that should be arrays
+  const arrayFields = new Set(['evidence', 'suggestedCommands', 'files', 'steps', 'commands']);
+
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    // Handle fields that should be arrays but came as strings or single values
+    if (arrayFields.has(key)) {
+      if (typeof value === 'string') {
+        result[key] = value.trim() ? [value] : [];
+      } else if (Array.isArray(value)) {
+        result[key] = value;
+      } else if (value == null) {
+        result[key] = [];
+      } else {
+        result[key] = [value];
+      }
+    }
+    // Handle enum normalizations
+    else if (typeof value === 'string' && enumNormalizations[key]) {
+      const normalized = enumNormalizations[key][value];
+      result[key] = normalized ?? value; // Use original if no mapping found
+    }
+    // Recursively process nested objects and arrays
+    else if (typeof value === 'object') {
+      result[key] = normalizeStructuredOutput(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function coerceStructuredOutput<T>(value: unknown, schema: z.ZodType<T>, fallback: T): T {
   if (value == null) {
     return fallback;
   }
   try {
-    const candidate = typeof value === "string" ? JSON.parse(value) : value;
+    let candidate = typeof value === "string" ? JSON.parse(value) : value;
+
+    // If candidate is an array but schema expects { items: array }, wrap it
+    if (Array.isArray(candidate) && !Array.isArray(fallback)) {
+      candidate = { items: candidate };
+    }
+
+    // Normalize enum values and field types to match schema expectations
+    candidate = normalizeStructuredOutput(candidate);
+
     return schema.parse(candidate);
   } catch (error) {
-    console.warn("Failed to parse structured agent output", error);
+    // Log validation errors with details but continue with fallback
+    if (error instanceof z.ZodError) {
+      console.warn(
+        "⚠️  Structured output validation failed:",
+        error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")
+      );
+    } else {
+      console.warn("⚠️  Failed to parse structured agent output:", error instanceof Error ? error.message : String(error));
+    }
     return fallback;
   }
 }

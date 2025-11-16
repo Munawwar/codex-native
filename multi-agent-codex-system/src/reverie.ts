@@ -6,7 +6,9 @@ import {
   reverieIndexSemantic,
   type ReverieSemanticSearchOptions,
   type Thread,
+  CodexProvider,
 } from "@codex-native/sdk";
+import { Agent, Runner } from "@openai/agents";
 import type { MultiAgentConfig, ReverieResult } from "./types.js";
 
 const DEFAULT_REVERIE_LIMIT = 10;
@@ -69,7 +71,7 @@ class ReverieSystem {
 
   async searchReveriesFromText(
     text: string,
-    options?: { limit?: number; maxCandidates?: number },
+    options?: { limit?: number; maxCandidates?: number; enableLLMGrading?: boolean },
   ): Promise<ReverieResult[]> {
     const normalized = text?.trim();
     if (!normalized) {
@@ -84,6 +86,7 @@ class ReverieSystem {
 
     const limit = options?.limit ?? DEFAULT_REVERIE_LIMIT;
     const maxCandidates = options?.maxCandidates ?? DEFAULT_REVERIE_CANDIDATES;
+    const enableLLMGrading = options?.enableLLMGrading ?? this.config.reverieEnableLLMGrading ?? false;
     const codexHome = resolveCodexHome();
     const projectRoot = path.resolve(this.config.workingDirectory);
     const semanticOptions = this.buildSemanticOptions(limit, maxCandidates, projectRoot);
@@ -93,13 +96,41 @@ class ReverieSystem {
 
     try {
       const matches = await this.deps.searchSemantic(codexHome, normalized, semanticOptions);
-      return matches.slice(0, limit).map((match) => ({
+      const results = matches.slice(0, limit).map((match) => ({
         conversationId: match.conversation?.id || "unknown",
         timestamp: match.conversation?.createdAt || new Date().toISOString(),
         relevance: typeof match.relevanceScore === "number" ? match.relevanceScore : 0,
         excerpt: match.matchingExcerpts?.[0] || "",
         insights: Array.isArray(match.insights) ? match.insights : [],
       }));
+
+      // Apply optional LLM grading to high-scoring results
+      if (enableLLMGrading && results.length > 0) {
+        const highScoring = results.filter((r) => r.relevance >= 0.7);
+        const lowScoring = results.filter((r) => r.relevance < 0.7);
+
+        if (highScoring.length > 0) {
+          console.log(`🤖 LLM grading ${highScoring.length} high-scoring reveries (≥0.7)...`);
+
+          const gradingPromises = highScoring.map((insight) =>
+            this.gradeReverieRelevance(normalized, insight).then((isRelevant) => ({ insight, isRelevant })),
+          );
+
+          const gradedResults = await Promise.all(gradingPromises);
+          const approved = gradedResults.filter((r) => r.isRelevant).map((r) => r.insight);
+          const rejected = gradedResults.filter((r) => !r.isRelevant).length;
+
+          console.log(`✅ LLM approved ${approved.length}/${highScoring.length} high-scoring reveries`);
+          if (rejected > 0) {
+            console.log(`❌ LLM rejected ${rejected} reveries as non-technical`);
+          }
+
+          // Return approved high-scoring + all low-scoring (which weren't graded)
+          return [...approved, ...lowScoring];
+        }
+      }
+
+      return results;
     } catch (error) {
       console.warn("Semantic reverie search failed:", error);
       return [];
@@ -138,6 +169,53 @@ class ReverieSystem {
     }
     await this.deps.fastEmbedInit(this.config.embedder.initOptions);
     this.embedderReady = true;
+  }
+
+  /**
+   * Use LLM to evaluate if a reverie is actually relevant and useful.
+   * Implements strict filtering for specific technical details.
+   * @param searchContext - The original search query/context
+   * @param insight - The reverie result to grade
+   * @returns true if the insight contains specific technical details, false otherwise
+   */
+  async gradeReverieRelevance(searchContext: string, insight: ReverieResult): Promise<boolean> {
+    try {
+      const provider = new CodexProvider({
+        workingDirectory: this.config.workingDirectory,
+        skipGitRepoCheck: this.config.skipGitRepoCheck,
+        defaultModel: this.config.model || "claude-sonnet-4-5-20250929",
+        baseUrl: this.config.baseUrl,
+        apiKey: this.config.apiKey,
+      });
+      const runner = new Runner({ modelProvider: provider });
+
+      const graderAgent = new Agent({
+        name: "ReverieGrader",
+        instructions: `You are a STRICT filter for conversation excerpts. Only approve excerpts with SPECIFIC technical details.
+REJECT: greetings, thinking markers (**, ##), JSON objects, generic phrases, metadata.
+APPROVE: Only excerpts with specific code details, file paths, error messages, implementation discussions.
+Respond with ONLY "yes" or "no".`,
+      });
+
+      const prompt = `Context: ${searchContext}
+
+Excerpt: "${insight.excerpt.slice(0, 400)}"
+
+Does this excerpt contain SPECIFIC technical details relevant to the work?
+Must have: actual code/file references, technical decisions, error details, implementation specifics.
+Reject if: greeting, thinking marker, JSON object, generic phrase ("Context from past work"), metadata.
+
+Answer: `;
+
+      const result = await runner.run(graderAgent, prompt);
+
+      const response = result.finalOutput?.trim().toLowerCase() || "";
+      return response === "yes" || response.startsWith("yes");
+    } catch (error) {
+      console.warn("Failed to grade reverie relevance:", error);
+      // On error, default to accepting the insight (conservative approach)
+      return true;
+    }
   }
 
   async injectReverie(thread: Thread, reveries: ReverieResult[], query: string): Promise<void> {

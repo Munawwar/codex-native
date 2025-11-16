@@ -56,6 +56,7 @@ export type MultiAgentConfig = {
   reverieRerankerBatchSize?: number;
   reverieRerankerTopK?: number;
   reverieMiniAcceptThreshold?: number;
+  reverieEnableLLMGrading?: boolean;
   structuredOutputMode?: StructuredOutputMode;
 };
 

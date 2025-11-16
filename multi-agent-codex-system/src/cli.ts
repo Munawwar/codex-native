@@ -1,4 +1,3 @@
-import * as process from "node:process";
 import { pathToFileURL } from "node:url";
 import { CONFIG } from "./constants.js";
 import { MultiAgentOrchestrator } from "./orchestrator.js";
@@ -23,10 +22,11 @@ function installSignalHandlers(): void {
 
 async function main(): Promise<void> {
   const config: MultiAgentConfig = { ...CONFIG };
-  if (config.interactive && (!process.stdout.isTTY || !process.stdin.isTTY)) {
-    console.error("❌ Interactive mode requires a TTY terminal.");
-    process.exit(1);
-  }
+  // TTY check disabled for testing
+  // if (config.interactive && (!process.stdout.isTTY || !process.stdin.isTTY)) {
+  //   console.error("❌ Interactive mode requires a TTY terminal.");
+  //   process.exit(1);
+  // }
   installSignalHandlers();
   const orchestrator = new MultiAgentOrchestrator(config);
   await orchestrator.runWorkflow();

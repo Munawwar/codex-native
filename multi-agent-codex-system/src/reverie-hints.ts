@@ -2,10 +2,11 @@ import { Codex, type Thread, type ThreadEvent, type ThreadItem } from "@codex-na
 import type { MultiAgentConfig, ReverieResult } from "./types.js";
 import { ReverieSystem } from "./reverie.js";
 import { DEFAULT_MINI_MODEL } from "./constants.js";
+import { isValidReverieExcerpt, deduplicateReverieInsights } from "./reverie-quality.js";
 
 const MAX_BUFFER_ENTRIES = 4;
 const DEFAULT_HINT_INTERVAL_MS = 120_000;
-const DEFAULT_HINT_MIN_SCORE = 0.45;
+const DEFAULT_HINT_MIN_SCORE = 0.60;
 const DEFAULT_HINT_MAX_MATCHES = 2;
 const DEFAULT_CONTEXT_CHARS = 800;
 const DEFAULT_REASONING_WEIGHT = 0.6;
@@ -271,13 +272,18 @@ class ReverieHintManager {
   ): Promise<AggregatedMatch[]> {
     const combined = new Map<string, AggregatedMatch>();
     const candidateCap = Math.max(this.maxMatches * 6, FALLBACK_CANDIDATE_CAP);
+    let totalRawMatches = 0;
+    let qualityFilteredCount = 0;
 
     if (reasoningContext && reasoningContext.length >= this.minReasoningChars) {
       const matches = await this.reverie.searchReveriesFromText(reasoningContext, {
         limit: this.maxMatches * 2,
         maxCandidates: candidateCap,
       });
+      totalRawMatches += matches.length;
+      const beforeSize = combined.size;
       this.mergeMatches(combined, matches, this.reasoningWeight, "reasoning");
+      qualityFilteredCount += matches.length - (combined.size - beforeSize);
     }
 
     if (dialogueContext && dialogueContext.length >= this.minDialogueChars) {
@@ -285,10 +291,37 @@ class ReverieHintManager {
         limit: this.maxMatches * 2,
         maxCandidates: candidateCap,
       });
+      totalRawMatches += matches.length;
+      const beforeSize = combined.size;
       this.mergeMatches(combined, matches, this.dialogueWeight, "dialogue");
+      qualityFilteredCount += matches.length - (combined.size - beforeSize);
     }
 
-    return Array.from(combined.values()).sort((a, b) => b.score - a.score);
+    const merged = Array.from(combined.values());
+    const beforeDedup = merged.length;
+
+    // Deduplicate similar insights based on excerpt fingerprints
+    const deduplicated = this.deduplicateMatches(merged);
+    const afterDedup = deduplicated.length;
+
+    // Log quality filtering statistics
+    if (totalRawMatches > 0) {
+      console.log(
+        `Reverie hint quality: ${totalRawMatches} raw → ${beforeDedup} valid → ${afterDedup} unique (filtered ${totalRawMatches - beforeDedup} low-quality, ${beforeDedup - afterDedup} duplicates)`,
+      );
+    }
+
+    return deduplicated.sort((a, b) => b.score - a.score);
+  }
+
+  private deduplicateMatches(matches: AggregatedMatch[]): AggregatedMatch[] {
+    // Extract ReverieResults for deduplication
+    const results = matches.map((m) => m.result);
+    const deduplicated = deduplicateReverieInsights(results);
+
+    // Rebuild AggregatedMatches from deduplicated results
+    const deduplicatedIds = new Set(deduplicated.map((r) => r.conversationId));
+    return matches.filter((m) => deduplicatedIds.has(m.result.conversationId));
   }
 
   private mergeMatches(
@@ -298,6 +331,10 @@ class ReverieHintManager {
     channel: Channel,
   ): void {
     for (const match of matches) {
+      // Filter out low-quality excerpts before checking relevance
+      if (!isValidReverieExcerpt(match.excerpt)) {
+        continue;
+      }
       if (match.relevance < this.minScore) {
         continue;
       }

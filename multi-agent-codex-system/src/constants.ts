@@ -1,4 +1,3 @@
-import * as process from "node:process";
 import type { MultiAgentConfig } from "./types.js";
 
 export const DEFAULT_MODEL = "gpt-5.1-codex";

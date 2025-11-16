@@ -10,6 +10,7 @@ import type { CiAnalysis, MultiAgentConfig, PrStatusSummary, RepoContext, Review
 import { runThreadTui, waitForTuiSession } from "./tui-util.js";
 import { LspDiagnosticsBridge } from "@codex-native/sdk";
 import { attachApplyPatchReminder } from "./reminders/applyPatchReminder.js";
+import { isValidReverieExcerpt, deduplicateReverieInsights } from "./reverie-quality.js";
 
 class MultiAgentOrchestrator {
   private reviewer: PRDeepReviewer;
@@ -98,6 +99,15 @@ class MultiAgentOrchestrator {
 
     if (this.config.reverieQuery) {
       const reveries = await this.reverie.searchReveries(this.config.reverieQuery);
+
+      // Apply quality filtering pipeline
+      const basicFiltered = reveries.filter(match => isValidReverieExcerpt(match.excerpt));
+      const highQuality = basicFiltered.filter(match => match.relevance >= 0.7);
+      const deduplicated = deduplicateReverieInsights(highQuality);
+
+      // Log filtering statistics
+      console.log(`Reverie filtering: Found ${reveries.length} reveries, ${basicFiltered.length} passed quality check, ${highQuality.length} high-scoring (>=0.7), ${deduplicated.length} after dedup`);
+
       const codex = new Codex({ baseUrl: this.config.baseUrl, apiKey: this.config.apiKey });
       const thread = codex.startThread({
         model: this.config.model ?? DEFAULT_MODEL,
@@ -108,12 +118,12 @@ class MultiAgentOrchestrator {
       });
       const detach = this.diagnostics?.attach(thread);
       const reminderCleanup = attachApplyPatchReminder(thread, this.config.sandboxMode ?? "danger-full-access");
-      await this.reverie.injectReverie(thread, reveries, this.config.reverieQuery);
+      await this.reverie.injectReverie(thread, deduplicated, this.config.reverieQuery);
       if (this.interactive) {
         const session = runThreadTui(
           thread,
           {
-            prompt: `Injected ${reveries.length} reverie insight(s) for '${this.config.reverieQuery}'. Explore history here, then close this TUI to continue.`,
+            prompt: `Injected ${deduplicated.length} reverie insight(s) for '${this.config.reverieQuery}'. Explore history here, then close this TUI to continue.`,
             model: this.config.model ?? DEFAULT_MODEL,
           },
           "Reverie insights",
@@ -127,7 +137,7 @@ class MultiAgentOrchestrator {
         }
       } else {
         await thread.run(
-          `Injected ${reveries.length} reverie insight(s) for '${this.config.reverieQuery}'. Run 'reverie <topic>' interactively to explore further.`,
+          `Injected ${deduplicated.length} reverie insight(s) for '${this.config.reverieQuery}'. Run 'reverie <topic>' interactively to explore further.`,
         );
         detach?.();
         reminderCleanup();
