@@ -67,6 +67,8 @@ yarn-error.log*
 # ci
 .vercel/
 .netlify/
+.codex-ci/
+.codex-curated-ids.json
 
 # patches
 apply_patch/
