@@ -872,6 +872,6 @@ export function createDefaultSolverConfig(workingDirectory: string): SolverConfi
     apiKey: process.env.CODEX_API_KEY,
     skipGitRepoCheck: false,
     originRef: process.env.CX_MERGE_ORIGIN_REF ?? "HEAD",
-    upstreamRef: process.env.CX_MERGE_UPSTREAM_REF ?? "upstream/main",
+    upstreamRef: process.env.CX_MERGE_UPSTREAM_REF ?? "origin/main",
   };
 }
