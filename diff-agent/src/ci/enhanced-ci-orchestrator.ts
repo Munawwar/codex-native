@@ -173,27 +173,38 @@ export class EnhancedCiOrchestrator {
 
     this.coordinatorThread = this.codex.startThread(threadOptions);
 
-    const prompt = `# CI Fix Orchestrator
+    // Build shared context that ALL agents will need
+    // This creates a common foundation before forking
+    const sharedContextPrompt = `# CI Fix Orchestrator - Shared Context
 
-You are coordinating an automated CI fix workflow for:
-- Repository: ${snapshot.branch ?? "unknown"}
-- Status: ${snapshot.statusShort || "clean"}
-- Recent commits: ${snapshot.recentCommits || "none"}
+You are coordinating an automated CI fix workflow.
 
-Your role:
-1. Track CI failures and dispatch fix agents
-2. Ensure fixes don't conflict
-3. Validate fixes are appropriate
-4. Report progress
+## Repository Context (Shared by all agents)
+- **Branch**: ${snapshot.branch ?? "unknown"}
+- **Status**: ${snapshot.statusShort || "clean"}
+- **Recent commits**:
+${snapshot.recentCommits || "none"}
 
-I'll run CI, detect failures, and spawn specialized agents to fix them.
-Each agent will have full codebase access and can edit files.
+- **Diff stat**:
+${snapshot.diffStat || "No changes"}
 
-Ready to begin the automated fix process.`;
+## Your Role
+1. Gather shared context that all fix agents will need
+2. Fork specialized agents with this baseline knowledge
+3. Each agent gets: shared context + specific failure + relevant reveries
+4. Validate fixes and coordinate handoffs
 
-    const initTurn = await this.coordinatorThread.run(prompt);
+## Workflow Strategy
+- **Phase 1**: Establish shared understanding (this step)
+- **Phase 2**: Fork agents with shared context + specialized failure details
+- **Phase 3**: Agents execute fixes independently
+- **Phase 4**: Handoff results back for validation
+
+Ready to begin. I'll dispatch specialized fix agents once CI failures are identified.`;
+
+    const initTurn = await this.coordinatorThread.run(sharedContextPrompt);
     this.tokenTracker.record(initTurn.usage);
-    logInfo("coordinator", `Context usage: ${(this.tokenTracker.usagePercentage() * 100).toFixed(1)}%`);
+    logInfo("coordinator", `Shared context established. Usage: ${(this.tokenTracker.usagePercentage() * 100).toFixed(1)}%`);
 
     if (this.graphRenderer) {
       this.graphRenderer.addAgent({
@@ -281,44 +292,72 @@ Ready to begin the automated fix process.`;
   }
 
   private async dispatchFixAgents(failures: CiFailure[]): Promise<number> {
+    if (!this.coordinatorThread) {
+      logWarn("coordinator", "No coordinator thread available for forking");
+      return 0;
+    }
+
+    // Add CI failures summary to coordinator context (shared by all forks)
+    const failuresSummary = failures.map((f, idx) =>
+      `${idx + 1}. ${f.label}: ${f.snippet?.split('\n')[0] || 'CI check failed'}`
+    ).join('\n');
+
+    await this.coordinatorThread.run(`# CI Failures Detected
+
+${failures.length} failures need to be fixed:
+${failuresSummary}
+
+I will now fork specialized agents to handle each failure independently.
+Each agent will inherit our shared repository context plus their specific failure details.`);
+
     const agents: FixAgent[] = [];
 
     for (const failure of failures) {
       const agentId = `fix-${failure.label}-${Date.now()}`;
-
-      // Create fresh thread with minimal context (don't fork to avoid context bloat)
-      // Fix agents only need to know about their specific failure, not the entire CI report
       const fixerModel = this.config.fixerModel ?? "gpt-5.1-codex";
-      const threadOptions: ThreadOptions = {
-        model: fixerModel,
-        sandboxMode: "workspace-write",
-        approvalMode: "on-request",
-      };
 
       let thread: Thread;
       try {
-        // Start fresh thread instead of forking from coordinator
-        // This prevents inheriting 1MB+ CI reports and full repo snapshots
-        thread = this.codex.startThread(threadOptions);
-        logInfo("coordinator", `Created fresh thread for ${failure.label} (avoiding context inheritance)`);
+        // Fork from coordinator to inherit shared context
+        // This gives agents the baseline knowledge without the full history bloat
+        thread = await this.coordinatorThread.fork({
+          // Fork from current state (after shared context, before individual failures)
+          nthUserMessage: -1, // Last message (includes shared context)
+          threadOptions: {
+            model: fixerModel,
+            sandboxMode: "workspace-write",
+            approvalMode: "on-request",
+          },
+        });
+
+        logInfo("coordinator", `Forked agent for ${failure.label} (inherits shared context)`);
+
+        // Add specialized context: specific failure + relevant reveries
+        const specializationPrompt = await this.buildSpecializedContext(failure);
+        const specTurn = await thread.run(specializationPrompt);
+
+        // Initialize token tracker with usage from fork + specialization
+        const agentTracker = new TokenTracker(fixerModel);
+        agentTracker.record(specTurn.usage);
+        logInfo("worker", `Specialized context added for ${failure.label}. Usage: ${(agentTracker.usagePercentage() * 100).toFixed(1)}%`);
+
+        const agent: FixAgent = {
+          id: agentId,
+          thread,
+          failure,
+          status: "pending",
+          filesFixed: [],
+          attempts: 0,
+          rejectionReasons: [],
+          tokenTracker: agentTracker,
+        };
+
+        agents.push(agent);
+        this.fixAgents.set(agentId, agent);
       } catch (error) {
-        logWarn("coordinator", `Failed to create fix agent for ${failure.label}: ${error}`);
+        logWarn("coordinator", `Failed to fork agent for ${failure.label}: ${error}`);
         continue;
       }
-
-      const agent: FixAgent = {
-        id: agentId,
-        thread,
-        failure,
-        status: "pending",
-        filesFixed: [],
-        attempts: 0,
-        rejectionReasons: [],
-        tokenTracker: new TokenTracker(fixerModel),
-      };
-
-      agents.push(agent);
-      this.fixAgents.set(agentId, agent);
 
       if (this.graphRenderer) {
         this.graphRenderer.addAgent({
@@ -656,6 +695,44 @@ If you cannot fix this issue, respond with "UNABLE TO FIX" and explain why.`;
       logWarn("worker", `Revision failed (${agent.failure.label}): ${error}`);
       return false;
     }
+  }
+
+  /**
+   * Build specialized context for a forked agent
+   * Includes: specific failure details + relevant reveries for that failure
+   */
+  private async buildSpecializedContext(failure: CiFailure): Promise<string> {
+    const pathHints = failure.pathHints?.length
+      ? `\n- **Suggested paths**: ${failure.pathHints.join(", ")}`
+      : "";
+
+    // TODO: Add reverie search here for failure-specific context
+    // Example: Search for reveries related to the failing file paths
+    // const reveries = await this.searchReveriesForFailure(failure);
+
+    return `# Specialized Context for: ${failure.label}
+
+You are now a specialized fix agent inheriting the shared repository context.
+
+## Your Specific Mission
+Fix this CI failure: **${failure.label}**
+
+## Failure Details
+${failure.snippet || "No detailed error message available"}${pathHints}
+
+## Your Approach
+1. You already know the repo structure and recent commits (from shared context)
+2. Focus specifically on fixing **${failure.label}**
+3. Use tools to investigate the failure
+4. Make minimal, targeted changes
+5. Hand off results when complete
+
+## Key Context
+- This is ONE of ${this.fixAgents.size + 1} parallel fix efforts
+- Stay focused on your specific failure
+- Don't make unrelated changes
+
+Ready to investigate and fix this specific issue.`;
   }
 
   private buildFixPrompt(failure: CiFailure): string {
