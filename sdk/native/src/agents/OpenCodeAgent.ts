@@ -1,4 +1,10 @@
-import type { Event as OpencodeEvent, OpencodeClient, Permission, Session, SessionPromptResponses } from "@opencode-ai/sdk";
+import type {
+  Event as OpencodeEvent,
+  OpencodeClient,
+  Permission,
+  Session,
+  SessionPromptResponses,
+} from "@opencode-ai/sdk";
 import type { Usage } from "../events";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
@@ -9,11 +15,11 @@ const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929";
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_PORT = 4096;
 
-type OpenCodeModule = typeof import("@opencode-ai/sdk");
+type OpencodeModule = typeof import("@opencode-ai/sdk");
 
-let opencodeModulePromise: Promise<OpenCodeModule> | null = null;
+let opencodeModulePromise: Promise<OpencodeModule> | null = null;
 
-async function loadOpencodeModule(): Promise<OpenCodeModule> {
+async function loadOpencodeModule(): Promise<OpencodeModule> {
   if (!opencodeModulePromise) {
     opencodeModulePromise = import("@opencode-ai/sdk");
   }
@@ -89,7 +95,7 @@ export interface DelegationResult {
   usage?: Usage | null;
 }
 
-type PromptResponse = SessionPromptResponses[200];
+type PromptResponse = SessionPromptResponses[keyof SessionPromptResponses];
 
 export class OpenCodeAgent {
   private readonly options: OpenCodeAgentOptions;

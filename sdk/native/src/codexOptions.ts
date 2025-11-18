@@ -8,5 +8,9 @@ export type CodexOptions = {
   codexPathOverride?: string;
   baseUrl?: string;
   apiKey?: string;
+  /** Optional model provider override to use instead of the default */
+  modelProvider?: string;
+  /** Default model to use when a thread omits an explicit choice */
+  defaultModel?: string;
   tools?: NativeToolDefinition[];
 };

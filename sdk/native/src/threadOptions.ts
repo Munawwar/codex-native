@@ -31,6 +31,8 @@ export type WorkspaceWriteOptions = {
 
 export type ThreadOptions = {
   model?: string;
+  /** Override the model provider declared in config.toml */
+  modelProvider?: string;
   /** Use local OSS provider via Ollama (pulls models as needed) */
   oss?: boolean;
   sandboxMode?: SandboxMode;

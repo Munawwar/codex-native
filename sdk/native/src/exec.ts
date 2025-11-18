@@ -16,6 +16,7 @@ export type CodexExecArgs = {
   input: string;
   baseUrl?: string;
   apiKey?: string;
+  modelProvider?: string;
   threadId?: string | null;
   images?: string[];
   model?: string;
@@ -42,6 +43,7 @@ export type CodexForkArgs = {
   nthUserMessage: number;
   baseUrl?: string;
   apiKey?: string;
+  modelProvider?: string;
   model?: string;
   oss?: boolean;
   sandboxMode?: SandboxMode;
@@ -95,6 +97,7 @@ export class CodexExec {
       outputSchema: args.outputSchema,
       baseUrl: args.baseUrl,
       apiKey: args.apiKey,
+      modelProvider: args.modelProvider,
       fullAuto: args.fullAuto,
       reviewMode: args.review ? true : undefined,
       reviewHint: args.review?.userFacingHint,
@@ -151,6 +154,7 @@ export class CodexExec {
       threadId: args.threadId ?? undefined,
       images: args.images && args.images.length > 0 ? args.images : undefined,
       model: args.model,
+      modelProvider: args.modelProvider,
       oss: args.oss,
       sandboxMode: args.sandboxMode,
       approvalMode: args.approvalMode,
@@ -183,6 +187,7 @@ export class CodexExec {
       skipGitRepoCheck: args.skipGitRepoCheck,
       baseUrl: args.baseUrl,
       apiKey: args.apiKey,
+      modelProvider: args.modelProvider,
       linuxSandboxPath: args.linuxSandboxPath,
       fullAuto: args.fullAuto,
     };

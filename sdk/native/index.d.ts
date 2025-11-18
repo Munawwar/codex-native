@@ -67,6 +67,7 @@ export declare function compactThread(req: RunRequest): Promise<Array<string>>
 
 export interface ConversationConfigRequest {
   model?: string
+  modelProvider?: string
   oss?: boolean
   sandboxMode?: string
   approvalMode?: string
@@ -152,6 +153,7 @@ export interface ForkRequest {
   threadId: string
   nthUserMessage?: number
   model?: string
+  modelProvider?: string
   oss?: boolean
   sandboxMode?: string
   approvalMode?: string
@@ -356,6 +358,7 @@ export interface RunRequest {
   threadId?: string
   images?: Array<string>
   model?: string
+  modelProvider?: string
   oss?: boolean
   sandboxMode?: string
   approvalMode?: string

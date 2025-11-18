@@ -21,6 +21,8 @@ pub struct RunRequest {
   pub thread_id: Option<String>,
   pub images: Option<Vec<String>>,
   pub model: Option<String>,
+  #[napi(js_name = "modelProvider")]
+  pub model_provider: Option<String>,
   #[napi(js_name = "oss")]
   pub oss: Option<bool>,
   #[napi(js_name = "sandboxMode")]
@@ -61,6 +63,8 @@ pub struct ForkRequest {
   pub nth_user_message: Option<u32>,
   #[napi(js_name = "model")]
   pub model: Option<String>,
+  #[napi(js_name = "modelProvider")]
+  pub model_provider: Option<String>,
   #[napi(js_name = "oss")]
   pub oss: Option<bool>,
   #[napi(js_name = "sandboxMode")]
@@ -99,6 +103,8 @@ pub struct InternalForkRequest {
 pub struct ConversationConfigRequest {
   #[napi(js_name = "model")]
   pub model: Option<String>,
+  #[napi(js_name = "modelProvider")]
+  pub model_provider: Option<String>,
   #[napi(js_name = "oss")]
   pub oss: Option<bool>,
   #[napi(js_name = "sandboxMode")]
@@ -197,6 +203,7 @@ pub struct InternalRunRequest {
   pub thread_id: Option<String>,
   pub images: Vec<PathBuf>,
   pub model: Option<String>,
+  pub model_provider: Option<String>,
   pub oss: bool,
   pub sandbox_mode: Option<SandboxModeCliArg>,
   pub approval_mode: Option<ApprovalModeCliArg>,
@@ -225,6 +232,7 @@ impl ConversationConfigRequest {
       thread_id: None,
       images: Vec::new(),
       model: self.model,
+      model_provider: self.model_provider,
       oss: self.oss.unwrap_or(false),
       sandbox_mode,
       approval_mode,
@@ -296,6 +304,7 @@ impl RunRequest {
       thread_id: self.thread_id,
       images,
       model: self.model,
+      model_provider: self.model_provider,
       oss: self.oss.unwrap_or(false),
       sandbox_mode,
       approval_mode,
@@ -333,6 +342,7 @@ impl ForkRequest {
       thread_id: Some(thread_id.clone()),
       images: None,
       model: self.model,
+      model_provider: self.model_provider,
       oss: self.oss,
       sandbox_mode: self.sandbox_mode,
       approval_mode: self.approval_mode,
@@ -828,8 +838,9 @@ fn build_config_inputs(
     approval_policy: approval_mode_cli_to_policy(options.approval_mode),
     sandbox_mode: sandbox_mode_cli_to_config(options.sandbox_mode),
     model_provider: options
-      .oss
-      .then_some(BUILT_IN_OSS_MODEL_PROVIDER_ID.to_string()),
+      .model_provider
+      .clone()
+      .or_else(|| options.oss.then_some(BUILT_IN_OSS_MODEL_PROVIDER_ID.to_string())),
     config_profile: None,
     codex_linux_sandbox_exe: linux_sandbox_path,
     base_instructions: None,

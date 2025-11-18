@@ -12,6 +12,7 @@ export type NativeRunRequest = {
   threadId?: string;
   images?: string[];
   model?: string;
+  modelProvider?: string;
   oss?: boolean;
   sandboxMode?: SandboxMode;
   approvalMode?: ApprovalMode;
@@ -34,6 +35,7 @@ export type NativeForkRequest = {
   threadId: string;
   nthUserMessage: number;
   model?: string;
+  modelProvider?: string;
   oss?: boolean;
   sandboxMode?: SandboxMode;
   approvalMode?: ApprovalMode;
@@ -48,6 +50,7 @@ export type NativeForkRequest = {
 
 export type NativeConversationConfig = {
   model?: string;
+  modelProvider?: string;
   oss?: boolean;
   sandboxMode?: SandboxMode;
   approvalMode?: ApprovalMode;

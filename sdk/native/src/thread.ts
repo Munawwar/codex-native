@@ -362,12 +362,13 @@ export class Thread {
       threadId: this._id,
       baseUrl: this._options.baseUrl,
       apiKey: this._options.apiKey,
-      model: this._threadOptions?.model,
+      model: this._threadOptions?.model ?? this._options.defaultModel,
       sandboxMode: this._threadOptions?.sandboxMode,
       approvalMode: this._threadOptions?.approvalMode,
       workspaceWriteOptions: this._threadOptions?.workspaceWriteOptions,
       workingDirectory: this._threadOptions?.workingDirectory,
       skipGitRepoCheck,
+      modelProvider: this._options.modelProvider,
     });
     // No return value needed; compaction modifies server-side history.
     if (!Array.isArray(events)) {
@@ -416,7 +417,7 @@ export class Thread {
       nthUserMessage,
       baseUrl: this._options.baseUrl,
       apiKey: this._options.apiKey,
-      model: nextThreadOptions.model,
+      model: nextThreadOptions.model ?? this._options.defaultModel,
       oss: nextThreadOptions.oss,
       sandboxMode: nextThreadOptions.sandboxMode,
       approvalMode: nextThreadOptions.approvalMode,
@@ -424,6 +425,7 @@ export class Thread {
       workingDirectory: nextThreadOptions.workingDirectory,
       skipGitRepoCheck,
       fullAuto: nextThreadOptions.fullAuto,
+      modelProvider: this._options.modelProvider,
     };
 
     const result = await this._exec.fork(forkArgs);
@@ -578,7 +580,7 @@ export class Thread {
       }
     };
 
-    assignIfUndefined("model", this._threadOptions?.model);
+    assignIfUndefined("model", this._threadOptions?.model ?? this._options.defaultModel);
     assignIfUndefined("oss", this._threadOptions?.oss);
     assignIfUndefined("sandboxMode", this._threadOptions?.sandboxMode);
     assignIfUndefined("approvalMode", this._threadOptions?.approvalMode);

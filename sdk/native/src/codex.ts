@@ -145,7 +145,8 @@ export class Codex {
 
   private buildConversationConfig(options: ThreadOptions = {}): NativeConversationConfig {
     return {
-      model: options.model,
+      model: options.model ?? this.options.defaultModel,
+      modelProvider: options.modelProvider ?? this.options.modelProvider,
       oss: options.oss,
       sandboxMode: options.sandboxMode,
       approvalMode: options.approvalMode,
@@ -251,7 +252,12 @@ export class Codex {
    * @returns A new thread instance.
    */
   startThread(options: ThreadOptions = {}): Thread {
-    return new Thread(this.exec, this.options, options);
+    const threadOptions: ThreadOptions = {
+      model: options.model ?? this.options.defaultModel,
+      modelProvider: options.modelProvider ?? this.options.modelProvider,
+      ...options,
+    };
+    return new Thread(this.exec, this.options, threadOptions);
   }
 
   /**
@@ -262,7 +268,12 @@ export class Codex {
    * @returns A new thread instance.
    */
   resumeThread(id: string, options: ThreadOptions = {}): Thread {
-    return new Thread(this.exec, this.options, options, id);
+    const threadOptions: ThreadOptions = {
+      model: options.model ?? this.options.defaultModel,
+      modelProvider: options.modelProvider ?? this.options.modelProvider,
+      ...options,
+    };
+    return new Thread(this.exec, this.options, threadOptions, id);
   }
 
   async listConversations(options: ConversationListOptions = {}): Promise<ConversationListPage> {
@@ -291,7 +302,12 @@ export class Codex {
       rolloutPath,
       config: this.buildConversationConfig(options),
     });
-    return new Thread(this.exec, this.options, options, result.threadId);
+    const threadOptions: ThreadOptions = {
+      model: options.model ?? this.options.defaultModel,
+      modelProvider: options.modelProvider ?? this.options.modelProvider,
+      ...options,
+    };
+    return new Thread(this.exec, this.options, threadOptions, result.threadId);
   }
 
   /**
@@ -370,6 +386,7 @@ export class Codex {
       baseUrl: this.options.baseUrl,
       apiKey: this.options.apiKey,
       model: threadOptions.model,
+      modelProvider: threadOptions.modelProvider ?? this.options.modelProvider,
       oss: threadOptions.oss,
       sandboxMode: threadOptions.sandboxMode,
       approvalMode: threadOptions.approvalMode,
