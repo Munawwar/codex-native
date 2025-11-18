@@ -20,6 +20,15 @@ export interface ReverieInsight {
   insights: string[];
 }
 
+export interface ReverieEpisodeSummary {
+  conversationId: string;
+  episodeId: string;
+  timestamp: string;
+  summary: string;
+  keyDecisions?: string[];
+  importance?: number;
+}
+
 /**
  * Options for reverie semantic search.
  */
@@ -66,6 +75,9 @@ export interface ReverieFilterStats {
 
   /** Results after basic quality filtering */
   afterQuality: number;
+
+  /** Results after embedding-based boilerplate filtering */
+  afterBoilerplate?: number;
 
   /** Results after relevance score threshold */
   afterScore: number;

@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use chrono::{DateTime, Utc};
 
 
 #[derive(Clone)]
@@ -39,8 +40,10 @@ pub struct ReverieSearchResult {
 }
 
 const MAX_INSIGHTS_PER_CONVERSATION: usize = 4;
-const SEMANTIC_SCORE_WEIGHT: f64 = 0.7;
-const KEYWORD_SCORE_WEIGHT: f64 = 0.3;
+const SEMANTIC_SCORE_WEIGHT: f64 = 0.55;
+const KEYWORD_SCORE_WEIGHT: f64 = 0.15;
+const RECENCY_SCORE_WEIGHT: f64 = 0.15;
+const IMPORTANCE_SCORE_WEIGHT: f64 = 0.15;
 const KEYWORD_SCORE_SMOOTHING: f64 = 100.0;
 
 #[derive(Default)]
@@ -102,13 +105,53 @@ impl SearchQueryContext {
     &self.original
   }
 
-  fn expanded(&self) -> &str {
-    &self.expanded
-  }
-
   fn keyword_text(&self) -> &str {
     &self.expanded
   }
+}
+
+fn build_embedding_queries(context: &SearchQueryContext) -> Vec<String> {
+  let mut queries = Vec::new();
+  let base = context.original().trim();
+  if !base.is_empty() {
+    queries.push(base.to_string());
+  }
+
+  for block in extract_query_blocks(base) {
+    if queries.len() >= 4 {
+      break;
+    }
+    if !block.eq_ignore_ascii_case(base) {
+      queries.push(block);
+    }
+  }
+
+  if queries.is_empty() {
+    queries.push(context.original().to_string());
+  }
+
+  queries
+}
+
+fn extract_query_blocks(text: &str) -> Vec<String> {
+  let mut blocks = Vec::new();
+  for chunk in text.split("\n\n") {
+    let trimmed = chunk.trim();
+    if trimmed.len() > 40 {
+      blocks.push(trimmed.to_string());
+    }
+  }
+
+  if blocks.is_empty() {
+    for line in text.lines() {
+      let trimmed = line.trim();
+      if trimmed.len() > 60 {
+        blocks.push(trimmed.to_string());
+      }
+    }
+  }
+
+  blocks
 }
 
 #[napi]
@@ -261,13 +304,26 @@ pub async fn reverie_search_semantic(
     .await
     .map_err(|e| napi::Error::from_reason(format!("Failed to load conversations: {e}")))?;
 
-  let mut candidates = Vec::<SemanticCandidate>::new();
-  let mut total_documents = 0usize;
+  let mut scored_conversations: Vec<(usize, ReverieConversation)> = Vec::new();
   for conversation in raw_conversations {
     if !conversation_matches_project(&conversation.head_records, normalized_project_root.as_deref()) {
       continue;
     }
 
+    let lex_score = conversation_lexical_score(&conversation, query_context.keyword_text());
+    scored_conversations.push((lex_score, conversation));
+  }
+
+  if scored_conversations.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  scored_conversations.sort_by(|a, b| b.0.cmp(&a.0));
+
+  let lexical_budget = max_candidates.saturating_mul(2);
+  let mut candidates = Vec::<SemanticCandidate>::new();
+  let mut total_documents = 0usize;
+  for (_lex_score, conversation) in scored_conversations.into_iter().take(lexical_budget) {
     let insights = derive_insights_for_semantic(&conversation.head_records_toon, &conversation.tail_records_toon);
     let message_chunks = build_compact_document(&conversation, &insights, Some(query_context.keyword_text()));
 
@@ -291,9 +347,16 @@ pub async fn reverie_search_semantic(
     return Ok(Vec::new());
   }
 
-  let mut inputs = Vec::with_capacity(total_documents.saturating_add(1));
+  let embedding_queries = build_embedding_queries(&query_context);
+  if embedding_queries.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let mut inputs = Vec::with_capacity(total_documents.saturating_add(embedding_queries.len()));
   let mut doc_refs = Vec::with_capacity(total_documents);
-  inputs.push(query_context.expanded().to_string());
+  for query in &embedding_queries {
+    inputs.push(query.clone());
+  }
   for (candidate_idx, candidate) in candidates.iter().enumerate() {
     for (message_idx, chunk) in candidate.message_chunks.iter().enumerate() {
       inputs.push(chunk.clone());
@@ -312,20 +375,27 @@ pub async fn reverie_search_semantic(
   let embed_request = FastEmbedEmbedRequest {
     inputs,
     batch_size: opts.batch_size,
-    normalize: opts.normalize,
+    normalize: Some(opts.normalize.unwrap_or(true)),
     project_root: project_root_for_cache,
-    cache: opts.cache,
+    cache: Some(opts.cache.unwrap_or(true)),
   };
 
   let embeddings = fast_embed_embed(embed_request).await?;
-  if embeddings.len() != doc_refs.len().saturating_add(1) {
+  if embeddings.len() != doc_refs.len().saturating_add(embedding_queries.len()) {
     return Err(napi::Error::from_reason("Embedding API returned unexpected length"));
   }
 
-  let (query_embedding, doc_embeddings) = embeddings.split_first().unwrap();
+  let (query_embeddings, doc_embeddings) = embeddings.split_at(embedding_queries.len());
   let mut per_candidate_matches: Vec<Vec<MessageMatch>> = (0..candidates.len()).map(|_| Vec::new()).collect();
   for (doc_ref, embedding) in doc_refs.iter().zip(doc_embeddings.iter()) {
-    let score = cosine_similarity(query_embedding, embedding);
+    let mut best_score = f64::NEG_INFINITY;
+    for query_embedding in query_embeddings {
+      let candidate_score = cosine_similarity(query_embedding, embedding);
+      if candidate_score > best_score {
+        best_score = candidate_score;
+      }
+    }
+    let score = if best_score.is_finite() { best_score } else { 0.0 };
     if let Some(bucket) = per_candidate_matches.get_mut(doc_ref.candidate_idx) {
       bucket.push(MessageMatch {
         message_idx: doc_ref.message_idx,
@@ -614,15 +684,28 @@ impl RankedMatch {
 
     let best_match = message_matches.first()?;
     let doc_text = message_chunks.get(best_match.message_idx)?.clone();
-    let best_keyword_raw = message_matches
+    let top_k = message_matches.iter().take(3).collect::<Vec<_>>();
+    let avg_semantic = top_k
+      .iter()
+      .map(|entry| entry.semantic_score)
+      .sum::<f64>()
+      / (top_k.len() as f64);
+    let best_keyword_raw = top_k
       .iter()
       .map(|entry| entry.keyword_score)
       .max()
       .unwrap_or(0);
 
-    let semantic_component = normalize_semantic_score(best_match.semantic_score);
+    let semantic_component = normalize_semantic_score(avg_semantic);
     let keyword_component = normalize_keyword_score(best_keyword_raw);
-    let blended_score = blend_similarity_scores(semantic_component, keyword_component);
+    let recency_component = recency_score(&conversation.updated_at);
+    let importance_component = compute_conversation_importance(&message_matches, &message_chunks);
+    let blended_score = blend_similarity_scores(
+      semantic_component,
+      keyword_component,
+      recency_component,
+      importance_component,
+    );
 
     let mut excerpts = Vec::new();
     for entry in message_matches.iter().take(3) {
@@ -663,8 +746,58 @@ fn normalize_keyword_score(value: usize) -> f64 {
   }
 }
 
-fn blend_similarity_scores(semantic_component: f64, keyword_component: f64) -> f64 {
-  (semantic_component * SEMANTIC_SCORE_WEIGHT) + (keyword_component * KEYWORD_SCORE_WEIGHT)
+fn blend_similarity_scores(
+  semantic_component: f64,
+  keyword_component: f64,
+  recency_component: f64,
+  importance_component: f64,
+) -> f64 {
+  (semantic_component * SEMANTIC_SCORE_WEIGHT)
+    + (keyword_component * KEYWORD_SCORE_WEIGHT)
+    + (recency_component.clamp(0.0, 1.0) * RECENCY_SCORE_WEIGHT)
+    + (importance_component.clamp(0.0, 1.0) * IMPORTANCE_SCORE_WEIGHT)
+}
+
+fn conversation_lexical_score(conversation: &ReverieConversation, keyword_text: &str) -> usize {
+  conversation
+    .head_records_toon
+    .iter()
+    .chain(conversation.tail_records_toon.iter())
+    .take(20)
+    .map(|line| score_query_relevance(line, keyword_text))
+    .max()
+    .unwrap_or(0)
+}
+
+fn recency_score(updated_at: &Option<String>) -> f64 {
+  if let Some(ts) = updated_at
+    && let Ok(dt) = DateTime::parse_from_rfc3339(ts)
+  {
+    let utc: DateTime<Utc> = dt.with_timezone(&Utc);
+    let age_seconds = (Utc::now() - utc).num_seconds().max(0) as f64;
+    let age_days = age_seconds / 86_400.0;
+    let lambda = 0.05_f64; // ~half-life of ~14 days
+    return (-lambda * age_days).exp().clamp(0.0, 1.0);
+  }
+  0.5
+}
+
+fn compute_conversation_importance(message_matches: &[MessageMatch], message_chunks: &[String]) -> f64 {
+  if message_matches.is_empty() {
+    return 0.0;
+  }
+
+  let mut best = 0usize;
+  for entry in message_matches.iter().take(8) {
+    if let Some(text) = message_chunks.get(entry.message_idx) {
+      let local = score_message_importance(text);
+      if local > best {
+        best = local;
+      }
+    }
+  }
+
+  (best as f64 / 20.0).clamp(0.0, 1.0)
 }
 
 fn extract_insight_from_json(value: &serde_json::Value) -> Option<String> {

@@ -152,6 +152,7 @@ export {
 } from "./reverie";
 export type {
   ReverieInsight,
+  ReverieEpisodeSummary,
   ReverieSearchOptions,
   GradingOptions,
   ReverieFilterStats,

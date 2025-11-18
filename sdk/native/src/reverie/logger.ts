@@ -26,18 +26,21 @@ export function logReverieSearch(query: string, context?: string): void {
 export function logReverieFiltering(stats: {
   total: number;
   afterQuality: number;
+  afterBoilerplate?: number;
   afterScore: number;
   afterDedup: number;
   minScore?: number;
 }): void {
-  const { total, afterQuality, afterScore, afterDedup, minScore = 0.7 } = stats;
+  const { total, afterQuality, afterBoilerplate, afterScore, afterDedup, minScore = 0.7 } = stats;
   const qualityFiltered = total - afterQuality;
-  const scoreFiltered = afterQuality - afterScore;
+  const boilerplateStage = (afterBoilerplate ?? afterQuality);
+  const boilerplateFiltered = afterQuality - boilerplateStage;
+  const scoreFiltered = boilerplateStage - afterScore;
   const duplicatesFiltered = afterScore - afterDedup;
 
   console.log(
-    `📊 Reverie filtering: ${total} raw → ${afterQuality} valid → ${afterScore} high-scoring (≥${minScore}) → ${afterDedup} unique` +
-    ` (filtered: ${qualityFiltered} low-quality, ${scoreFiltered} low-score, ${duplicatesFiltered} duplicates)`
+    `📊 Reverie filtering: ${total} raw → ${afterQuality} valid → ${boilerplateStage} conversational → ${afterScore} high-scoring (≥${minScore}) → ${afterDedup} unique` +
+    ` (filtered: ${qualityFiltered} low-quality, ${boilerplateFiltered} boilerplate, ${scoreFiltered} low-score, ${duplicatesFiltered} duplicates)`
   );
 }
 

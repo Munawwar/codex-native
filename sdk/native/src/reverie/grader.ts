@@ -110,6 +110,9 @@ REJECT excerpts containing:
 - Generic phrases ("Context from past work", "working on this", etc.)
 - Metadata and system information
 - Boilerplate text
+- Task or checklist instructions ("1.", "2.", "Plan:")
+- AGENTS.md guidance, sandbox instructions, or environment descriptions
+- Tool output summaries or command transcript blocks
 
 APPROVE ONLY excerpts with:
 - Specific code/file references (file paths, function names, variable names)

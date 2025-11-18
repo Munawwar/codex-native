@@ -27,6 +27,7 @@ import type {
   FileLevelContext,
 } from "./types.js";
 import { isValidReverieExcerpt, deduplicateReverieInsights } from "./quality.js";
+import { filterBoilerplateInsights } from "./boilerplate.js";
 import {
   logReverieSearch,
   logReverieFiltering,
@@ -134,6 +135,7 @@ export async function applyReveriePipeline(
   const stats: ReverieFilterStats = {
     total: rawInsights.length,
     afterQuality: 0,
+    afterBoilerplate: 0,
     afterScore: 0,
     afterDedup: 0,
     final: 0,
@@ -143,12 +145,18 @@ export async function applyReveriePipeline(
   const validInsights = rawInsights.filter((insight) => isValidReverieExcerpt(insight.excerpt));
   stats.afterQuality = validInsights.length;
 
-  // Stage 3: Split by relevance threshold
-  const highScoring = validInsights.filter((insight) => insight.relevance >= minRelevanceForGrading);
-  const lowScoring = validInsights.filter((insight) => insight.relevance < minRelevanceForGrading);
+  // Stage 3: Embedding-based boilerplate filtering
+  const { kept: conversationalInsights } = await filterBoilerplateInsights(validInsights, {
+    projectRoot: repo,
+  });
+  stats.afterBoilerplate = conversationalInsights.length;
+
+  // Stage 4: Split by relevance threshold
+  const highScoring = conversationalInsights.filter((insight) => insight.relevance >= minRelevanceForGrading);
+  const lowScoring = conversationalInsights.filter((insight) => insight.relevance < minRelevanceForGrading);
   stats.afterScore = highScoring.length;
 
-  // Stage 4: LLM grading (optional, only for high-scoring)
+  // Stage 5: LLM grading (optional, only for high-scoring)
   let gradedInsights: ReverieInsight[];
 
   if (skipLLMGrading || !runner) {
@@ -177,7 +185,7 @@ export async function applyReveriePipeline(
     }
   }
 
-  // Stage 5: Deduplication (keeps highest relevance)
+  // Stage 6: Deduplication (keeps highest relevance)
   const deduplicated = deduplicateReverieInsights(gradedInsights);
   stats.afterDedup = deduplicated.length;
 
@@ -189,6 +197,7 @@ export async function applyReveriePipeline(
   logReverieFiltering({
     total: stats.total,
     afterQuality: stats.afterQuality,
+    afterBoilerplate: stats.afterBoilerplate,
     afterScore: stats.afterScore,
     afterDedup: stats.afterDedup,
     minScore: minRelevanceForGrading,

@@ -65,7 +65,10 @@ export {
   applyQualityPipeline,
 } from "./quality.js";
 
+export { filterBoilerplateInsights } from "./boilerplate.js";
+
 export type { ReverieResult, QualityFilterStats } from "./quality.js";
+export type { ReverieEpisodeSummary } from "./types.js";
 
 // ============================================================================
 // Logging
@@ -95,6 +98,7 @@ export { extractKeySymbols } from "./symbols.js";
 // ============================================================================
 
 export { searchReveries } from "./search.js";
+export { searchEpisodeSummaries } from "./episodes.js";
 
 // ============================================================================
 // LLM-Based Relevance Grading

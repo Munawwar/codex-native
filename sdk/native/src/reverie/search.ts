@@ -8,10 +8,11 @@
  * - Quality and deduplication pipelines
  */
 
-import { reverieSearchSemantic } from "../nativeBinding.js";
+import { reverieSearchSemantic, reverieSearchConversations } from "../nativeBinding.js";
 import type { ReverieSemanticSearchOptions, ReverieSearchResult } from "../nativeBinding.js";
 import type { ReverieInsight, ReverieSearchOptions } from "./types.js";
 import { isValidReverieExcerpt, deduplicateReverieInsights } from "./quality.js";
+import { filterBoilerplateInsights } from "./boilerplate.js";
 import {
   DEFAULT_REVERIE_LIMIT,
   DEFAULT_REVERIE_MAX_CANDIDATES,
@@ -20,6 +21,7 @@ import {
   DEFAULT_RERANKER_TOP_K,
   DEFAULT_RERANKER_BATCH_SIZE,
 } from "./constants.js";
+import { searchEpisodeSummaries } from "./episodes.js";
 
 /**
  * Performs advanced semantic search over reverie conversation history.
@@ -90,6 +92,8 @@ export async function searchReveries(
     projectRoot: repo,
     limit: maxCandidates * candidateMultiplier, // Get 3x candidates for heavy filtering
     maxCandidates: maxCandidates * candidateMultiplier,
+    normalize: true,
+    cache: true,
   };
 
   // Add reranker if enabled
@@ -101,19 +105,45 @@ export async function searchReveries(
 
   try {
     // Execute semantic search
+    const regexMatches = looksLikeStructuredQuery(normalized)
+      ? await reverieSearchConversations(codexHome, normalized, limit).catch(() => [])
+      : [];
+
     const matches = await reverieSearchSemantic(codexHome, normalized, searchOptions);
+    const combinedMatches = mergeSearchResults(regexMatches, matches);
 
     // Convert search results to insights
-    const insights = convertSearchResultsToInsights(matches);
+    const insights = convertSearchResultsToInsights(combinedMatches);
 
     // Apply quality filtering
     const validInsights = insights.filter((insight) => isValidReverieExcerpt(insight.excerpt));
 
-    // Deduplicate similar excerpts (keeps highest relevance)
-    const deduplicated = deduplicateReverieInsights(validInsights);
+    const { kept: conversational } = await filterBoilerplateInsights(validInsights, {
+      projectRoot: repo,
+    });
 
-    // Return top N results
-    return deduplicated.slice(0, limit);
+    // Deduplicate similar excerpts (keeps highest relevance)
+    const deduplicated = deduplicateReverieInsights(conversational);
+
+    const episodeMatches = await searchEpisodeSummaries(codexHome, normalized, repo, limit * 4).catch(() => []);
+    const episodeBoost = new Map<string, number>();
+    for (const episode of episodeMatches) {
+      episodeBoost.set(episode.conversationId, Math.max(episodeBoost.get(episode.conversationId) ?? 0, episode.importance ?? 0));
+    }
+
+    const ranked = deduplicated
+      .map((insight) => {
+        const bonus = episodeBoost.get(insight.conversationId) ?? 0;
+        return {
+          insight,
+          score: insight.relevance + bonus / 10,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ insight }) => insight);
+
+    return ranked;
   } catch (error) {
     console.warn(
       `Reverie search failed: ${error instanceof Error ? error.message : String(error)}`
@@ -129,11 +159,93 @@ export async function searchReveries(
  * @returns Array of ReverieInsight objects
  */
 function convertSearchResultsToInsights(results: ReverieSearchResult[]): ReverieInsight[] {
-  return results.map((match) => ({
-    conversationId: match.conversation?.id || "unknown",
-    timestamp: match.conversation?.createdAt || new Date().toISOString(),
-    relevance: typeof match.relevanceScore === "number" ? match.relevanceScore : 0,
-    excerpt: match.matchingExcerpts?.[0] || "",
-    insights: Array.isArray(match.insights) ? match.insights : [],
-  }));
+  const flattened: ReverieInsight[] = [];
+
+  for (const match of results) {
+    const base: ReverieInsight = {
+      conversationId: match.conversation?.id || "unknown",
+      timestamp: match.conversation?.createdAt || match.conversation?.updatedAt || new Date().toISOString(),
+      relevance: typeof match.relevanceScore === "number" ? match.relevanceScore : 0,
+      excerpt: "",
+      insights: Array.isArray(match.insights) ? match.insights : [],
+    };
+
+    const excerpts = match.matchingExcerpts?.length ? match.matchingExcerpts : [""];
+    for (const excerpt of excerpts) {
+      if (!excerpt.trim()) {
+        continue;
+      }
+      flattened.push({ ...base, excerpt });
+    }
+  }
+
+  return flattened;
+}
+
+function mergeSearchResults(primary: ReverieSearchResult[], secondary: ReverieSearchResult[]): ReverieSearchResult[] {
+  const seen = new Set<string>();
+  const merged: ReverieSearchResult[] = [];
+
+  for (const list of [primary, secondary]) {
+    for (const match of list) {
+      const convoId = match.conversation?.id || "unknown";
+      const excerptKey = match.matchingExcerpts?.[0] || String(match.relevanceScore ?? 0);
+      const key = `${convoId}:${excerptKey}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(match);
+    }
+  }
+
+  return merged;
+}
+
+function looksLikeStructuredQuery(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+
+  const structuredPatterns = [
+    /traceback \(most recent call last\)/i, // Python
+    /exception in thread/i,
+    /java\.lang\./i,
+    /org\.junit/i,
+    /at\s+org\./i,
+    /AssertionError:/i,
+    /panic!|thread '.+' panicked/i,
+    /FAIL\s+\S+\s+\(/i, // Jest/Vitest
+    /(?:error|fail|fatal):/i,
+    /Caused by:/i,
+    /\bundefined reference to\b/i,
+  ];
+
+  for (const pattern of structuredPatterns) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+
+  const hashPattern = /\b[0-9a-f]{32,}\b/i; // commit or build IDs
+  if (hashPattern.test(text)) {
+    return true;
+  }
+
+  const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+  if (uuidPattern.test(text)) {
+    return true;
+  }
+
+  const stackFrameMatches = text.match(/\bat\s+[^\s]+\s*\(|\b\S+\.\w+:\d+/gi);
+  if ((stackFrameMatches?.length ?? 0) >= 2) {
+    return true;
+  }
+
+  const severityTokens = text.match(/\b(?:fail|error|panic|assert|fatal)\b/gi)?.length ?? 0;
+  if (severityTokens >= 3 && text.length > 50) {
+    return true;
+  }
+
+  return false;
 }

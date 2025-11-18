@@ -88,12 +88,15 @@ export function isValidReverieExcerpt(excerpt: string): boolean {
   const underscoreRatio = snakeTokens.length / rawTokens.length;
 
   const headingLines = lines.filter((line) => /^#{1,6}\s/.test(line));
-  const bulletLines = lines.filter((line) => /^([\-\*]|\d+\.)\s/.test(line));
+  const bulletLines = lines.filter((line) => /^\s*[\-\*]\s/.test(line));
+  const numericBulletLines = lines.filter((line) => /^\s*\d+[\).]/.test(line));
   const colonLabelLines = lines.filter((line) => /^[A-Za-z0-9 _-]{1,24}:/.test(line));
 
   const headingRatio = headingLines.length / Math.max(lines.length, 1);
   const bulletRatio = bulletLines.length / Math.max(lines.length, 1);
   const colonLabelRatio = colonLabelLines.length / Math.max(lines.length, 1);
+  const numericRatio = numericBulletLines.length / Math.max(lines.length, 1);
+  const enumeratedRatio = (bulletLines.length + numericBulletLines.length) / Math.max(lines.length, 1);
 
   const initialTitleCaseRun = (() => {
     let run = 0;
@@ -131,6 +134,10 @@ export function isValidReverieExcerpt(excerpt: string): boolean {
     return false;
   }
 
+  if (enumeratedRatio > 0.6 && lines.length >= 3) {
+    return false;
+  }
+
   const metadataScore = [
     uppercaseRatio > 0.45,
     underscoreRatio > 0.2,
@@ -139,6 +146,7 @@ export function isValidReverieExcerpt(excerpt: string): boolean {
     initialTitleCaseRun >= 3,
     repeatedWordRatio > 0.45 && tokens.length > 15,
     rawTokens.length < 12 && colonLabelRatio > 0,
+    numericRatio > 0.5,
   ].filter(Boolean).length;
 
   if (metadataScore >= 2) {
