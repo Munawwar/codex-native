@@ -641,7 +641,7 @@ async fn unified_exec_emits_begin_for_write_stdin() -> Result<()> {
 
     let open_call_id = "uexec-open-for-begin";
     let open_args = json!({
-        "cmd": "/bin/sh -c echo ready".to_string(),
+        "cmd": "/bin/sh -c 'sleep 1; echo ready'".to_string(),
         "yield_time_ms": 200,
     });
 
@@ -707,7 +707,7 @@ async fn unified_exec_emits_begin_for_write_stdin() -> Result<()> {
         vec![
             "/bin/bash".to_string(),
             "-lc".to_string(),
-            "/bin/sh -c echo ready".to_string()
+            "/bin/sh -c 'sleep 1; echo ready'".to_string()
         ]
     );
     assert_eq!(
