@@ -13,12 +13,23 @@
  */
 
 import { describe, expect, it } from "@jest/globals";
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as path from "path";
 
 const execAsync = promisify(exec);
+
+function hasClaudeCli(): boolean {
+  try {
+    execSync("claude --version", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const shouldRunClaudeCli = process.env.RUN_CLAUDE_CLI_TESTS === "1" && hasClaudeCli();
 
 interface ClaudeJSONResponse {
   type: string;
@@ -30,7 +41,7 @@ interface ClaudeJSONResponse {
   session_id?: string;
 }
 
-describe("Claude CLI Integration - JSON Output", () => {
+(shouldRunClaudeCli ? describe : describe.skip)("Claude CLI Integration - JSON Output", () => {
   const testWorkDir = path.join(process.cwd(), ".test-claude-cli");
 
   beforeAll(async () => {

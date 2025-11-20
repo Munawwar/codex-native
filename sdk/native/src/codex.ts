@@ -253,9 +253,8 @@ export class Codex {
    */
   startThread(options: ThreadOptions = {}): Thread {
     const threadOptions: ThreadOptions = {
-      model: options.model ?? this.options.defaultModel,
-      modelProvider: options.modelProvider ?? this.options.modelProvider,
       ...options,
+      model: options.model ?? this.options.defaultModel,
     };
     return new Thread(this.exec, this.options, threadOptions);
   }
@@ -269,9 +268,8 @@ export class Codex {
    */
   resumeThread(id: string, options: ThreadOptions = {}): Thread {
     const threadOptions: ThreadOptions = {
-      model: options.model ?? this.options.defaultModel,
-      modelProvider: options.modelProvider ?? this.options.modelProvider,
       ...options,
+      model: options.model ?? this.options.defaultModel,
     };
     return new Thread(this.exec, this.options, threadOptions, id);
   }
@@ -303,9 +301,8 @@ export class Codex {
       config: this.buildConversationConfig(options),
     });
     const threadOptions: ThreadOptions = {
-      model: options.model ?? this.options.defaultModel,
-      modelProvider: options.modelProvider ?? this.options.modelProvider,
       ...options,
+      model: options.model ?? this.options.defaultModel,
     };
     return new Thread(this.exec, this.options, threadOptions, result.threadId);
   }

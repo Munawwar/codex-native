@@ -6,9 +6,9 @@ const config = {
     "^.+\\.(ts|tsx)$": ["ts-jest", {
       useESM: true,
       tsconfig: {
-        module: "ES2022",
+        module: "NodeNext",
         target: "ES2022",
-        moduleResolution: "node",
+        moduleResolution: "NodeNext",
         noUncheckedIndexedAccess: true,
       },
     }],
