@@ -852,6 +852,8 @@ fn build_config_inputs(
     tools_web_search_request: None,
     experimental_sandbox_command_assessment: None,
     additional_writable_roots: Vec::new(),
+    model_reasoning_effort: options.reasoning_effort,
+    model_reasoning_summary: options.reasoning_summary,
   };
 
   Ok((overrides, cli_kv_overrides))
@@ -1481,4 +1483,57 @@ fn build_cloud_client(
     client = client.with_bearer_token(token);
   }
   Ok(client)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use codex_protocol::config_types::{ReasoningEffort, ReasoningSummary};
+  use tempfile::TempDir;
+
+  fn base_internal_request() -> InternalRunRequest {
+    InternalRunRequest {
+      prompt: "test".to_string(),
+      thread_id: None,
+      images: Vec::new(),
+      model: None,
+      model_provider: None,
+      oss: false,
+      sandbox_mode: None,
+      approval_mode: None,
+      workspace_write_options: None,
+      review_request: None,
+      working_directory: None,
+      skip_git_repo_check: true,
+      output_schema: None,
+      base_url: None,
+      api_key: None,
+      linux_sandbox_path: None,
+      reasoning_effort: None,
+      reasoning_summary: None,
+      full_auto: true,
+    }
+  }
+
+  #[tokio::test]
+  async fn load_config_respects_reasoning_overrides() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let mut req = base_internal_request();
+    req.working_directory = Some(tempdir.path().to_path_buf());
+    req.reasoning_effort = Some(ReasoningEffort::High);
+    req.reasoning_summary = Some(ReasoningSummary::Detailed);
+
+    let config = load_config_from_internal(&req)
+      .await
+      .expect("config should load");
+
+    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
+    assert_eq!(config.model_reasoning_summary, ReasoningSummary::Detailed);
+  }
+
+  #[test]
+  fn parses_xhigh_reasoning_effort_alias() {
+    let parsed = parse_reasoning_effort(Some("xhigh")).expect("parse succeeds");
+    assert_eq!(parsed, Some(ReasoningEffort::High));
+  }
 }
