@@ -170,6 +170,8 @@ impl CodexToolCallParam {
             show_raw_agent_reasoning: None,
             tools_web_search_request: None,
             experimental_sandbox_command_assessment: None,
+            model_reasoning_effort: None,
+            model_reasoning_summary: None,
             additional_writable_roots: Vec::new(),
         };
 
