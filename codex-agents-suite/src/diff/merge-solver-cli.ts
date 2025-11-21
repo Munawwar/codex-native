@@ -75,7 +75,20 @@ async function main(): Promise<void> {
   try {
     const solver = new MergeConflictSolver(createDefaultSolverConfig(cwd));
     await solver.run();
-    shouldAbortOnFailure = false;
+    const mergeActive = await git.isMergeInProgress();
+    const remainingConflicts = await git.listConflictPaths();
+    if (!mergeActive && remainingConflicts.length === 0) {
+      shouldAbortOnFailure = false;
+    } else {
+      const conflictMsg =
+        remainingConflicts.length > 0
+          ? `${remainingConflicts.length} conflicted file${remainingConflicts.length === 1 ? "" : "s"}`
+          : "merge still in progress";
+      await abortMergeIfNeeded(
+        `Solver completed but left ${conflictMsg}; cleaning up to restore a clean working tree`,
+      );
+      shouldAbortOnFailure = false;
+    }
   } catch (error) {
     console.error("merge-solver-cli failed:", error);
     process.exitCode = 1;
