@@ -1486,7 +1486,7 @@ fn build_cloud_client(
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_run {
   use super::*;
   use codex_protocol::config_types::{ReasoningEffort, ReasoningSummary};
   use tempfile::TempDir;
