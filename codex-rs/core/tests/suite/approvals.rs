@@ -1191,10 +1191,6 @@ fn scenarios() -> Vec<ScenarioSpec> {
 async fn approval_matrix_covers_all_modes() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    if cfg!(target_os = "macos") {
-        eprintln!("Skipping approval matrix on macOS test runners due to tmpdir permissions.");
-        return Ok(());
-    }
 
     // Isolate caches/tmp so seatbelted environments do not fail creating files under /tmp.
     let tmp = tempfile::TempDir::new()?;
