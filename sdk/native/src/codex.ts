@@ -184,7 +184,18 @@ export class Codex {
     }
     try {
       this.registerToolInterceptor("read_file", async ({ invocation, callBuiltin }) => {
-        const base = await callBuiltin();
+        let base: NativeToolResult;
+        try {
+          base = await callBuiltin();
+        } catch (err) {
+          // If the native binding no longer has a pending builtin (e.g., token mismatch),
+          // fall back to the raw invocation result instead of failing the turn.
+          return {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+            output: undefined,
+          };
+        }
         if (!base.output || base.success === false) {
           return base;
         }
