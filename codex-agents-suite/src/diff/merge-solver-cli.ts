@@ -71,6 +71,9 @@ async function main(): Promise<void> {
       process.exit(1);
     })();
   });
+  process.once("beforeExit", (code) => {
+    void abortMergeIfNeeded(`Process exiting (code ${code ?? 0}) with merge still in progress`);
+  });
 
   try {
     const solver = new MergeConflictSolver(createDefaultSolverConfig(cwd));
