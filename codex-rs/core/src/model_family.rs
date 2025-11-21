@@ -192,6 +192,11 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             default_verbosity: Some(Verbosity::Low),
             base_instructions: GPT_5_1_INSTRUCTIONS.to_string(),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
+            experimental_supported_tools: vec![
+                "grep_files".to_string(),
+                "list_dir".to_string(),
+                "read_file".to_string(),
+            ],
         )
     } else if slug.starts_with("gpt-5") {
         model_family!(
