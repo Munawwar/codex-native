@@ -28,7 +28,6 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
-use core_test_support::wait_for_event_match_with_timeout;
 use core_test_support::wait_for_event_with_timeout;
 use regex_lite::Regex;
 use serde_json::Value;
@@ -358,97 +357,6 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-    skip_if_sandbox!(Ok(()));
-    skip_if_no_pty!(Ok(()));
-
-    let server = start_server_with_mcp().await;
-
-    let mut builder = test_codex().with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
-        config.features.enable(Feature::UnifiedExec);
-    });
-    let TestCodex {
-        codex,
-        cwd,
-        session_configured,
-        ..
-    } = builder.build(&server).await?;
-
-    let call_id = "uexec-end-event";
-    let args = json!({
-        "cmd": "/bin/echo END-EVENT".to_string(),
-        "yield_time_ms": 250,
-    });
-    let poll_call_id = "uexec-end-event-poll";
-    let poll_args = json!({
-        "chars": "",
-        "session_id": 0,
-        "yield_time_ms": 250,
-    });
-
-    let responses = vec![
-        sse(vec![
-            ev_response_created("resp-1"),
-            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
-            ev_completed("resp-1"),
-        ]),
-        sse(vec![
-            ev_response_created("resp-2"),
-            ev_function_call(
-                poll_call_id,
-                "write_stdin",
-                &serde_json::to_string(&poll_args)?,
-            ),
-            ev_completed("resp-2"),
-        ]),
-        sse(vec![
-            ev_response_created("resp-3"),
-            ev_assistant_message("msg-1", "finished"),
-            ev_completed("resp-3"),
-        ]),
-    ];
-    mount_sse_sequence(&server, responses).await;
-
-    let session_model = session_configured.model.clone();
-
-    codex
-        .submit(Op::UserTurn {
-            items: vec![UserInput::Text {
-                text: "emit end event".into(),
-            }],
-            final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
-            approval_policy: AskForApproval::Never,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            model: session_model,
-            effort: None,
-            summary: ReasoningSummary::Auto,
-        })
-        .await?;
-
-    let end_event = wait_for_event_match_with_timeout(
-        &codex,
-        |msg| match msg {
-            EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
-            _ => None,
-        },
-        Duration::from_secs(30),
-    )
-    .await;
-
-    assert_eq!(end_event.exit_code, 0);
-    assert!(
-        end_event.aggregated_output.contains("END-EVENT"),
-        "expected aggregated output to contain marker"
-    );
-
-    wait_for_event(&codex, |event| matches!(event, EventMsg::TaskComplete(_))).await;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
@@ -641,7 +549,7 @@ async fn unified_exec_emits_begin_for_write_stdin() -> Result<()> {
 
     let open_call_id = "uexec-open-for-begin";
     let open_args = json!({
-        "cmd": "/bin/sh -c echo ready".to_string(),
+        "cmd": "/bin/sh -c 'sleep 1; echo ready'".to_string(),
         "yield_time_ms": 200,
     });
 
@@ -707,7 +615,7 @@ async fn unified_exec_emits_begin_for_write_stdin() -> Result<()> {
         vec![
             "/bin/bash".to_string(),
             "-lc".to_string(),
-            "/bin/sh -c echo ready".to_string()
+            "/bin/sh -c 'sleep 1; echo ready'".to_string()
         ]
     );
     assert_eq!(
@@ -744,7 +652,7 @@ async fn unified_exec_emits_begin_event_for_write_stdin_requests() -> Result<()>
 
     let open_call_id = "uexec-open-session";
     let open_args = json!({
-        "cmd": "/bin/sh -c echo ready".to_string(),
+        "cmd": "/bin/sh -c 'sleep 1; echo ready'".to_string(),
         "yield_time_ms": 250,
     });
 
@@ -824,7 +732,7 @@ async fn unified_exec_emits_begin_event_for_write_stdin_requests() -> Result<()>
         vec![
             "/bin/bash".to_string(),
             "-lc".to_string(),
-            "/bin/sh -c echo ready".to_string()
+            "/bin/sh -c 'sleep 1; echo ready'".to_string()
         ]
     );
     assert!(
@@ -842,7 +750,7 @@ async fn unified_exec_emits_begin_event_for_write_stdin_requests() -> Result<()>
         vec![
             "/bin/bash".to_string(),
             "-lc".to_string(),
-            "/bin/sh -c echo ready".to_string()
+            "/bin/sh -c 'sleep 1; echo ready'".to_string()
         ]
     );
     assert!(

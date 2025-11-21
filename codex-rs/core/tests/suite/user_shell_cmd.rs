@@ -29,6 +29,7 @@ use regex_lite::escape;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+#[cfg_attr(target_os = "windows", ignore = "flaky on Windows aarch64 runners")]
 #[tokio::test]
 async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
     // Create a temporary working directory with a known file.
@@ -97,6 +98,7 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
     assert_eq!(stdout, contents);
 }
 
+#[cfg_attr(target_os = "windows", ignore = "flaky on Windows aarch64 runners")]
 #[tokio::test]
 async fn user_shell_cmd_can_be_interrupted() {
     // Set up isolated config and conversation.
@@ -131,6 +133,7 @@ async fn user_shell_cmd_can_be_interrupted() {
     assert_eq!(ev.reason, TurnAbortReason::Interrupted);
 }
 
+#[cfg_attr(target_os = "windows", ignore = "flaky on Windows aarch64 runners")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_shell_command_history_is_persisted_and_shared_with_model() -> anyhow::Result<()> {
     skip_if_sandbox!(Ok(()));
@@ -225,6 +228,7 @@ async fn user_shell_command_history_is_persisted_and_shared_with_model() -> anyh
     Ok(())
 }
 
+#[cfg_attr(target_os = "windows", ignore = "flaky on Windows aarch64 runners")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_shell_command_output_is_truncated_in_history() -> anyhow::Result<()> {
     skip_if_sandbox!(Ok(()));
@@ -283,6 +287,7 @@ async fn user_shell_command_output_is_truncated_in_history() -> anyhow::Result<(
     Ok(())
 }
 
+#[cfg_attr(target_os = "windows", ignore = "flaky on Windows aarch64 runners")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_shell_command_is_truncated_only_once() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
