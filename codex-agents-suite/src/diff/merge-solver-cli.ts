@@ -6,7 +6,7 @@
  * Lightweight wrapper so you can run the merge workflow directly from any git
  * repo via:
  *
- *   pnpm exec tsx diff-agent/src/merge-solver-cli.ts
+ *   pnpm exec tsx codex-agents-suite/src/diff/merge-solver-cli.ts
  */
 
 import fs from "node:fs";

@@ -33,6 +33,7 @@ const CiIssueSchema = z.object({
   summary: z.string().min(10),
   suggestedCommands: z.array(z.string()).default([]),
   files: z.array(z.string()).default([]),
+  owner: z.string().optional().or(z.literal(null)).transform((value) => value ?? ""),
   autoFixable: z.boolean().default(false),
 });
 export type CiIssue = z.output<typeof CiIssueSchema>;
@@ -43,6 +44,7 @@ const CiFixSchema = z.object({
   priority: z.enum(["P0", "P1", "P2", "P3"]).or(z.string()),
   steps: z.array(z.string()).default([]),
   commands: z.array(z.string()).default([]),
+  owner: z.string().optional().or(z.literal(null)).transform((value) => value ?? ""),
 });
 export type CiFix = z.output<typeof CiFixSchema>;
 const CiFixListSchema = z.array(CiFixSchema).min(1).max(15);
@@ -166,6 +168,7 @@ const CiIssueOutputType: JsonSchemaDefinition = {
       summary: stringField(10),
       suggestedCommands: stringArrayField(),
       files: stringArrayField(),
+      owner: optionalStringField(),
       autoFixable: { type: "boolean" },
     },
     { maxItems: 12 },
@@ -181,7 +184,8 @@ const CiFixOutputType: JsonSchemaDefinition = {
       title: stringField(5),
       priority: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
       steps: stringArrayField(),
-      commands: stringArrayField(),
+      commands: { schema: stringArrayField(), optional: true },
+      owner: optionalStringField(),
     },
     { maxItems: 15 },
   ),

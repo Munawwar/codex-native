@@ -95,7 +95,7 @@ test("Structured output schemas enforce valid payloads", () => {
           severity: "P1",
           title: "Missing unit tests",
           summary: "Schema definitions lack coverage",
-          suggestedCommands: ["pnpm --filter multi-agent-codex-system run test"],
+          suggestedCommands: ["pnpm --filter codex-agents-suite run test"],
           files: ["src/schemas.ts"],
           owner: null,
           autoFixable: false,

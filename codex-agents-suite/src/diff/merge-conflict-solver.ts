@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Merge Conflict Solver (diff-agent integration)
+ * Merge Conflict Solver (agents suite integration)
  *
  * Provides the multi-agent workflow previously shipped with the standalone script,
- * but refactored into reusable modules so diff-agent can expose it via --merge.
+ * but refactored into reusable modules so the suite can expose it via --merge.
  */
 
 import { execFile } from "node:child_process";
@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 
 import { Codex, type Thread, type ThreadOptions, type Usage } from "@codex-native/sdk";
 
-import { runThreadTurnWithLogs } from "./threadLogging.js";
+import { runThreadTurnWithLogs } from "./thread-logging.js";
 import {
   DEFAULT_COORDINATOR_MODEL,
   DEFAULT_WORKER_MODEL,

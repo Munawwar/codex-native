@@ -9,3 +9,6 @@ export type { CiAnalysis, MultiAgentConfig, RepoContext, ReviewAnalysis } from "
 // Reverie utilities
 export { isValidReverieExcerpt, deduplicateReverieInsights } from "./reverie-quality.js";
 export { logReverieSearch, logReverieFiltering, logReverieInsights } from "./reverie-logger.js";
+
+export { runDiffReview, MergeConflictSolver, createDefaultSolverConfig, runEnhancedCiOrchestrator } from "./diff/index.js";
+export { main as CliMain } from "./cli.js";

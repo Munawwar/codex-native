@@ -3,9 +3,9 @@ import { Codex } from "@codex-native/sdk";
 
 import { SUPERVISOR_OUTPUT_SCHEMA } from "./constants.js";
 import { createThreadLogger, logInfo, logWarn } from "./logging.js";
-import type { ThreadLoggingSink } from "../threadLogging.js";
+import type { ThreadLoggingSink } from "../thread-logging.js";
 import type { ApprovalContext, SupervisorDecision, SupervisorOptions, ThreadProvider } from "./types.js";
-import { runThreadTurnWithLogs } from "../threadLogging.js";
+import { runThreadTurnWithLogs } from "../thread-logging.js";
 
 export class ApprovalSupervisor {
   private readonly thread: Thread | null;
