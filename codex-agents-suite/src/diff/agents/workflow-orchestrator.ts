@@ -17,10 +17,11 @@ const OPEN_CODE_SEVERITY_THRESHOLD = 1200;
  * Drives: Coordinator → Worker(s) → Reviewer pipeline.
  */
 export class AgentWorkflowOrchestrator {
-  private readonly git = new GitRepo(this.config.workingDirectory);
+  private readonly git: GitRepo;
   private readonly approvalSupervisor: ApprovalSupervisor | null;
 
   constructor(private readonly config: AgentWorkflowConfig) {
+    this.git = new GitRepo(this.config.workingDirectory);
     this.approvalSupervisor = this.buildSupervisor();
   }
 
@@ -87,8 +88,12 @@ export class AgentWorkflowOrchestrator {
 
     const schedule = (conflict: ConflictContext): void => {
       const task = this.handleConflict(conflict, coordinatorPlan, remoteComparison)
-        .then((outcome) => outcomes.push(outcome))
-        .finally(() => active.delete(task));
+        .then((outcome) => {
+          outcomes.push(outcome);
+        })
+        .finally(() => {
+          active.delete(task);
+        });
       active.add(task);
     };
 

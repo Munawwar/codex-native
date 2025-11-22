@@ -58,7 +58,7 @@ export async function runOpenCodeResolution(
       threadId: thread.id ?? undefined,
     };
   } catch (error: any) {
-    logger.scope("opencode", conflict.path).warn(`OpenCode resolution failed: ${String(error)}`);
+    logger.scope("worker", conflict.path).warn(`OpenCode resolution failed: ${String(error)}`);
     return {
       path: conflict.path,
       success: false,

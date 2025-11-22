@@ -41,7 +41,6 @@ export function createWorkerAgent(
     defaultModel: config.model || DEFAULT_WORKER_MODEL,
     workingDirectory: config.workingDirectory,
     sandboxMode: config.sandboxMode,
-    approvalMode: config.approvalMode,
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
     skipGitRepoCheck: config.skipGitRepoCheck ?? false,
