@@ -72,4 +72,9 @@ export type ReviewerAgentFactory = AgentFactory;
 export interface AgentWorkflowConfig extends AgentConfig, AgentModelConfig {
   maxConcurrentSimpleWorkers: number;
   reasoningEffort?: SolverConfig["reasoningEffort"];
+  /**
+   * Optional stub mode for tests/offline runs. When true, the orchestrator
+   * returns simulated outcomes without invoking remote models.
+   */
+  dryRun?: boolean;
 }

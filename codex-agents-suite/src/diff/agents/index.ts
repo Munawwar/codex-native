@@ -8,6 +8,9 @@
 
 export * from "./coordinator-agent.js";
 export * from "./worker-agent.js";
+export * from "./reviewer-agent.js";
+export * from "./supervisor-agent.js";
+export * from "./opencode-wrapper.js";
 export * from "./workflow-orchestrator.js";
 export * from "./types.js";
 export { convertToAgentConfig } from "./adapter.js";
