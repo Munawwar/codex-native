@@ -166,7 +166,7 @@ export class MergeConflictSolver {
     const outcomes: WorkerOutcome[] = [];
     const simpleConflicts = conflicts.filter((c) => this.conflictIsSimple(c));
     const complexConflicts = conflicts.filter((c) => !this.conflictIsSimple(c));
-    const maxConcurrentWorkers = 2;
+    const maxConcurrentWorkers = this.options.maxConcurrentSimpleWorkers ?? 2;
     const active = new Set<Promise<void>>();
 
     const recordOutcome = (outcome: WorkerOutcome): void => {
@@ -816,5 +816,6 @@ export function createDefaultSolverConfig(workingDirectory: string): SolverConfi
     originRef: process.env.CX_MERGE_ORIGIN_REF ?? "HEAD",
     upstreamRef: process.env.CX_MERGE_UPSTREAM_REF ?? "upstream/main",
     reasoningEffort: "high",
+    maxConcurrentSimpleWorkers: 2,
   };
 }

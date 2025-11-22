@@ -18,6 +18,11 @@ export type SolverConfig = {
   skipGitRepoCheck: boolean;
   originRef?: string | null;
   upstreamRef?: string | null;
+  /**
+   * Maximum number of "simple" conflicts to process concurrently.
+   * Complex conflicts are still processed sequentially to keep logging legible.
+   */
+  maxConcurrentSimpleWorkers?: number;
 };
 
 export type RepoSnapshot = {
