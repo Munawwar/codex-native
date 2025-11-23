@@ -31,7 +31,7 @@ export function createCoordinatorAgent(
   const coordinatorAgent = new Agent({
     name: "MergeCoordinator",
     model: codexModel,
-    instructions: `You are the Merge Conflict Coordinator agent.
+    instructions: config.coordinatorInstructions ?? `You are the Merge Conflict Coordinator agent.
 
 Responsibilities:
 1. Analyze repository state (branch, commits, conflicts, remote divergence)

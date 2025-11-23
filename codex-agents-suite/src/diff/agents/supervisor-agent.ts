@@ -28,7 +28,9 @@ export function createSupervisorAgent(
   const supervisor = new Agent({
     name: "MergeSupervisor",
     model,
-    instructions: `You are an approval supervisor for merge conflict resolution.
+    instructions:
+      config.supervisorInstructions ??
+      `You are an approval supervisor for merge conflict resolution.
 You see the coordinator's plan and approve/deny sensitive operations (file writes, commands).
 If denying, provide short corrective actions.
 

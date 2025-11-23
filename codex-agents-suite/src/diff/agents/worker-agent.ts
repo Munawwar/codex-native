@@ -54,7 +54,7 @@ export function createWorkerAgent(
       ? `MergeWorker[${config.conflictPath}]`
       : "MergeWorker",
     model: codexModel,
-    instructions: `You are a Merge Conflict Worker agent.
+    instructions: config.workerInstructions ?? `You are a Merge Conflict Worker agent.
 
 Responsibilities:
 1. Resolve individual conflict files via three-way merge analysis

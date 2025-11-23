@@ -18,6 +18,10 @@ export interface AgentConfig {
   sandboxMode: SandboxMode;
   skipGitRepoCheck?: boolean;
   approvalMode?: ApprovalMode;
+  coordinatorInstructions?: string;
+  workerInstructions?: string;
+  reviewerInstructions?: string;
+  supervisorInstructions?: string;
 }
 
 export interface AgentModelConfig {

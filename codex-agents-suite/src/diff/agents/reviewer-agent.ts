@@ -26,7 +26,9 @@ export function createReviewerAgent(config: AgentConfig & { model?: string }): A
   const reviewer = new Agent({
     name: "MergeReviewer",
     model,
-    instructions: "You review merge outcomes and produce a concise validation summary.",
+    instructions:
+      config.reviewerInstructions ??
+      "You review merge outcomes and produce a concise validation summary.",
   });
 
   return { agent: reviewer, model };

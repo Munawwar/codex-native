@@ -19,7 +19,8 @@ const DEFAULT_OPEN_CODE_SEVERITY_THRESHOLD = 1200;
 export class AgentWorkflowOrchestrator {
   private readonly git: GitRepo;
   private readonly approvalSupervisor: ApprovalSupervisor | null;
-  private readonly supervisorLogThread: Thread | null;
+  private supervisorLogThread: Thread | null;
+  private coordinatorThread: Thread | null = null;
   private readonly activeFiles = new Set<string>();
 
   constructor(private readonly config: AgentWorkflowConfig) {
@@ -39,15 +40,7 @@ export class AgentWorkflowOrchestrator {
 
     // Phase 1: Coordinator plans global strategy
     const coordinatorPlan = await this.runCoordinatorPhase(input);
-    if (this.supervisorLogThread && coordinatorPlan) {
-      try {
-        await this.supervisorLogThread.run(
-          `Coordinator plan recorded for approval context:\n${coordinatorPlan.slice(0, 1500)}`,
-        );
-      } catch (error) {
-        logWarn("supervisor", `Failed to log coordinator plan for supervisor context: ${error}`);
-      }
-    }
+    await this.syncSupervisorContext(coordinatorPlan, input);
 
     // Phase 2: Workers resolve individual conflicts
     const workerOutcomes = await this.runWorkerPhase(
@@ -74,6 +67,24 @@ export class AgentWorkflowOrchestrator {
     };
   }
 
+  private async syncSupervisorContext(plan: string | null, snapshot: CoordinatorInput): Promise<void> {
+    if (!this.supervisorLogThread) {
+      return;
+    }
+    try {
+      const statusLine = snapshot.statusShort ?? "<status unavailable>";
+      const diffStat = snapshot.diffStat ?? "<diffstat unavailable>";
+      const remote = snapshot.remoteComparison
+        ? `${snapshot.remoteComparison.originRef} ↔ ${snapshot.remoteComparison.upstreamRef}`
+        : "(no remote comparison)";
+      await this.supervisorLogThread.run(
+        `Supervisor context\nStatus: ${statusLine}\nDiffstat: ${diffStat}\nRemote: ${remote}\nPlan:\n${(plan ?? "<none>").slice(0, 1500)}`,
+      );
+    } catch (error) {
+      logWarn("supervisor", `Failed to log supervisor context: ${error}`);
+    }
+  }
+
   private async runCoordinatorPhase(input: CoordinatorInput): Promise<string | null> {
     logInfo("coordinator", "Running coordinator agent...");
 
@@ -82,8 +93,10 @@ export class AgentWorkflowOrchestrator {
       baseUrl: this.config.baseUrl,
       apiKey: this.config.apiKey,
       sandboxMode: this.config.sandboxMode,
+      approvalMode: this.config.approvalMode,
       skipGitRepoCheck: this.config.skipGitRepoCheck,
       model: this.config.coordinatorModel,
+      coordinatorInstructions: this.config.coordinatorInstructions,
     });
 
     const result = await run(agent, JSON.stringify(input));
@@ -172,6 +185,7 @@ export class AgentWorkflowOrchestrator {
       sandboxMode: this.config.sandboxMode,
       skipGitRepoCheck: this.config.skipGitRepoCheck,
       model: this.config.reviewerModel,
+      reviewerInstructions: this.config.reviewerInstructions,
     });
 
     const status = await this.git.getStatusShort();
@@ -247,6 +261,7 @@ export class AgentWorkflowOrchestrator {
       skipGitRepoCheck: this.config.skipGitRepoCheck,
       model,
       conflictPath: conflict.path,
+      workerInstructions: this.config.workerInstructions,
     });
 
     try {
