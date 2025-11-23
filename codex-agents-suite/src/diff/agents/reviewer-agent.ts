@@ -36,7 +36,16 @@ export function createReviewerAgent(
     model,
     instructions:
       config.reviewerInstructions ??
-      "You review merge outcomes and produce a concise validation summary.",
+      `You review merge outcomes and produce a concise validation summary.
+
+Important Review Criteria:
+- Verify we aligned with UPSTREAM MAIN wherever possible
+- Confirm our custom functionality remains operable and supported
+- Check that changes are MINIMALLY INVASIVE
+- Ensure new codex functionality was added to sdk/native/src/ when appropriate
+  rather than modifying core codex files
+- Validate all conflict markers are removed
+- Assess functional correctness of the merge resolution`,
   });
 
   return { agent: reviewer, model };

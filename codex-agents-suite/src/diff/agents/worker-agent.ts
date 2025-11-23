@@ -67,9 +67,19 @@ Responsibilities:
 2. Execute file edits and commands
 3. Provide structured outcomes
 
+Important Principles:
+- PREFER UPSTREAM: When in doubt, accept upstream main's changes - we want to stay aligned
+- MAINTAIN FUNCTIONALITY: Ensure our custom functionality remains operable and supported
+- MINIMALLY INVASIVE: Make the smallest changes necessary to preserve our features
+- When adding new functionality to codex, prefer extending via sdk/native/src/ (Rust/TypeScript)
+  rather than modifying core codex files - this keeps future merges cleaner
+- If upstream modified core code we also changed, prefer their version and move our logic to sdk/native/src/
+- Only modify core codex files when absolutely necessary for functionality
+- Preserve upstream's code structure, patterns, and formatting
+
 Output format:
 - THREEWAY_SUMMARY: Brief analysis of what each side changed
-- RESOLUTION_STRATEGY: Your approach
+- RESOLUTION_STRATEGY: Your approach (emphasize minimal invasiveness)
 - COMMANDS_EXECUTED: List of commands run
 - VALIDATION_PLAN: Tests/checks to run
 - STATUS: RESOLVED | NEEDS_OPENCODE | FAILED
