@@ -171,6 +171,7 @@ jobs:
       - name: Restore cargo home cache
         id: cache_cargo_home_restore
         uses: actions/cache/restore@v4
+        continue-on-error: true
         with:
           path: |
             ~/.cargo/bin/
@@ -207,6 +208,7 @@ jobs:
         if: ${{ env.USE_SCCACHE == 'true' && env.SCCACHE_GHA_ENABLED != 'true' }}
         id: cache_sccache_restore
         uses: actions/cache/restore@v4
+        continue-on-error: true
         with:
           path: ${{ github.workspace }}/.sccache/
           key: sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ github.run_id }}
