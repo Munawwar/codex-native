@@ -1,5 +1,5 @@
 import { run } from "@openai/agents";
-import { Codex } from "@codex-native/sdk";
+import { Codex, type Thread } from "@codex-native/sdk";
 import type { AgentWorkflowConfig, CoordinatorInput } from "./types.js";
 import type { WorkerOutcome, ConflictContext, RemoteComparison } from "../merge/types.js";
 import { createCoordinatorAgent } from "./coordinator-agent.js";
@@ -19,10 +19,13 @@ const OPEN_CODE_SEVERITY_THRESHOLD = 1200;
 export class AgentWorkflowOrchestrator {
   private readonly git: GitRepo;
   private readonly approvalSupervisor: ApprovalSupervisor | null;
+  private readonly supervisorLogThread: Thread | null;
 
   constructor(private readonly config: AgentWorkflowConfig) {
     this.git = new GitRepo(this.config.workingDirectory);
-    this.approvalSupervisor = this.buildSupervisor();
+    const { supervisor, logThread } = this.buildSupervisor();
+    this.approvalSupervisor = supervisor;
+    this.supervisorLogThread = logThread;
   }
 
   async execute(input: CoordinatorInput): Promise<{
@@ -35,6 +38,15 @@ export class AgentWorkflowOrchestrator {
 
     // Phase 1: Coordinator plans global strategy
     const coordinatorPlan = await this.runCoordinatorPhase(input);
+    if (this.supervisorLogThread && coordinatorPlan) {
+      try {
+        await this.supervisorLogThread.run(
+          `Coordinator plan recorded for approval context:\n${coordinatorPlan.slice(0, 1500)}`,
+        );
+      } catch (error) {
+        logWarn("supervisor", `Failed to log coordinator plan for supervisor context: ${error}`);
+      }
+    }
 
     // Phase 2: Workers resolve individual conflicts
     const workerOutcomes = await this.runWorkerPhase(
@@ -180,6 +192,8 @@ export class AgentWorkflowOrchestrator {
       defaultModel: this.config.workerModel,
       highReasoningModel: this.config.workerModelHigh,
       lowReasoningModel: this.config.workerModelLow,
+      highReasoningMatchers: this.config.highReasoningMatchers,
+      lowReasoningMatchers: this.config.lowReasoningMatchers,
     });
 
     const { agent } = createWorkerAgent({
@@ -251,13 +265,20 @@ export class AgentWorkflowOrchestrator {
     return remaining.length === 0;
   }
 
-  private buildSupervisor(): ApprovalSupervisor | null {
+  private buildSupervisor(): { supervisor: ApprovalSupervisor | null; logThread: Thread | null } {
     const model = this.config.supervisorModel ?? this.config.coordinatorModel;
     if (!model) {
-      return null;
+      return { supervisor: null, logThread: null };
     }
     try {
       const codex = new Codex({ baseUrl: this.config.baseUrl, apiKey: this.config.apiKey });
+      const logThread = codex.startThread({
+        model,
+        sandboxMode: this.config.sandboxMode,
+        approvalMode: this.config.approvalMode,
+        workingDirectory: this.config.workingDirectory,
+        skipGitRepoCheck: true,
+      });
       const supervisor = new ApprovalSupervisor(
         codex,
         {
@@ -265,15 +286,15 @@ export class AgentWorkflowOrchestrator {
           workingDirectory: this.config.workingDirectory,
           sandboxMode: this.config.sandboxMode,
         },
-        () => null,
+        () => logThread,
       );
       if (!supervisor.isAvailable()) {
-        return null;
+        return { supervisor: null, logThread: null };
       }
-      return supervisor;
+      return { supervisor, logThread };
     } catch (error) {
       logWarn("supervisor", `Unable to initialize approval supervisor: ${error}`);
-      return null;
+      return { supervisor: null, logThread: null };
     }
   }
 

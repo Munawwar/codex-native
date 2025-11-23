@@ -95,6 +95,8 @@ export function selectWorkerModel(
     defaultModel: string;
     highReasoningModel?: string;
     lowReasoningModel?: string;
+    highReasoningMatchers?: string[];
+    lowReasoningMatchers?: string[];
   }
 ): string {
   const markerCount = conflict.conflictMarkers ?? 0;
@@ -106,17 +108,22 @@ export function selectWorkerModel(
     return config.highReasoningModel || config.defaultModel;
   }
 
+  const highMatchers =
+    config.highReasoningMatchers && config.highReasoningMatchers.length > 0
+      ? config.highReasoningMatchers
+      : DEFAULT_HIGH_REASONING_MATCHERS;
+  const lowMatchers =
+    config.lowReasoningMatchers && config.lowReasoningMatchers.length > 0
+      ? config.lowReasoningMatchers
+      : DEFAULT_LOW_REASONING_MATCHERS;
+
   // Check file patterns
-  const matchesHigh = DEFAULT_HIGH_REASONING_MATCHERS.some((pattern) =>
-    simpleGlobMatch(conflict.path, pattern)
-  );
+  const matchesHigh = highMatchers.some((pattern) => simpleGlobMatch(conflict.path, pattern));
   if (matchesHigh) {
     return config.highReasoningModel || config.defaultModel;
   }
 
-  const matchesLow = DEFAULT_LOW_REASONING_MATCHERS.some((pattern) =>
-    simpleGlobMatch(conflict.path, pattern)
-  );
+  const matchesLow = lowMatchers.some((pattern) => simpleGlobMatch(conflict.path, pattern));
   if (matchesLow) {
     return config.lowReasoningModel || config.defaultModel;
   }

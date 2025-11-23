@@ -11,8 +11,8 @@ describe("selectWorkerModel", () => {
     const model = selectWorkerModel(
       {
         path: "src/core/heavy.rs",
-        conflictMarkers: 20,
-        lineCount: 500,
+        conflictMarkers: 25,
+        lineCount: 600,
         language: "Rust",
         diffExcerpt: null,
         workingExcerpt: null,
