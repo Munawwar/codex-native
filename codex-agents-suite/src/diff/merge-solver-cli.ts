@@ -80,6 +80,18 @@ async function main(): Promise<void> {
 
   try {
     const config = createDefaultSolverConfig(cwd);
+    // If no merge is in progress, try to start one so the solver can operate.
+    if (!(await git.isMergeInProgress()) && config.upstreamRef) {
+      console.log(
+        `[merge-solver-cli] No merge detected; merging ${config.upstreamRef} into current branch (--no-commit --no-ff)`,
+      );
+      await git.runGit(["merge", "--no-commit", "--no-ff", config.upstreamRef], true);
+      if (await git.isMergeInProgress()) {
+        console.log("[merge-solver-cli] Merge initiated; resolving conflicts...");
+      } else {
+        console.log("[merge-solver-cli] Merge applied cleanly; checking for residual conflicts...");
+      }
+    }
     console.log("[merge-solver-cli] Using agent-based workflow");
 
     // Collect conflicts and snapshot
