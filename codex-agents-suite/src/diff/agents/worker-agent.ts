@@ -5,7 +5,8 @@
  */
 
 import { Agent } from "@openai/agents";
-import { CodexProvider } from "@codex-native/sdk";
+import { CodexProvider, type Codex } from "@codex-native/sdk";
+import type { ApprovalSupervisor } from "../merge/supervisor.js";
 import { buildWorkerPrompt } from "../merge/prompts.js";
 import { DEFAULT_WORKER_MODEL } from "../merge/constants.js";
 import type { AgentConfig, AgentFactory, WorkerInput } from "./types.js";
@@ -35,7 +36,7 @@ const DEFAULT_LOW_REASONING_MATCHERS = [
  * Create worker agent
  */
 export function createWorkerAgent(
-  config: AgentConfig & { model?: string; conflictPath?: string }
+  config: AgentConfig & { model?: string; conflictPath?: string; approvalSupervisor?: ApprovalSupervisor | null }
 ): AgentFactory {
   const provider = new CodexProvider({
     defaultModel: config.model || DEFAULT_WORKER_MODEL,
@@ -46,6 +47,11 @@ export function createWorkerAgent(
     apiKey: config.apiKey,
     skipGitRepoCheck: config.skipGitRepoCheck ?? false,
   });
+
+  if (config.approvalSupervisor?.isAvailable?.()) {
+    const codex = (provider as unknown as { getCodex?: () => Codex }).getCodex?.();
+    codex?.setApprovalCallback((request) => config.approvalSupervisor!.handleApproval(request));
+  }
 
   const codexModel = provider.getModel(config.model || DEFAULT_WORKER_MODEL);
 

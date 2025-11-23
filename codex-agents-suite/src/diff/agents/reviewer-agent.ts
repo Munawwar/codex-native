@@ -5,12 +5,15 @@
  */
 
 import { Agent } from "@openai/agents";
-import { CodexProvider } from "@codex-native/sdk";
+import { CodexProvider, type Codex } from "@codex-native/sdk";
+import type { ApprovalSupervisor } from "../merge/supervisor.js";
 import { buildReviewerPrompt } from "../merge/prompts.js";
 import { DEFAULT_REVIEWER_MODEL } from "../merge/constants.js";
 import type { AgentConfig, AgentFactory, ReviewerInput } from "./types.js";
 
-export function createReviewerAgent(config: AgentConfig & { model?: string }): AgentFactory {
+export function createReviewerAgent(
+  config: AgentConfig & { model?: string; approvalSupervisor?: ApprovalSupervisor | null }
+): AgentFactory {
   const provider = new CodexProvider({
     defaultModel: config.model || DEFAULT_REVIEWER_MODEL,
     workingDirectory: config.workingDirectory,
@@ -20,6 +23,11 @@ export function createReviewerAgent(config: AgentConfig & { model?: string }): A
     apiKey: config.apiKey,
     skipGitRepoCheck: config.skipGitRepoCheck ?? false,
   });
+
+  if (config.approvalSupervisor?.isAvailable?.()) {
+    const codex = (provider as unknown as { getCodex?: () => Codex }).getCodex?.();
+    codex?.setApprovalCallback((request) => config.approvalSupervisor!.handleApproval(request));
+  }
 
   const model = provider.getModel(config.model || DEFAULT_REVIEWER_MODEL);
 

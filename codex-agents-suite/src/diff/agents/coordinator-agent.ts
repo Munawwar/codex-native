@@ -5,7 +5,8 @@
  */
 
 import { Agent } from "@openai/agents";
-import { CodexProvider } from "@codex-native/sdk";
+import { CodexProvider, type Codex } from "@codex-native/sdk";
+import type { ApprovalSupervisor } from "../merge/supervisor.js";
 import { buildCoordinatorPrompt } from "../merge/prompts.js";
 import { DEFAULT_COORDINATOR_MODEL } from "../merge/constants.js";
 import type { AgentConfig, AgentFactory, CoordinatorInput } from "./types.js";
@@ -14,7 +15,7 @@ import type { AgentConfig, AgentFactory, CoordinatorInput } from "./types.js";
  * Create a Coordinator Agent using the @openai/agents framework
  */
 export function createCoordinatorAgent(
-  config: AgentConfig & { model?: string }
+  config: AgentConfig & { model?: string; approvalSupervisor?: ApprovalSupervisor | null }
 ): AgentFactory {
   const provider = new CodexProvider({
     defaultModel: config.model || DEFAULT_COORDINATOR_MODEL,
@@ -25,6 +26,11 @@ export function createCoordinatorAgent(
     apiKey: config.apiKey,
     skipGitRepoCheck: config.skipGitRepoCheck ?? false,
   });
+
+  if (config.approvalSupervisor?.isAvailable?.()) {
+    const codex = (provider as unknown as { getCodex?: () => Codex }).getCodex?.();
+    codex?.setApprovalCallback((request) => config.approvalSupervisor!.handleApproval(request));
+  }
 
   const codexModel = provider.getModel(config.model || DEFAULT_COORDINATOR_MODEL);
 

@@ -98,6 +98,7 @@ export class AgentWorkflowOrchestrator {
       skipGitRepoCheck: this.config.skipGitRepoCheck,
       model: this.config.coordinatorModel,
       coordinatorInstructions: this.config.coordinatorInstructions,
+      approvalSupervisor: this.approvalSupervisor,
     });
 
     const result = await run(agent, JSON.stringify(input));
@@ -191,6 +192,7 @@ export class AgentWorkflowOrchestrator {
       skipGitRepoCheck: this.config.skipGitRepoCheck,
       model: this.config.reviewerModel,
       reviewerInstructions: this.config.reviewerInstructions,
+      approvalSupervisor: this.approvalSupervisor,
     });
 
     const status = await this.git.getStatusShort();
@@ -267,6 +269,7 @@ export class AgentWorkflowOrchestrator {
       model,
       conflictPath: conflict.path,
       workerInstructions: this.config.workerInstructions,
+      approvalSupervisor: this.approvalSupervisor,
     });
 
     try {

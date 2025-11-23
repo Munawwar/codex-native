@@ -119,6 +119,11 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             slug, "codex-mini-latest",
             supports_reasoning_summaries: true,
             needs_special_apply_patch_instructions: true,
+            experimental_supported_tools: vec![
+                "grep_files".to_string(),
+                "list_dir".to_string(),
+                "read_file".to_string(),
+            ],
             shell_type: ConfigShellToolType::Local,
         )
     } else if slug.starts_with("gpt-4.1") {
