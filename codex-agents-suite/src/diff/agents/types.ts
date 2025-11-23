@@ -54,6 +54,10 @@ export interface WorkerOutput extends WorkerOutcome {
 export interface ReviewerInput {
   outcomes: WorkerOutcome[];
   remoteComparison: RemoteComparison | null;
+  status: string;
+  diffStat: string;
+  remaining: string[];
+  validationMode?: boolean;
 }
 
 export interface ReviewerOutput {

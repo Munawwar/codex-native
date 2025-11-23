@@ -59,6 +59,10 @@ export class AgentWorkflowOrchestrator {
     const reviewerSummary = await this.runReviewerPhase(workerOutcomes, input.remoteComparison);
 
     const success = workerOutcomes.every((o) => o.success) && (await this.isAllResolved());
+    if (success) {
+      // Optional validation pass to surface any lingering issues post-merge.
+      await this.runReviewerPhase(workerOutcomes, input.remoteComparison, true);
+    }
     const transcript = this.generateTranscript(coordinatorPlan, workerOutcomes, reviewerSummary);
 
     return {
@@ -132,6 +136,7 @@ export class AgentWorkflowOrchestrator {
   private async runReviewerPhase(
     outcomes: WorkerOutcome[],
     remoteComparison: CoordinatorInput["remoteComparison"],
+    validationMode = false,
   ): Promise<string | null> {
     logInfo("reviewer", "Running reviewer agent...");
 
@@ -144,7 +149,18 @@ export class AgentWorkflowOrchestrator {
       model: this.config.reviewerModel,
     });
 
-    const reviewerPrompt = formatReviewerInput({ outcomes, remoteComparison: remoteComparison ?? null });
+    const status = await this.git.getStatusShort();
+    const diffStat = await this.git.getDiffStat();
+    const remaining = await this.git.listConflictPaths();
+
+    const reviewerPrompt = formatReviewerInput({
+      outcomes,
+      remoteComparison: remoteComparison ?? null,
+      status,
+      diffStat,
+      remaining,
+      validationMode,
+    });
     const result = await run(agent, reviewerPrompt);
 
     return result?.finalOutput ?? null;

@@ -33,11 +33,11 @@ export function createReviewerAgent(config: AgentConfig & { model?: string }): A
 
 export function formatReviewerInput(input: ReviewerInput): string {
   return buildReviewerPrompt({
-    status: input.outcomes.length ? "Merge validation" : "No conflicts",
-    diffStat: "<omitted>",
-    remaining: [],
+    status: input.status,
+    diffStat: input.diffStat,
+    remaining: input.remaining,
     workerSummaries: input.outcomes,
     remoteComparison: input.remoteComparison,
-    validationMode: false,
+    validationMode: input.validationMode ?? false,
   });
 }
