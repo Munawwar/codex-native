@@ -20,6 +20,7 @@ const DEFAULT_HIGH_REASONING_MATCHERS = [
   "**/common/**",
   "**/*.rs",
   "**/src/core/**",
+  "**/.github/workflows/**",
 ];
 
 /**
@@ -28,7 +29,6 @@ const DEFAULT_HIGH_REASONING_MATCHERS = [
 const DEFAULT_LOW_REASONING_MATCHERS = [
   "**/*.md",
   "**/docs/**",
-  "**/.github/workflows/**",
   "**/README*",
 ];
 
