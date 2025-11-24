@@ -86,7 +86,7 @@ export class GitRepo {
 
   private async describeConflict(filePath: string, remotes?: RemoteRefs): Promise<ConflictContext> {
     const working = await this.readWorkingFile(filePath);
-    const diff = await this.runGit(["diff", "--color=never", "--unified=40", "--", filePath], true);
+    const diff = await this.runGit(["diff", "--color=never", "--unified=1", "--", filePath], true);
     const base = await this.showStageFile(filePath, 1);
     const ours = await this.showStageFile(filePath, 2);
     const theirs = await this.showStageFile(filePath, 3);
@@ -113,19 +113,19 @@ export class GitRepo {
       language: detectLanguage(filePath),
       lineCount: working ? countLines(working) : null,
       conflictMarkers: working ? countMarkers(working) : null,
-      diffExcerpt: limitText(diff.stdout, 3000),
-      workingExcerpt: limitText(working, 2500),
-      baseExcerpt: limitText(base, 1500),
-      oursExcerpt: limitText(ours, 1500),
-      theirsExcerpt: limitText(theirs, 1500),
-      originRefContent: limitText(originRefContent, 1500),
-      upstreamRefContent: limitText(upstreamRefContent, 1500),
-      originVsUpstreamDiff: limitText(originVsUpstreamDiff, 2000),
-      baseVsOursDiff: limitText(baseVsOursDiff, 2000),
-      baseVsTheirsDiff: limitText(baseVsTheirsDiff, 2000),
-      oursVsTheirsDiff: limitText(oursVsTheirsDiff, 2000),
-      recentHistory: limitText(recentHistory, 1000),
-      localIntentLog: limitText(localIntentLog, 1000),
+      diffExcerpt: limitText(diff.stdout, 2000),
+      workingExcerpt: limitText(working, 1500),
+      baseExcerpt: limitText(base, 800),
+      oursExcerpt: limitText(ours, 800),
+      theirsExcerpt: limitText(theirs, 800),
+      originRefContent: limitText(originRefContent, 800),
+      upstreamRefContent: limitText(upstreamRefContent, 800),
+      originVsUpstreamDiff: limitText(originVsUpstreamDiff, 1200),
+      baseVsOursDiff: limitText(baseVsOursDiff, 1200),
+      baseVsTheirsDiff: limitText(baseVsTheirsDiff, 1200),
+      oursVsTheirsDiff: limitText(oursVsTheirsDiff, 1200),
+      recentHistory: limitText(recentHistory, 800),
+      localIntentLog: limitText(localIntentLog, 800),
     };
   }
 
@@ -142,7 +142,7 @@ export class GitRepo {
     try {
       const leftSpec = `:${left}:${filePath}`;
       const rightSpec = `:${right}:${filePath}`;
-      const { stdout } = await this.runGit(["diff", "--color=never", "--unified=40", leftSpec, rightSpec], true);
+      const { stdout } = await this.runGit(["diff", "--color=never", "--unified=1", leftSpec, rightSpec], true);
       return stdout.trim() ? stdout : null;
     } catch {
       return null;
