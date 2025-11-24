@@ -21,6 +21,15 @@ const DEFAULT_HIGH_REASONING_MATCHERS = [
   "**/*.rs",
   "**/src/core/**",
   "**/.github/workflows/**",
+  // Config files are critical infrastructure - use high reasoning
+  "**/*.toml",
+  "**/Cargo.toml",
+  "**/Cargo.lock",
+  "**/*.yml",
+  "**/*.yaml",
+  "**/package.json",
+  "**/pnpm-lock.yaml",
+  "**/tsconfig.json",
 ];
 
 /**

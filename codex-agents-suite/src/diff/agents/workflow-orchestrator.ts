@@ -129,9 +129,12 @@ export class AgentWorkflowOrchestrator {
   ): Promise<WorkerOutcome[]> {
     logInfo("worker", `Processing ${conflicts.length} conflicts...`);
 
+    // Prioritize config files first (critical infrastructure)
+    const prioritizedConflicts = this.prioritizeConfigFiles(conflicts);
+
     const outcomes: WorkerOutcome[] = [];
-    const simpleConflicts = conflicts.filter((c) => !this.isComplex(c));
-    const complexConflicts = conflicts.filter((c) => this.isComplex(c));
+    const simpleConflicts = prioritizedConflicts.filter((c) => !this.isComplex(c));
+    const complexConflicts = prioritizedConflicts.filter((c) => this.isComplex(c));
     const maxConcurrent = Math.max(1, this.config.maxConcurrentSimpleWorkers ?? 1);
     const active = new Set<Promise<void>>();
 
@@ -242,6 +245,63 @@ export class AgentWorkflowOrchestrator {
   private isComplex(conflict: ConflictContext): boolean {
     const threshold = this.config.openCodeSeverityThreshold ?? DEFAULT_OPEN_CODE_SEVERITY_THRESHOLD;
     return this.computeSeverity(conflict) >= threshold;
+  }
+
+  /**
+   * Prioritize config files (YAML, TOML, JSON, etc.) to be resolved first
+   * since they're critical infrastructure that other files may depend on
+   */
+  private prioritizeConfigFiles(conflicts: ConflictContext[]): ConflictContext[] {
+    const configExtensions = new Set([
+      '.yml',
+      '.yaml',
+      '.toml',
+      '.json',
+      '.lock', // package-lock.json, Cargo.lock, etc.
+      '.config.js',
+      '.config.ts',
+    ]);
+
+    const isConfigFile = (path: string): boolean => {
+      const lowerPath = path.toLowerCase();
+      // Check extensions
+      if (Array.from(configExtensions).some((ext) => lowerPath.endsWith(ext))) {
+        return true;
+      }
+      // Check specific config file names
+      if (
+        lowerPath.includes('package.json') ||
+        lowerPath.includes('tsconfig.json') ||
+        lowerPath.includes('cargo.toml') ||
+        lowerPath.includes('pyproject.toml')
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    // Separate config files from non-config files
+    const configFiles: ConflictContext[] = [];
+    const otherFiles: ConflictContext[] = [];
+
+    for (const conflict of conflicts) {
+      if (isConfigFile(conflict.path)) {
+        configFiles.push(conflict);
+      } else {
+        otherFiles.push(conflict);
+      }
+    }
+
+    // Log prioritization if config files found
+    if (configFiles.length > 0) {
+      logInfo(
+        "worker",
+        `Prioritizing ${configFiles.length} config file${configFiles.length !== 1 ? "s" : ""} to resolve first`,
+      );
+    }
+
+    // Return config files first, then other files
+    return [...configFiles, ...otherFiles];
   }
 
   private async handleConflict(
