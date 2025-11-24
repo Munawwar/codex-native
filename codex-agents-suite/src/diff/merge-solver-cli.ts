@@ -85,7 +85,15 @@ async function main(): Promise<void> {
       console.log(
         `[merge-solver-cli] No merge detected; merging ${config.upstreamRef} into current branch (--no-commit --no-ff)`,
       );
-      await git.runGit(["merge", "--no-commit", "--no-ff", config.upstreamRef], true);
+      try {
+        await git.runGit(["merge", "--no-commit", "--no-ff", config.upstreamRef]);
+      } catch (error: any) {
+        const stderr = typeof error?.stderr === "string" ? error.stderr : "";
+        const stdout = typeof error?.stdout === "string" ? error.stdout : "";
+        throw new Error(
+          `Failed to start merge with ${config.upstreamRef}: ${stderr || stdout || String(error)}`,
+        );
+      }
       if (await git.isMergeInProgress()) {
         console.log("[merge-solver-cli] Merge initiated; resolving conflicts...");
       } else {
