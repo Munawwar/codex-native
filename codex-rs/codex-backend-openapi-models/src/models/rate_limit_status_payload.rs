@@ -29,7 +29,7 @@ pub struct RateLimitStatusPayload {
         with = "::serde_with::rust::double_option",
         skip_serializing_if = "Option::is_none"
     )]
-    pub credits: Option<Option<Box<models::RateLimitStatusDetails>>>,
+    pub credits: Option<Option<Box<models::CreditStatusDetails>>>,
 }
 
 impl RateLimitStatusPayload {
@@ -42,11 +42,8 @@ impl RateLimitStatusPayload {
     }
 }
 
-#[derive(
-    Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum PlanType {
-    #[default]
     #[serde(rename = "guest")]
     Guest,
     #[serde(rename = "free")]
@@ -75,13 +72,8 @@ pub enum PlanType {
     Edu,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::PlanType;
-
-    #[test]
-    fn plan_type_deserializes_guest() {
-        let plan: PlanType = serde_json::from_str("\"guest\"").expect("guest variant should parse");
-        assert_eq!(plan, PlanType::Guest);
+impl Default for PlanType {
+    fn default() -> PlanType {
+        Self::Guest
     }
 }
