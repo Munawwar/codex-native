@@ -10,7 +10,7 @@
  * This is cost-effective: smart model for analysis, cheap model for execution.
  */
 
-import { CodexProvider, OpenCodeAgent, CodexAgent, type ApprovalMode, type SandboxMode, type PermissionRequest } from "@codex-native/sdk";
+import { CodexProvider, OpenCodeAgent, Codex, type ApprovalMode, type SandboxMode, type PermissionRequest } from "@codex-native/sdk";
 import { Agent, Runner } from "@openai/agents";
 import { buildWorkerPrompt } from "../merge/prompts.js";
 import { GitRepo } from "../merge/git.js";
@@ -328,13 +328,11 @@ Requirements:
       logWarn("opencode", `OpenCode failed to resolve conflict - falling back to supervisor agent`, conflict.path);
       conversationLog.push(`[Fallback] OpenCode failed - Supervisor taking over`);
 
-      const supervisorAgent = new CodexAgent({
-        model: options.supervisorModel,
-        config: {
-          workingDirectory: options.workingDirectory,
-          sandboxMode: options.sandboxMode,
-          approvalMode: "never", // Supervisor resolves without approvals
-        },
+      const supervisorCodex = new Codex({
+        defaultModel: options.supervisorModel,
+        workingDirectory: options.workingDirectory,
+        sandboxMode: options.sandboxMode,
+        approvalMode: "never", // Supervisor resolves without approvals
       });
 
       try {
@@ -358,16 +356,19 @@ Requirements:
         logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Fallback]\n${fallbackPrompt}\n${"=".repeat(80)}`, conflict.path);
         conversationLog.push(`[Supervisor Fallback] ${fallbackPrompt.slice(0, 200)}...`);
 
-        const fallbackResult = await supervisorAgent.delegate(fallbackPrompt);
-        conversationLog.push(`[Supervisor Result] ${fallbackResult.output.slice(0, 200)}...`);
-        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Result]\n${fallbackResult.output}\n${"=".repeat(80)}`, conflict.path);
+        const fallbackThread = supervisorCodex.startThread();
+        const fallbackTurn = await fallbackThread.run(fallbackPrompt);
+        const fallbackOutput = fallbackTurn.output || "(no response)";
 
-        if (!fallbackResult.success) {
-          logWarn("supervisor", `Supervisor also failed: ${fallbackResult.error}`, conflict.path);
+        conversationLog.push(`[Supervisor Result] ${fallbackOutput.slice(0, 200)}...`);
+        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Result]\n${fallbackOutput}\n${"=".repeat(80)}`, conflict.path);
+
+        if (fallbackTurn.error) {
+          logWarn("supervisor", `Supervisor also failed: ${fallbackTurn.error.message}`, conflict.path);
           return {
             path: conflict.path,
             success: false,
-            error: `Both OpenCode and supervisor failed. OpenCode: ${result.error || "unknown"}. Supervisor: ${fallbackResult.error || "unknown"}`,
+            error: `Both OpenCode and supervisor failed. OpenCode: ${result.error || "unknown"}. Supervisor: ${fallbackTurn.error.message}`,
             summary: `--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
           };
         }
@@ -399,7 +400,7 @@ Requirements:
         return {
           path: conflict.path,
           success: resolved,
-          summary: `${fallbackResult.output}\n\n--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
+          summary: `${fallbackOutput}\n\n--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
           error: resolved ? undefined : "Supervisor attempted resolution but conflict markers still present",
         };
       } catch (error: any) {
@@ -410,8 +411,6 @@ Requirements:
           error: `OpenCode failed and supervisor fallback errored: ${error.message}`,
           summary: `--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
         };
-      } finally {
-        await supervisorAgent.close();
       }
     }
 
