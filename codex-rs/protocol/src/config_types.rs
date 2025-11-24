@@ -29,7 +29,7 @@ impl<'de> Deserialize<'de> for ReasoningEffort {
         let raw = String::deserialize(deserializer)?;
         let normalized = raw.to_lowercase();
         let parsed = match normalized.as_str() {
-            "xhigh" | "x-high" => ReasoningEffort::High,
+            "xhigh" | "x-high" => ReasoningEffort::XHigh,
             "none" => ReasoningEffort::None,
             "minimal" => ReasoningEffort::Minimal,
             "low" => ReasoningEffort::Low,
@@ -130,10 +130,10 @@ mod tests {
     use super::ReasoningEffort;
 
     #[test]
-    fn parsing_xhigh_falls_back_to_high() {
+    fn parsing_xhigh_maps_to_xhigh() {
         let parsed: ReasoningEffort =
             serde_json::from_str("\"xhigh\"").expect("xhigh should deserialize");
-        assert_eq!(parsed, ReasoningEffort::High);
+        assert_eq!(parsed, ReasoningEffort::XHigh);
     }
 
     #[test]
