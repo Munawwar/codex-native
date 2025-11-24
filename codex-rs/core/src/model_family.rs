@@ -214,6 +214,7 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             supports_parallel_tool_calls: true,
             support_verbosity: false,
             truncation_policy: TruncationPolicy::Tokens(10_000),
+            experimental_supported_tools: vec!["read_file".to_string()],
         )
     } else if slug.starts_with("gpt-5.1") {
         model_family!(

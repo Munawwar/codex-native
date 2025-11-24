@@ -837,7 +837,9 @@ impl ChatWidget {
         debug!("BackgroundEvent: {message}");
         self.bottom_pane.ensure_status_indicator();
         self.bottom_pane.set_interrupt_hint_visible(true);
-        self.set_status_header(message);
+        self.set_status_header(message.clone());
+        self.add_to_history(history_cell::new_background_event(message));
+        self.request_redraw();
     }
 
     fn on_undo_started(&mut self, event: UndoStartedEvent) {
