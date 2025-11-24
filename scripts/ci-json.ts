@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { encode as toonEncode } from "@toon-format/toon";
 
 type CiJob = {
   name: string;
@@ -30,6 +31,7 @@ type CiJobResult = {
 };
 
 const CI_JOBS: CiJob[] = [
+  { name: "ci:prebuild", command: "pnpm run ci:prebuild" },
   { name: "ci:format", command: "pnpm run ci:format" },
   { name: "ci:codespell", command: "pnpm run ci:codespell" },
   { name: "ci:mcp-types", command: "pnpm run ci:mcp-types" },
@@ -129,7 +131,10 @@ function writeReport(results: CiJobResult[]): void {
   const filtered = results.filter((r) => r.status !== "passed");
   const report = { generatedAt: new Date().toISOString(), results: filtered };
   writeFileSync(outputPath, JSON.stringify(report, null, 2));
+  const toonPath = path.join(dir, "ci-report.toon");
+  writeFileSync(toonPath, toonEncode(report));
   console.log(`📄 CI JSON report written to ${outputPath}`);
+  console.log(`📄 CI TOON report written to ${toonPath}`);
   console.log("CI_JSON_REPORT", JSON.stringify(report));
 }
 
