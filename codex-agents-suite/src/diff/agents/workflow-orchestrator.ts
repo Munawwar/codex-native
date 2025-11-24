@@ -320,8 +320,10 @@ export class AgentWorkflowOrchestrator {
     remoteComparison: RemoteComparison | null,
   ): Promise<WorkerOutcome> {
     logInfo("worker", "Delegating to OpenCode with supervisor oversight", conflict.path);
+    // Supervisor uses the smart/expensive model (e.g., gpt-5.1-codex-max)
     const supervisorModel = this.config.workerModelHigh ?? this.config.workerModel;
-    const openCodeModel = this.config.workerModel ?? this.config.workerModelLow ?? supervisorModel;
+    // OpenCode uses the cheap/fast model (e.g., claude-sonnet-4-5)
+    const openCodeModel = this.config.workerModelLow ?? "anthropic/claude-sonnet-4-5-20250929";
     const outcome = await runOpenCodeResolution(conflict, {
       workingDirectory: this.config.workingDirectory,
       sandboxMode: this.config.sandboxMode,
