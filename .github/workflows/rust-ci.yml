@@ -152,6 +152,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
           components: clippy
+      - name: Ensure rust target std installed
+        run: rustup target add ${{ matrix.target }}
 
       # Explicit cache restore: split cargo home vs target, so we can
       # avoid caching the large target dir on the gnu-dev job.
@@ -363,6 +365,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90
         with:
           targets: ${{ matrix.target }}
+      - name: Ensure rust target std installed
+        run: rustup target add ${{ matrix.target }}
 
       - name: Restore cargo home cache
         id: cache_cargo_home_restore
