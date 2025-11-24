@@ -10,7 +10,7 @@
  * This is cost-effective: smart model for analysis, cheap model for execution.
  */
 
-import { CodexProvider, OpenCodeAgent, type ApprovalMode, type SandboxMode, type PermissionRequest } from "@codex-native/sdk";
+import { CodexProvider, OpenCodeAgent, CodexAgent, type ApprovalMode, type SandboxMode, type PermissionRequest } from "@codex-native/sdk";
 import { Agent, Runner } from "@openai/agents";
 import { buildWorkerPrompt } from "../merge/prompts.js";
 import { GitRepo } from "../merge/git.js";
@@ -175,6 +175,7 @@ export async function runOpenCodeResolution(
 ): Promise<WorkerOutcome> {
   const git = new GitRepo(options.workingDirectory);
   const conversationLog: string[] = [];
+  let opencodeAgent: OpenCodeAgent | null = null;
 
   try {
     // Phase 1: Create supervisor (smart model)
@@ -216,7 +217,7 @@ export async function runOpenCodeResolution(
       return await supervisor.reviewApproval(request);
     };
 
-    const opencodeAgent = new OpenCodeAgent({
+    opencodeAgent = new OpenCodeAgent({
       model: options.openCodeModel,
       onApprovalRequest: approvalHandler,
       config: {
@@ -269,8 +270,28 @@ Requirements:
     let resolved = false;
     try {
       const { execFile } = await import("node:child_process");
+      const { access } = await import("node:fs/promises");
       const { promisify } = await import("node:util");
+      const { resolve } = await import("node:path");
       const execFileAsync = promisify(execFile);
+
+      // Check if file exists (handles modify/delete conflicts)
+      const fullPath = resolve(options.workingDirectory, conflict.path);
+      try {
+        await access(fullPath);
+      } catch {
+        // File doesn't exist - might be a delete/modify conflict
+        logInfo("opencode", `⚠️  File does not exist (may be modify/delete conflict) - checking git status`, conflict.path);
+        // For modify/delete conflicts, we consider them resolved if OpenCode handled them
+        // The actual resolution (accepting delete or keeping modify) will be staged by git
+        resolved = result.success;
+        return {
+          path: conflict.path,
+          success: resolved,
+          summary: `${response}\n\n--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
+          error: resolved ? undefined : "File does not exist - modify/delete conflict not handled",
+        };
+      }
 
       // Check for conflict markers in the actual file content
       const { stdout } = await execFileAsync("rg", ["-e", "<<<<<<<", "-e", "=======", "-e", ">>>>>>>", conflict.path], {
@@ -286,7 +307,7 @@ Requirements:
         resolved = true;
         logInfo("opencode", "✅ Conflict markers removed from file content!", conflict.path);
       } else {
-        // Some other error (file not found, etc.)
+        // Some other error
         logWarn("opencode", `⚠️  Error checking for conflict markers: ${error.message}`, conflict.path);
         resolved = false;
       }
@@ -300,6 +321,98 @@ Requirements:
         error: result.error || "OpenCode execution failed",
         summary: `${response}\n\n--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
       };
+    }
+
+    // Phase 6: Fallback to supervisor if OpenCode failed to resolve
+    if (!resolved) {
+      logWarn("opencode", `OpenCode failed to resolve conflict - falling back to supervisor agent`, conflict.path);
+      conversationLog.push(`[Fallback] OpenCode failed - Supervisor taking over`);
+
+      const supervisorAgent = new CodexAgent({
+        model: options.supervisorModel,
+        config: {
+          workingDirectory: options.workingDirectory,
+          sandboxMode: options.sandboxMode,
+          approvalMode: "never", // Supervisor resolves without approvals
+        },
+      });
+
+      try {
+        const fallbackPrompt = `The OpenCode agent failed to resolve this merge conflict. You are the supervisor agent taking over.
+
+${plan}
+
+File to resolve: ${conflict.path}
+
+OpenCode's attempt:
+${response}
+
+Requirements:
+1. Analyze why OpenCode failed
+2. Resolve the conflict yourself using Edit or Write tools
+3. Remove all conflict markers
+4. Verify with: rg '<<<<<<<' ${conflict.path}
+5. Report what you did differently`;
+
+        logInfo("supervisor", "Supervisor attempting direct resolution...", conflict.path);
+        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Fallback]\n${fallbackPrompt}\n${"=".repeat(80)}`, conflict.path);
+        conversationLog.push(`[Supervisor Fallback] ${fallbackPrompt.slice(0, 200)}...`);
+
+        const fallbackResult = await supervisorAgent.delegate(fallbackPrompt);
+        conversationLog.push(`[Supervisor Result] ${fallbackResult.output.slice(0, 200)}...`);
+        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Result]\n${fallbackResult.output}\n${"=".repeat(80)}`, conflict.path);
+
+        if (!fallbackResult.success) {
+          logWarn("supervisor", `Supervisor also failed: ${fallbackResult.error}`, conflict.path);
+          return {
+            path: conflict.path,
+            success: false,
+            error: `Both OpenCode and supervisor failed. OpenCode: ${result.error || "unknown"}. Supervisor: ${fallbackResult.error || "unknown"}`,
+            summary: `--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
+          };
+        }
+
+        // Re-verify after supervisor's attempt
+        try {
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFile);
+
+          await execFileAsync("rg", ["-e", "<<<<<<<", "-e", "=======", "-e", ">>>>>>>", conflict.path], {
+            cwd: options.workingDirectory,
+          });
+
+          // If we get here, markers still exist
+          logWarn("supervisor", `Supervisor failed - conflict markers still present`, conflict.path);
+          resolved = false;
+        } catch (error: any) {
+          if (error.code === 1) {
+            // Success - no markers found
+            logInfo("supervisor", "✅ Supervisor successfully resolved the conflict!", conflict.path);
+            resolved = true;
+          } else {
+            logWarn("supervisor", `Error re-verifying: ${error.message}`, conflict.path);
+            resolved = false;
+          }
+        }
+
+        return {
+          path: conflict.path,
+          success: resolved,
+          summary: `${fallbackResult.output}\n\n--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
+          error: resolved ? undefined : "Supervisor attempted resolution but conflict markers still present",
+        };
+      } catch (error: any) {
+        logWarn("supervisor", `Supervisor fallback failed: ${error.message}`, conflict.path);
+        return {
+          path: conflict.path,
+          success: false,
+          error: `OpenCode failed and supervisor fallback errored: ${error.message}`,
+          summary: `--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
+        };
+      } finally {
+        await supervisorAgent.close();
+      }
     }
 
     return {
@@ -316,5 +429,15 @@ Requirements:
       error: error?.message ?? String(error),
       summary: conversationLog.length > 0 ? `--- Conversation Log ---\n${conversationLog.join("\n\n")}` : undefined,
     };
+  } finally {
+    // Cleanup: Shut down OpenCode server to prevent zombie processes
+    if (opencodeAgent) {
+      try {
+        await opencodeAgent.close();
+        logInfo("opencode", "OpenCode server shut down successfully", conflict.path);
+      } catch (error: any) {
+        logWarn("opencode", `Failed to shut down OpenCode server: ${error.message}`, conflict.path);
+      }
+    }
   }
 }
