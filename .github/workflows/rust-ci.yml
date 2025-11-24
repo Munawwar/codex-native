@@ -155,6 +155,14 @@ jobs:
       - name: Ensure rust target std installed
         run: rustup target add ${{ matrix.target }}
 
+      - name: Free disk space (Linux runners)
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL || true
+          df -h
+
       # Explicit cache restore: split cargo home vs target, so we can
       # avoid caching the large target dir on the gnu-dev job.
       - name: Restore cargo home cache
