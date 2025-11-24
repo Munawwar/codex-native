@@ -66,12 +66,14 @@ export async function runOpenCodeResolution(
   try {
     // Turn 1: Initial task delegation to OpenCode
     logInfo("opencode", `Turn ${++turnCount}: Delegating conflict resolution...`, conflict.path);
+    logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor → OpenCode]\n${initialPrompt}\n${"=".repeat(80)}`, conflict.path);
     conversationLog.push(`[Supervisor → OpenCode] ${initialPrompt.slice(0, 200)}...`);
 
     let turn = await thread.run(initialPrompt);
     let response = turn.finalResponse ?? "";
     conversationLog.push(`[OpenCode → Supervisor] ${response.slice(0, 200)}...`);
-    logInfo("opencode", `Turn ${turnCount} response: ${response.slice(0, 100)}...`, conflict.path);
+    logInfo("conversation", `\n${"=".repeat(80)}\n[OpenCode → Supervisor]\n${response}\n${"=".repeat(80)}`, conflict.path);
+    logInfo("opencode", `Turn ${turnCount} complete`, conflict.path);
 
     // Check if resolved
     let remaining = await git.listConflictPaths();
@@ -84,11 +86,13 @@ export async function runOpenCodeResolution(
       // Supervisor feedback based on current state
       const feedback = await buildSupervisorFeedback(conflict, response, remaining, options);
       conversationLog.push(`[Supervisor → OpenCode] ${feedback.slice(0, 200)}...`);
+      logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor → OpenCode]\n${feedback}\n${"=".repeat(80)}`, conflict.path);
 
       turn = await thread.run(feedback);
       response = turn.finalResponse ?? "";
       conversationLog.push(`[OpenCode → Supervisor] ${response.slice(0, 200)}...`);
-      logInfo("opencode", `Turn ${turnCount} response: ${response.slice(0, 100)}...`, conflict.path);
+      logInfo("conversation", `\n${"=".repeat(80)}\n[OpenCode → Supervisor]\n${response}\n${"=".repeat(80)}`, conflict.path);
+      logInfo("opencode", `Turn ${turnCount} complete`, conflict.path);
 
       remaining = await git.listConflictPaths();
       resolved = !remaining.includes(conflict.path);

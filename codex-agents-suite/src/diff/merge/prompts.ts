@@ -162,6 +162,7 @@ export function buildReviewerPrompt(input: {
   workerSummaries: WorkerOutcome[];
   remoteComparison: RemoteComparison | null;
   validationMode?: boolean;
+  lspDiagnostics?: string | null;
 }): string {
   const workerNotes =
     input.workerSummaries
@@ -183,6 +184,10 @@ export function buildReviewerPrompt(input: {
 
   const remainingBlock = input.remaining.length ? input.remaining.join("\n") : "<none>";
 
+  const lspSection = input.lspDiagnostics
+    ? `\n## LSP Diagnostics (Post-Resolution)\n\n${input.lspDiagnostics}\n`
+    : "";
+
   return `# Merge Conflict Reviewer
 
 Goal: confirm that all conflicts are resolved, run/plan validation commands, and highlight any follow-ups.
@@ -199,7 +204,7 @@ ${remainingBlock}
 Worker notes:
 ${workerNotes}
 
-${remoteSection}
+${remoteSection}${lspSection}
 
 Historical guardrails to honor:
 ${HISTORICAL_PLAYBOOK}

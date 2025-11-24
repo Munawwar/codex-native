@@ -67,5 +67,6 @@ export function formatReviewerInput(input: ReviewerInput): string {
     workerSummaries: input.outcomes,
     remoteComparison: input.remoteComparison,
     validationMode: input.validationMode ?? false,
+    lspDiagnostics: input.lspDiagnostics,
   });
 }

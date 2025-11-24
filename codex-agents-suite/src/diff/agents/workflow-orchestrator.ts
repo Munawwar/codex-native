@@ -230,6 +230,7 @@ export class AgentWorkflowOrchestrator {
       diffStat,
       remaining,
       validationMode,
+      lspDiagnostics: typeof lspDiagnostics === "string" ? lspDiagnostics : null,
     });
     const result = await run(agent, reviewerPrompt);
 
@@ -310,8 +311,8 @@ export class AgentWorkflowOrchestrator {
     remoteComparison: RemoteComparison | null,
     forceOpenCode = false,
   ): Promise<WorkerOutcome> {
-    // Default: Delegate to OpenCode with supervision
-    // Worker acts as supervisor, providing guidance and feedback
+    // Default: Delegate all conflicts to OpenCode with supervisor oversight
+    // Supervisor provides multi-turn guidance and feedback
     return await this.runOpenCode(conflict, coordinatorPlan, remoteComparison);
   }
 
