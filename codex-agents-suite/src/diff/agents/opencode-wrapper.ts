@@ -87,27 +87,8 @@ Response format for approvals:
   "decision": "APPROVE" | "DENY",
   "reason": "Clear explanation"
 }`,
-      outputType: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            decision: {
-              type: "string",
-              enum: ["APPROVE", "DENY"],
-              description: "The approval decision",
-            },
-            reason: {
-              type: "string",
-              description: "Reasoning for the decision",
-            },
-          },
-          required: ["decision", "reason"],
-          additionalProperties: false,
-        },
-        name: "ApprovalDecision",
-        strict: true,
-      },
+      // No outputType by default - will output plain text for plans
+      // Only switch to JSON schema temporarily for approval reviews
     });
   }
 
