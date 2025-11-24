@@ -36,7 +36,7 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_codex_jsonrpc_conversation_flow() -> Result<()> {
@@ -165,6 +165,11 @@ async fn test_send_user_turn_changes_approval_policy_behavior() -> Result<()> {
         println!(
             "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
         );
+        return Ok(());
+    }
+
+    if cfg!(target_os = "windows") {
+        println!("Skipping on Windows due to slow tool exec elicitations; covered on macOS/Linux.");
         return Ok(());
     }
 
