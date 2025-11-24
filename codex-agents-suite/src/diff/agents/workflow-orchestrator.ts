@@ -337,6 +337,16 @@ export class AgentWorkflowOrchestrator {
       approvalMode: this.config.approvalMode,
     });
 
+    // Stage the file if conflict markers were successfully removed
+    if (outcome.success) {
+      try {
+        await this.git.stageFile(conflict.path);
+        logInfo("worker", `Staged resolved file: ${conflict.path}`, conflict.path);
+      } catch (error: any) {
+        logWarn("worker", `Failed to stage ${conflict.path}: ${error.message}`, conflict.path);
+      }
+    }
+
     const resolved = await this.isResolved(conflict.path);
     return {
       ...outcome,

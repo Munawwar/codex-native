@@ -31,6 +31,10 @@ export class GitRepo {
       .filter((line) => line.length > 0);
   }
 
+  async stageFile(relPath: string): Promise<void> {
+    await this.runGit(["add", relPath]);
+  }
+
   async getStatusShort(): Promise<string> {
     const { stdout } = await this.runGit(["status", "--short"], true);
     return stdout.trim();
