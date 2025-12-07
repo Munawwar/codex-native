@@ -31,7 +31,7 @@ pub struct Prompt {
 
     /// Tools available to the model, including additional tools sourced from
     /// external MCP servers.
-    pub(crate) tools: Vec<ToolSpec>,
+    pub tools: Vec<ToolSpec>,
 
     /// Whether parallel tool calls are permitted for this prompt.
     pub(crate) parallel_tool_calls: bool,
@@ -188,7 +188,7 @@ pub(crate) mod tools {
     /// Responses API.
     #[derive(Debug, Clone, Serialize, PartialEq)]
     #[serde(tag = "type")]
-    pub(crate) enum ToolSpec {
+    pub enum ToolSpec {
         #[serde(rename = "function")]
         Function(ResponsesApiTool),
         #[serde(rename = "local_shell")]
@@ -202,7 +202,7 @@ pub(crate) mod tools {
     }
 
     impl ToolSpec {
-        pub(crate) fn name(&self) -> &str {
+        pub fn name(&self) -> &str {
             match self {
                 ToolSpec::Function(tool) => tool.name.as_str(),
                 ToolSpec::LocalShell {} => "local_shell",
