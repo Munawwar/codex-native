@@ -8,9 +8,6 @@ use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
 use regex_lite::Regex;
 
-#[cfg(target_os = "linux")]
-use assert_cmd::cargo::cargo_bin;
-
 pub mod responses;
 pub mod test_codex;
 pub mod test_codex_exec;
@@ -39,8 +36,10 @@ pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 
 #[cfg(target_os = "linux")]
 fn default_test_overrides() -> ConfigOverrides {
+    let codex_linux_sandbox_exe =
+        std::env::var_os("CARGO_BIN_EXE_codex-linux-sandbox").map(std::path::PathBuf::from);
     ConfigOverrides {
-        codex_linux_sandbox_exe: Some(cargo_bin("codex-linux-sandbox")),
+        codex_linux_sandbox_exe,
         ..ConfigOverrides::default()
     }
 }

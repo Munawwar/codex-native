@@ -357,7 +357,7 @@ async fn run_ratatui_app(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     active_profile: Option<String>,
     feedback: codex_feedback::CodexFeedback,
-    shutdown_token: Option<CancellationToken>,
+    _shutdown_token: Option<CancellationToken>,
 ) -> color_eyre::Result<AppExitInfo> {
     install_color_eyre_once()?;
 
