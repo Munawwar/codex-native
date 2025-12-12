@@ -39,7 +39,7 @@ importers:
         version: 0.3.4(ws@8.18.3)(zod@3.25.76)
       '@openai/agents-core':
         specifier: ^0.3.0
-        version: 0.3.0(ws@8.18.3)(zod@3.25.76)
+        version: 0.3.4(ws@8.18.3)(zod@3.25.76)
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -5700,9 +5700,9 @@ snapshots:
   '@openai/agents-core@0.3.4(ws@8.18.3)(zod@3.25.76)':
     dependencies:
       debug: 4.4.3
-      openai: 6.8.1(ws@8.18.3)(zod@3.25.76)
+      openai: 6.10.0(ws@8.18.3)(zod@3.25.76)
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.22.0
+      '@modelcontextprotocol/sdk': 1.24.3(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:
       - '@cfworker/json-schema'
