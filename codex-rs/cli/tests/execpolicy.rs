@@ -24,7 +24,9 @@ prefix_rule(
 "#,
     )?;
 
-    let output = Command::cargo_bin("codex")?
+    #[allow(deprecated)]
+    let exe = assert_cmd::cargo::cargo_bin("codex");
+    let output = Command::new(exe)
         .env("CODEX_HOME", codex_home.path())
         .args([
             "execpolicy",

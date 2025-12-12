@@ -147,11 +147,8 @@ prefix_rule(
 }
 
 fn ensure_codex_cli() -> Result<PathBuf> {
-    let codex_cli = PathBuf::from(
-        assert_cmd::Command::cargo_bin("codex")?
-            .get_program()
-            .to_os_string(),
-    );
+    #[allow(deprecated)]
+    let codex_cli = assert_cmd::cargo::cargo_bin("codex");
 
     let metadata = codex_cli.metadata().with_context(|| {
         format!(
