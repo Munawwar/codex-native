@@ -137,6 +137,9 @@ importers:
       '@codex-native/sdk-darwin-arm64':
         specifier: 0.0.6
         version: 0.0.6
+      '@codex-native/sdk-darwin-x64':
+        specifier: 0.0.6
+        version: 0.0.6
 
   sdk/typescript:
     devDependencies:
@@ -836,6 +839,12 @@ packages:
     resolution: {integrity: sha512-2sr/+U/MlptVUVzScD/+fSb/SI8efV0MJRXi7nY/YVDec67iYmViesU+m3GZNkg7qJEHgJjUGCO1zg74wgCB2g==}
     engines: {node: '>=18'}
     cpu: [arm64]
+    os: [darwin]
+
+  '@codex-native/sdk-darwin-x64@0.0.6':
+    resolution: {integrity: sha512-Y0U6q72YXNoeTIRDyaGy8nIwcl8fiWVCKO8Ow7Oi2hOvVR5sScYNgfoJm/vKxzbnPkAI82bnC07ilBWSw8V5vQ==}
+    engines: {node: '>=18'}
+    cpu: [x64]
     os: [darwin]
 
   '@cspotcode/source-map-support@0.8.1':
@@ -4705,6 +4714,9 @@ snapshots:
   '@bcoe/v8-coverage@0.2.3': {}
 
   '@codex-native/sdk-darwin-arm64@0.0.6':
+    optional: true
+
+  '@codex-native/sdk-darwin-x64@0.0.6':
     optional: true
 
   '@cspotcode/source-map-support@0.8.1':
