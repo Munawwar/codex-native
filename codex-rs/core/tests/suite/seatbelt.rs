@@ -143,7 +143,11 @@ async fn danger_full_access_allows_all_writes() {
 /// Under ReadOnly, writes should not be permitted anywhere on disk.
 #[tokio::test]
 async fn read_only_forbids_all_writes() {
-    let tmp = TempDir::new().expect("should be able to create temp dir");
+    // `ReadOnly` still permits writes to some temp locations (e.g. `/tmp`) so
+    // common system tools can start up reliably. Use a temp dir rooted in the
+    // repo so the sandboxed write attempts are expected to fail.
+    let cwd = std::env::current_dir().expect("getcwd");
+    let tmp = TempDir::new_in(&cwd).expect("should be able to create temp dir");
     let test_scenario = create_test_scenario(&tmp);
     let policy = SandboxPolicy::ReadOnly;
 
