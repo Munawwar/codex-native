@@ -26,6 +26,7 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use std::sync::Mutex;
+use tracing::Level;
 use tracing_test::traced_test;
 
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -465,6 +466,7 @@ async fn handle_responses_span_records_response_kind_and_tool_name() {
     let subscriber = tracing_subscriber::fmt()
         .with_level(true)
         .with_ansi(false)
+        .with_max_level(Level::TRACE)
         .with_span_events(FmtSpan::FULL)
         .with_writer(MockWriter::new(buffer))
         .finish();
@@ -528,6 +530,7 @@ async fn record_responses_sets_span_fields_for_response_events() {
     let subscriber = tracing_subscriber::fmt()
         .with_level(true)
         .with_ansi(false)
+        .with_max_level(Level::TRACE)
         .with_span_events(FmtSpan::FULL)
         .with_writer(MockWriter::new(buffer))
         .finish();
