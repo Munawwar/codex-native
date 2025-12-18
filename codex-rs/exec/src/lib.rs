@@ -110,6 +110,7 @@ async fn run_exec(
         prompt,
         output_schema: output_schema_path,
         config_overrides,
+        input_items,
     } = cli;
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
@@ -325,32 +326,41 @@ async fn run_exec(
             .new_conversation(config.clone())
             .await?
     };
-    let (initial_operation, prompt_summary) = match (command, prompt, images) {
-        (Some(ExecCommand::Review(review_cli)), _, _) => {
+    let (initial_operation, prompt_summary) = match (command, prompt, images, input_items) {
+        (Some(ExecCommand::Review(review_cli)), _, _, _) => {
             let review_request = build_review_request(review_cli)?;
             let summary = codex_core::review_prompts::user_facing_hint(&review_request.target);
             (InitialOperation::Review { review_request }, summary)
         }
-        (Some(ExecCommand::Resume(args)), root_prompt, imgs) => {
-            let prompt_arg = args
-                .prompt
-                .clone()
-                .or_else(|| {
-                    if args.last {
-                        args.session_id.clone()
-                    } else {
-                        None
-                    }
-                })
-                .or(root_prompt);
-            let prompt_text = resolve_prompt(prompt_arg);
-            let mut items: Vec<UserInput> = imgs
-                .into_iter()
-                .map(|path| UserInput::LocalImage { path })
-                .collect();
-            items.push(UserInput::Text {
-                text: prompt_text.clone(),
-            });
+        (Some(ExecCommand::Resume(args)), root_prompt, imgs, input_items) => {
+            let (items, prompt_text) = match input_items {
+                Some(items) => {
+                    let summary = summarize_prompt_from_items(&items);
+                    (items, summary)
+                }
+                None => {
+                    let prompt_arg = args
+                        .prompt
+                        .clone()
+                        .or_else(|| {
+                            if args.last {
+                                args.session_id.clone()
+                            } else {
+                                None
+                            }
+                        })
+                        .or(root_prompt);
+                    let prompt_text = resolve_prompt(prompt_arg);
+                    let mut items: Vec<UserInput> = imgs
+                        .into_iter()
+                        .map(|path| UserInput::LocalImage { path })
+                        .collect();
+                    items.push(UserInput::Text {
+                        text: prompt_text.clone(),
+                    });
+                    (items, prompt_text)
+                }
+            };
             let output_schema = load_output_schema(output_schema_path.clone());
             (
                 InitialOperation::UserTurn {
@@ -360,15 +370,24 @@ async fn run_exec(
                 prompt_text,
             )
         }
-        (None, root_prompt, imgs) => {
-            let prompt_text = resolve_prompt(root_prompt);
-            let mut items: Vec<UserInput> = imgs
-                .into_iter()
-                .map(|path| UserInput::LocalImage { path })
-                .collect();
-            items.push(UserInput::Text {
-                text: prompt_text.clone(),
-            });
+        (None, root_prompt, imgs, input_items) => {
+            let (items, prompt_text) = match input_items {
+                Some(items) => {
+                    let summary = summarize_prompt_from_items(&items);
+                    (items, summary)
+                }
+                None => {
+                    let prompt_text = resolve_prompt(root_prompt);
+                    let mut items: Vec<UserInput> = imgs
+                        .into_iter()
+                        .map(|path| UserInput::LocalImage { path })
+                        .collect();
+                    items.push(UserInput::Text {
+                        text: prompt_text.clone(),
+                    });
+                    (items, prompt_text)
+                }
+            };
             let output_schema = load_output_schema(output_schema_path);
             (
                 InitialOperation::UserTurn {
@@ -542,6 +561,27 @@ fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
             );
             std::process::exit(1);
         }
+    }
+}
+
+fn summarize_prompt_from_items(items: &[UserInput]) -> String {
+    let mut summary = String::new();
+
+    for item in items {
+        if let UserInput::Text { text } = item {
+            if summary.is_empty() {
+                summary.push_str(text);
+            } else {
+                summary.push('\n');
+                summary.push_str(text);
+            }
+        }
+    }
+
+    if summary.is_empty() {
+        "[structured input]".to_string()
+    } else {
+        summary
     }
 }
 
