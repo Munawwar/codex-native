@@ -2031,6 +2031,17 @@ mod handlers {
             .await;
         info!("Shutting down Codex instance");
 
+        if sess.enabled(Feature::ShellSnapshot)
+            && let Some(snapshot) = sess.services.user_shell.shell_snapshot.as_ref()
+            && let Err(err) = std::fs::remove_file(&snapshot.path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(
+                "Failed to delete shell snapshot at {}: {err:?}",
+                snapshot.path.display()
+            );
+        }
+
         // Gracefully flush and shutdown rollout recorder on session end so tests
         // that inspect the rollout file do not race with the background writer.
         let recorder_opt = {
