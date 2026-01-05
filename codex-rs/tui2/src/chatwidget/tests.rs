@@ -1289,6 +1289,7 @@ async fn slash_resume_opens_picker() {
     assert_matches!(rx.try_recv(), Ok(AppEvent::OpenResumePicker));
 }
 
+#[tokio::test]
 async fn slash_rollout_displays_current_path() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
     let rollout_path = PathBuf::from("/tmp/codex-test-rollout.jsonl");
