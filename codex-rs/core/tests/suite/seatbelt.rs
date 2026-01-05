@@ -4,6 +4,7 @@
 //! Tests that apply to both Mac and Linux sandboxing should go in sandbox.rs.
 
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -164,6 +165,71 @@ async fn read_only_forbids_all_writes() {
 }
 
 #[tokio::test]
+async fn read_only_allows_writes_to_slash_tmp() {
+    if std::env::var(CODEX_SANDBOX_ENV_VAR) == Ok("seatbelt".to_string()) {
+        eprintln!("{CODEX_SANDBOX_ENV_VAR} is set to 'seatbelt', skipping test.");
+        return;
+    }
+
+    // We allow writes to `/tmp` under ReadOnly so system tools can start reliably.
+    let tmp = TempDir::new_in("/tmp").expect("create temp dir under /tmp");
+    let target = tmp.path().join("read-only-can-write-to-tmp.txt");
+    let policy = SandboxPolicy::ReadOnly;
+
+    assert!(touch(&target, &policy).await);
+    assert!(target.exists());
+}
+
+#[tokio::test]
+async fn read_only_allows_writes_to_darwin_user_temp_dir() {
+    if std::env::var(CODEX_SANDBOX_ENV_VAR) == Ok("seatbelt".to_string()) {
+        eprintln!("{CODEX_SANDBOX_ENV_VAR} is set to 'seatbelt', skipping test.");
+        return;
+    }
+
+    // Seatbelt policies use `_CS_DARWIN_USER_TEMP_DIR` rather than TMPDIR.
+    let Some(tmpdir) = darwin_user_temp_dir() else {
+        eprintln!("_CS_DARWIN_USER_TEMP_DIR is unavailable, skipping test.");
+        return;
+    };
+
+    let tmp = TempDir::new_in(&tmpdir).expect("create temp dir under DARWIN_USER_TEMP_DIR");
+    let target = tmp.path().join("read-only-can-write-to-user-temp.txt");
+    let policy = SandboxPolicy::ReadOnly;
+
+    assert!(touch(&target, &policy).await);
+    assert!(target.exists());
+}
+
+#[tokio::test]
+async fn read_only_disallows_writes_to_tmp_when_tmp_is_cwd() {
+    if std::env::var(CODEX_SANDBOX_ENV_VAR) == Ok("seatbelt".to_string()) {
+        eprintln!("{CODEX_SANDBOX_ENV_VAR} is set to 'seatbelt', skipping test.");
+        return;
+    }
+
+    // If the command is running with a cwd inside `/tmp`, we still want to keep the
+    // cwd read-only while allowing other temp writes.
+    let cwd = TempDir::new_in("/tmp").expect("create temp dir under /tmp");
+    let in_cwd = cwd.path().join("disallowed-under-cwd.txt");
+
+    let other_tmp_dir = TempDir::new_in("/tmp").expect("create second temp dir under /tmp");
+    let outside_cwd = other_tmp_dir.path().join("allowed-outside-cwd.txt");
+
+    let policy = SandboxPolicy::ReadOnly;
+
+    assert!(
+        !(touch_with_cwd(&in_cwd, &policy, cwd.path().to_path_buf()).await)
+    );
+    assert!(!in_cwd.exists());
+
+    assert!(
+        touch_with_cwd(&outside_cwd, &policy, cwd.path().to_path_buf()).await
+    );
+    assert!(outside_cwd.exists());
+}
+
+#[tokio::test]
 async fn openpty_works_under_seatbelt() {
     if std::env::var(CODEX_SANDBOX_ENV_VAR) == Ok("seatbelt".to_string()) {
         eprintln!("{CODEX_SANDBOX_ENV_VAR} is set to 'seatbelt', skipping test.");
@@ -287,11 +353,32 @@ fn create_test_scenario(tmp: &TempDir) -> TestScenario {
     }
 }
 
+fn darwin_user_temp_dir() -> Option<PathBuf> {
+    let mut buf = vec![0_i8; (libc::PATH_MAX as usize) + 1];
+    let len = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr(), buf.len()) };
+    if len == 0 {
+        return None;
+    }
+
+    // confstr guarantees NUL-termination when len > 0.
+    let cstr = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    let path_str = cstr.to_str().ok()?;
+    let path = PathBuf::from(path_str);
+    Some(path.canonicalize().unwrap_or(path))
+}
+
 #[expect(clippy::expect_used)]
 /// Note that `path` must be absolute.
 async fn touch(path: &Path, policy: &SandboxPolicy) -> bool {
     assert!(path.is_absolute(), "Path must be absolute: {path:?}");
     let command_cwd = std::env::current_dir().expect("getcwd");
+    touch_with_cwd(path, policy, command_cwd).await
+}
+
+#[expect(clippy::expect_used)]
+/// Note that `path` must be absolute.
+async fn touch_with_cwd(path: &Path, policy: &SandboxPolicy, command_cwd: PathBuf) -> bool {
+    assert!(path.is_absolute(), "Path must be absolute: {path:?}");
     let sandbox_cwd = command_cwd.clone();
     let mut child = spawn_command_under_seatbelt(
         vec![
