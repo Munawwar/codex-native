@@ -67,7 +67,7 @@ export class AgentWorkflowOrchestrator {
     const success = workerOutcomes.every((o) => o.success) && (await this.isAllResolved());
     if (success) {
       // Optional validation pass to surface any lingering issues post-merge.
-      await this.runReviewerPhase(workerOutcomes, input.remoteComparison, true);
+      await this.runReviewerPhase(workerOutcomes, input.remoteComparison, null, true);
     }
     const transcript = this.generateTranscript(coordinatorPlan, workerOutcomes, reviewerSummary);
 
