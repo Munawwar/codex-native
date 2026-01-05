@@ -454,7 +454,6 @@ fn trim_empty_lines(out: &mut VecDeque<&LineRecord>) {
 mod defaults {
     use super::*;
 
-    #[allow(clippy::derivable_impls)]
     impl Default for IndentationArgs {
         fn default() -> Self {
             Self {

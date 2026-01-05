@@ -1279,7 +1279,6 @@ mod tests {
             create_read_mcp_resource_tool(),
             PLAN_TOOL.clone(),
             create_apply_patch_freeform_tool(),
-            create_read_file_tool(),
             ToolSpec::WebSearch {},
             create_view_image_tool(),
         ] {
@@ -1325,7 +1324,6 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "apply_patch",
-                "read_file",
                 "view_image",
             ],
         );
@@ -1343,7 +1341,6 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "apply_patch",
-                "read_file",
                 "view_image",
             ],
         );
@@ -1364,7 +1361,6 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "apply_patch",
-                "read_file",
                 "web_search",
                 "view_image",
             ],
@@ -1386,7 +1382,6 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "apply_patch",
-                "read_file",
                 "web_search",
                 "view_image",
             ],
@@ -1421,7 +1416,6 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "apply_patch",
-                "read_file",
                 "view_image",
             ],
         );
