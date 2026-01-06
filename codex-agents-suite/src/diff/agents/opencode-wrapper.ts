@@ -37,7 +37,7 @@ export interface OpenCodeOptions {
  */
 class MergeSupervisorAgent {
   private runner: Runner;
-  private agent: Agent;
+  private agent: Agent<any, any>;
   private plan: string = "";
 
   constructor(
@@ -50,7 +50,7 @@ class MergeSupervisorAgent {
 
     this.agent = new Agent({
       name: `MergeSupervisor[${conflict.path}]`,
-      model: codexProvider.getModel(codexProvider.options.defaultModel || "gpt-5.1-codex-max"),
+      model: codexProvider.getModel(),
       instructions: `You are an intelligent merge conflict supervisor for ${conflict.path}.
 
 Your role:
@@ -100,24 +100,24 @@ Response format for approvals:
       upstreamRef: remoteInfo?.upstreamRef,
     });
 
-    logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Analysis]\n${prompt}\n${"=".repeat(80)}`, this.conflict.path);
+    logInfo("agent", `\n${"=".repeat(80)}\n[Supervisor Analysis]\n${prompt}\n${"=".repeat(80)}`, this.conflict.path);
 
     const result = await this.runner.run(this.agent, prompt);
     this.plan = result.finalOutput as string;
 
-    logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Plan]\n${this.plan}\n${"=".repeat(80)}`, this.conflict.path);
+    logInfo("agent", `\n${"=".repeat(80)}\n[Supervisor Plan]\n${this.plan}\n${"=".repeat(80)}`, this.conflict.path);
 
     return this.plan;
   }
 
   async reviewApproval(request: PermissionRequest): Promise<boolean> {
-    logInfo("approval", `\n📋 Approval Request: ${request.type} - ${request.title}`, this.conflict.path);
+    logInfo("supervisor", `\n📋 Approval Request: ${request.type} - ${request.title}`, this.conflict.path);
 
     const prompt = `Review this approval request from OpenCode:
 
 TYPE: ${request.type}
 TITLE: ${request.title}
-DETAILS: ${JSON.stringify(request.details, null, 2)}
+METADATA: ${JSON.stringify(request.metadata, null, 2)}
 
 CURRENT PLAN:
 ${this.plan || "No plan available"}
@@ -129,13 +129,13 @@ Should this action be approved? Consider:
 2. Is it safe and necessary?
 3. Does it help resolve the conflict?
 
-Respond with your decision.`;
+    Respond with your decision.`;
 
     try {
-      // Temporarily switch agent to approval output schema
-      const originalOutputType = this.agent.outputType;
-      this.agent.outputType = {
+      const approvalOutputType = {
         type: "json_schema",
+        name: "ApprovalDecision",
+        strict: true,
         schema: {
           type: "object",
           properties: {
@@ -145,25 +145,21 @@ Respond with your decision.`;
           required: ["decision", "reason"],
           additionalProperties: false,
         },
-        name: "ApprovalDecision",
-        strict: true,
-      };
+      } as const;
 
-      const result = await this.runner.run(this.agent, prompt);
-      const decision = result.finalOutput as any;
+      const approvalAgent = this.agent.clone({ outputType: approvalOutputType });
+      const result = await this.runner.run(approvalAgent, prompt);
+      const decision = result.finalOutput as { decision?: string; reason?: string } | undefined;
 
-      // Restore original output type
-      this.agent.outputType = originalOutputType;
-
-      if (decision.decision === "APPROVE") {
-        logInfo("approval", `✅ APPROVED: ${decision.reason}`, this.conflict.path);
+      if (decision?.decision === "APPROVE") {
+        logInfo("supervisor", `✅ APPROVED: ${decision.reason ?? ""}`, this.conflict.path);
         return true;
       } else {
-        logWarn("approval", `❌ DENIED: ${decision.reason}`, this.conflict.path);
+        logWarn("supervisor", `❌ DENIED: ${decision?.reason ?? "No reason provided"}`, this.conflict.path);
         return false;
       }
     } catch (error: any) {
-      logWarn("approval", `❌ ERROR: ${error.message} - Denying by default`, this.conflict.path);
+      logWarn("supervisor", `❌ ERROR: ${error.message} - Denying by default`, this.conflict.path);
       return false; // Fail closed
     }
   }
@@ -211,7 +207,7 @@ export async function runOpenCodeResolution(
     conversationLog.push(`[Supervisor Plan] ${plan.slice(0, 200)}...`);
 
     // Phase 3: Create OpenCode agent (cheap model) with approval callback
-    logInfo("opencode", "Creating OpenCode execution agent...", conflict.path);
+    logInfo("worker", "Creating OpenCode execution agent...", conflict.path);
 
     const approvalHandler = async (request: PermissionRequest): Promise<boolean> => {
       return await supervisor.reviewApproval(request);
@@ -240,10 +236,10 @@ Requirements:
 3. Verify with: rg '<<<<<<<' ${conflict.path}
 4. Report completion status`;
 
-    logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor → OpenCode]\n${executionPrompt}\n${"=".repeat(80)}`, conflict.path);
+    logInfo("agent", `\n${"=".repeat(80)}\n[Supervisor → OpenCode]\n${executionPrompt}\n${"=".repeat(80)}`, conflict.path);
     conversationLog.push(`[Supervisor → OpenCode] ${executionPrompt.slice(0, 200)}...`);
 
-    logInfo("opencode", "OpenCode executing plan...", conflict.path);
+    logInfo("worker", "OpenCode executing plan...", conflict.path);
 
     // Execute with streaming to show progress
     const result = await opencodeAgent.delegateStreaming(executionPrompt, (event) => {
@@ -252,18 +248,18 @@ Requirements:
       if (event.type === "message.part.updated") {
         const part = props.info as { type: string; text?: string };
         if (part?.type === "text" && part.text) {
-          logInfo("opencode", `Response: ${part.text.trim().slice(0, 100)}...`, conflict.path);
+          logInfo("worker", `Response: ${part.text.trim().slice(0, 100)}...`, conflict.path);
         }
       } else if (event.type === "command.executed") {
         const command = props as { name?: string; arguments?: string };
         const summary = [command.name, command.arguments].filter(Boolean).join(" ");
-        logInfo("opencode", `Executed: ${summary}`, conflict.path);
+        logInfo("worker", `Executed: ${summary}`, conflict.path);
       }
     });
 
     const response = result.output || "(no response)";
     conversationLog.push(`[OpenCode → Supervisor] ${response.slice(0, 200)}...`);
-    logInfo("conversation", `\n${"=".repeat(80)}\n[OpenCode → Supervisor]\n${response}\n${"=".repeat(80)}`, conflict.path);
+    logInfo("agent", `\n${"=".repeat(80)}\n[OpenCode → Supervisor]\n${response}\n${"=".repeat(80)}`, conflict.path);
 
     // Phase 5: Verify resolution by checking file content for conflict markers
     // Note: Git index status (UU) remains until staged, so we check actual content instead
@@ -281,7 +277,7 @@ Requirements:
         await access(fullPath);
       } catch {
         // File doesn't exist - might be a delete/modify conflict
-        logInfo("opencode", `⚠️  File does not exist (may be modify/delete conflict) - checking git status`, conflict.path);
+        logInfo("worker", `⚠️  File does not exist (may be modify/delete conflict) - checking git status`, conflict.path);
         // For modify/delete conflicts, we consider them resolved if OpenCode handled them
         // The actual resolution (accepting delete or keeping modify) will be staged by git
         resolved = result.success;
@@ -294,27 +290,27 @@ Requirements:
       }
 
       // Check for conflict markers in the actual file content
-      const { stdout } = await execFileAsync("rg", ["-e", "<<<<<<<", "-e", "=======", "-e", ">>>>>>>", conflict.path], {
+      await execFileAsync("rg", ["-e", "<<<<<<<", "-e", "=======", "-e", ">>>>>>>", conflict.path], {
         cwd: options.workingDirectory,
       });
 
       // If rg found markers, file is not resolved
       resolved = false;
-      logWarn("opencode", `⚠️  Conflict markers still present in file content`, conflict.path);
+      logWarn("worker", `⚠️  Conflict markers still present in file content`, conflict.path);
     } catch (error: any) {
       // rg exits with code 1 when no matches found - this means file is resolved
       if (error.code === 1) {
         resolved = true;
-        logInfo("opencode", "✅ Conflict markers removed from file content!", conflict.path);
+        logInfo("worker", "✅ Conflict markers removed from file content!", conflict.path);
       } else {
         // Some other error
-        logWarn("opencode", `⚠️  Error checking for conflict markers: ${error.message}`, conflict.path);
+        logWarn("worker", `⚠️  Error checking for conflict markers: ${error.message}`, conflict.path);
         resolved = false;
       }
     }
 
     if (!result.success) {
-      logWarn("opencode", `Execution failed: ${result.error}`, conflict.path);
+      logWarn("worker", `Execution failed: ${result.error}`, conflict.path);
       return {
         path: conflict.path,
         success: false,
@@ -325,15 +321,17 @@ Requirements:
 
     // Phase 6: Fallback to supervisor if OpenCode failed to resolve
     if (!resolved) {
-      logWarn("opencode", `OpenCode failed to resolve conflict - falling back to supervisor agent`, conflict.path);
+      logWarn("worker", `OpenCode failed to resolve conflict - falling back to supervisor agent`, conflict.path);
       conversationLog.push(`[Fallback] OpenCode failed - Supervisor taking over`);
 
       const supervisorCodex = new Codex({
         defaultModel: options.supervisorModel,
-        workingDirectory: options.workingDirectory,
-        sandboxMode: options.sandboxMode,
-        approvalMode: "never", // Supervisor resolves without approvals
+        baseUrl: options.baseUrl,
+        apiKey: options.apiKey,
       });
+      if (options.approvalSupervisor?.isAvailable()) {
+        supervisorCodex.setApprovalCallback((req) => options.approvalSupervisor!.handleApproval(req));
+      }
 
       try {
         const fallbackPrompt = `The OpenCode agent failed to resolve this merge conflict. You are the supervisor agent taking over.
@@ -353,25 +351,34 @@ Requirements:
 5. Report what you did differently`;
 
         logInfo("supervisor", "Supervisor attempting direct resolution...", conflict.path);
-        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Fallback]\n${fallbackPrompt}\n${"=".repeat(80)}`, conflict.path);
+        logInfo("agent", `\n${"=".repeat(80)}\n[Supervisor Fallback]\n${fallbackPrompt}\n${"=".repeat(80)}`, conflict.path);
         conversationLog.push(`[Supervisor Fallback] ${fallbackPrompt.slice(0, 200)}...`);
 
-        const fallbackThread = supervisorCodex.startThread();
-        const fallbackTurn = await fallbackThread.run(fallbackPrompt);
-        const fallbackOutput = fallbackTurn.output || "(no response)";
+        const fallbackThread = supervisorCodex.startThread({
+          model: options.supervisorModel,
+          workingDirectory: options.workingDirectory,
+          sandboxMode: options.sandboxMode,
+          approvalMode: "never",
+          skipGitRepoCheck: true,
+        });
 
-        conversationLog.push(`[Supervisor Result] ${fallbackOutput.slice(0, 200)}...`);
-        logInfo("conversation", `\n${"=".repeat(80)}\n[Supervisor Result]\n${fallbackOutput}\n${"=".repeat(80)}`, conflict.path);
-
-        if (fallbackTurn.error) {
-          logWarn("supervisor", `Supervisor also failed: ${fallbackTurn.error.message}`, conflict.path);
+        let fallbackOutput = "(no response)";
+        try {
+          const fallbackTurn = await fallbackThread.run(fallbackPrompt);
+          fallbackOutput = fallbackTurn.finalResponse || "(no response)";
+        } catch (error: any) {
+          const supervisorError = error instanceof Error ? error.message : String(error);
+          logWarn("supervisor", `Supervisor also failed: ${supervisorError}`, conflict.path);
           return {
             path: conflict.path,
             success: false,
-            error: `Both OpenCode and supervisor failed. OpenCode: ${result.error || "unknown"}. Supervisor: ${fallbackTurn.error.message}`,
+            error: `Both OpenCode and supervisor failed. OpenCode: ${result.error || "unknown"}. Supervisor: ${supervisorError}`,
             summary: `--- Dual-Agent Conversation ---\n${conversationLog.join("\n\n")}`,
           };
         }
+
+        conversationLog.push(`[Supervisor Result] ${fallbackOutput.slice(0, 200)}...`);
+        logInfo("agent", `\n${"=".repeat(80)}\n[Supervisor Result]\n${fallbackOutput}\n${"=".repeat(80)}`, conflict.path);
 
         // Re-verify after supervisor's attempt
         try {
@@ -433,9 +440,9 @@ Requirements:
     if (opencodeAgent) {
       try {
         await opencodeAgent.close();
-        logInfo("opencode", "OpenCode server shut down successfully", conflict.path);
+        logInfo("worker", "OpenCode server shut down successfully", conflict.path);
       } catch (error: any) {
-        logWarn("opencode", `Failed to shut down OpenCode server: ${error.message}`, conflict.path);
+        logWarn("worker", `Failed to shut down OpenCode server: ${error.message}`, conflict.path);
       }
     }
   }

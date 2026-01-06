@@ -101,6 +101,8 @@ jobs:
       USE_SCCACHE: ${{ startsWith(matrix.runner, 'windows') && 'false' || 'true' }}
       CARGO_INCREMENTAL: "0"
       SCCACHE_CACHE_SIZE: 10G
+      # DotSlash can fall back to `gh release download` when direct URL fetches are flaky.
+      GH_TOKEN: ${{ github.token }}
 
     strategy:
       fail-fast: false
@@ -358,6 +360,8 @@ jobs:
       USE_SCCACHE: ${{ startsWith(matrix.runner, 'windows') && 'false' || 'true' }}
       CARGO_INCREMENTAL: "0"
       SCCACHE_CACHE_SIZE: 10G
+      # DotSlash can fall back to `gh release download` when direct URL fetches are flaky.
+      GH_TOKEN: ${{ github.token }}
 
     strategy:
       fail-fast: false

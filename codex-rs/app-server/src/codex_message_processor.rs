@@ -1186,10 +1186,22 @@ impl CodexMessageProcessor {
             arg0: None,
         };
 
-        let effective_policy = params
-            .sandbox_policy
-            .map(|policy| policy.to_core())
-            .unwrap_or_else(|| self.config.sandbox_policy.clone());
+        let requested_policy = params.sandbox_policy.map(|policy| policy.to_core());
+        let effective_policy = match requested_policy {
+            Some(policy) => match self.config.sandbox_policy.can_set(&policy) {
+                Ok(()) => policy,
+                Err(err) => {
+                    let error = JSONRPCErrorError {
+                        code: INVALID_REQUEST_ERROR_CODE,
+                        message: format!("invalid sandbox policy: {err}"),
+                        data: None,
+                    };
+                    self.outgoing.send_error(request_id, error).await;
+                    return;
+                }
+            },
+            None => self.config.sandbox_policy.get().clone(),
+        };
 
         let codex_linux_sandbox_exe = self.config.codex_linux_sandbox_exe.clone();
         let outgoing = self.outgoing.clone();
@@ -1980,16 +1992,6 @@ impl CodexMessageProcessor {
             }
         };
 
-        if !config.features.enabled(Feature::RmcpClient) {
-            let error = JSONRPCErrorError {
-                code: INVALID_REQUEST_ERROR_CODE,
-                message: "OAuth login is only supported when [features].rmcp_client is true in config.toml".to_string(),
-                data: None,
-            };
-            self.outgoing.send_error(request_id, error).await;
-            return;
-        }
-
         let McpServerOauthLoginParams {
             name,
             scopes,
@@ -2577,6 +2579,7 @@ impl CodexMessageProcessor {
         let _ = conversation
             .submit(Op::UserInput {
                 items: mapped_items,
+                final_output_json_schema: None,
             })
             .await;
 
@@ -2596,6 +2599,7 @@ impl CodexMessageProcessor {
             model,
             effort,
             summary,
+            output_schema,
         } = params;
 
         let Ok(conversation) = self
@@ -2630,7 +2634,7 @@ impl CodexMessageProcessor {
                 model,
                 effort,
                 summary,
-                final_output_json_schema: None,
+                final_output_json_schema: output_schema,
             })
             .await;
 
@@ -2648,19 +2652,17 @@ impl CodexMessageProcessor {
         };
 
         let skills_manager = self.conversation_manager.skills_manager();
-        let data = cwds
-            .into_iter()
-            .map(|cwd| {
-                let outcome = skills_manager.skills_for_cwd_with_options(&cwd, force_reload);
-                let errors = errors_to_info(&outcome.errors);
-                let skills = skills_to_info(&outcome.skills);
-                codex_app_server_protocol::SkillsListEntry {
-                    cwd,
-                    skills,
-                    errors,
-                }
-            })
-            .collect();
+        let mut data = Vec::new();
+        for cwd in cwds {
+            let outcome = skills_manager.skills_for_cwd(&cwd, force_reload).await;
+            let errors = errors_to_info(&outcome.errors);
+            let skills = skills_to_info(&outcome.skills);
+            data.push(codex_app_server_protocol::SkillsListEntry {
+                cwd,
+                skills,
+                errors,
+            });
+        }
         self.outgoing
             .send_response(request_id, SkillsListResponse { data })
             .await;
@@ -2739,6 +2741,7 @@ impl CodexMessageProcessor {
         let turn_id = conversation
             .submit(Op::UserInput {
                 items: mapped_items,
+                final_output_json_schema: params.output_schema,
             })
             .await;
 
