@@ -44,14 +44,12 @@ prefix_rule(
   match = [
     "git init ."
   ],
-)
+    )
 "#,
         codex_home.as_ref(),
     )
     .await?;
-    let dotslash_cache_temp_dir = TempDir::new()?;
-    let dotslash_cache = dotslash_cache_temp_dir.path();
-    let transport = create_transport(codex_home.as_ref(), dotslash_cache).await?;
+    let transport = create_transport(codex_home.as_ref()).await?;
 
     // Create an MCP client that approves expected elicitation messages.
     let project_root = TempDir::new()?;
