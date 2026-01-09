@@ -159,22 +159,6 @@ importers:
         specifier: workspace:*
         version: link:npm/win32-x64-msvc
 
-  sdk/native/npm/darwin-arm64: {}
-
-  sdk/native/npm/darwin-x64: {}
-
-  sdk/native/npm/linux-arm64-gnu: {}
-
-  sdk/native/npm/linux-arm64-musl: {}
-
-  sdk/native/npm/linux-x64-gnu: {}
-
-  sdk/native/npm/linux-x64-musl: {}
-
-  sdk/native/npm/win32-arm64-msvc: {}
-
-  sdk/native/npm/win32-x64-msvc: {}
-
   sdk/typescript:
     devDependencies:
       '@modelcontextprotocol/sdk':
