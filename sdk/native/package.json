@@ -1,6 +1,6 @@
 {
   "name": "@codex-native/sdk",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Native NAPI-based Codex SDK - complete standalone implementation.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -18,6 +18,8 @@
   "files": [
     "dist",
     "README.md",
+    "index.js",
+    "index.d.ts",
     "npm",
     "*.node"
   ],
@@ -58,6 +60,7 @@
     "release:major": "npm version major && npm run release",
     "publish:platforms": "npm run create-npm-dirs && napi artifacts --output-dir . --npm-dir npm && node scripts/ensure-trailing-newline.mjs package.json && node scripts/publish-platform-packages.mjs",
     "release": "npm run build && npm run test && npm run publish:platforms && node scripts/publish-sdk.mjs",
+    "release:notest": "npm run build && npm run publish:platforms && node scripts/publish-sdk.mjs",
     "release:dry": "npm run build && npm run test && npm publish --dry-run"
   },
   "napi": {
@@ -74,14 +77,14 @@
     ]
   },
   "optionalDependencies": {
-    "@codex-native/sdk-darwin-arm64": "workspace:*",
-    "@codex-native/sdk-darwin-x64": "workspace:*",
-    "@codex-native/sdk-linux-arm64-gnu": "workspace:*",
-    "@codex-native/sdk-linux-x64-gnu": "workspace:*",
-    "@codex-native/sdk-linux-arm64-musl": "workspace:*",
-    "@codex-native/sdk-linux-x64-musl": "workspace:*",
-    "@codex-native/sdk-win32-arm64-msvc": "workspace:*",
-    "@codex-native/sdk-win32-x64-msvc": "workspace:*"
+    "@codex-native/sdk-darwin-arm64": "0.0.7",
+    "@codex-native/sdk-darwin-x64": "0.0.7",
+    "@codex-native/sdk-linux-arm64-gnu": "0.0.7",
+    "@codex-native/sdk-linux-x64-gnu": "0.0.7",
+    "@codex-native/sdk-linux-arm64-musl": "0.0.7",
+    "@codex-native/sdk-linux-x64-musl": "0.0.7",
+    "@codex-native/sdk-win32-arm64-msvc": "0.0.7",
+    "@codex-native/sdk-win32-x64-msvc": "0.0.7"
   },
   "engines": {
     "node": ">=18"
