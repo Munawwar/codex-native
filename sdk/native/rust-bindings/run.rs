@@ -237,7 +237,11 @@ fn is_supported_hosted_model(model: &str) -> bool {
     .any(|supported| supported == model)
 }
 
-fn validate_model_name(model: Option<&str>, oss: bool) -> napi::Result<()> {
+fn validate_model_name(
+  model: Option<&str>,
+  oss: bool,
+  model_provider: Option<&str>,
+) -> napi::Result<()> {
   let Some(model_name) = model else {
     return Ok(());
   };
@@ -249,7 +253,11 @@ fn validate_model_name(model: Option<&str>, oss: bool) -> napi::Result<()> {
     )));
   }
 
-  if !oss && !is_supported_hosted_model(trimmed) {
+  // Only validate against Codex-hosted models when using the default OpenAI provider.
+  // For third-party providers (e.g. GitHub Copilot), model names are provider-specific.
+  let provider = model_provider.map(str::trim).filter(|v| !v.is_empty());
+  let is_default_provider = provider.is_none() || provider == Some("openai");
+  if !oss && is_default_provider && !is_supported_hosted_model(trimmed) {
     return Err(napi::Error::from_reason(format!(
       "Invalid model \"{trimmed}\". Supported models are {}.",
       supported_hosted_models_list()
@@ -330,34 +338,11 @@ impl RunRequest {
       None => None,
     };
 
-    validate_model_name(self.model.as_deref(), self.oss.unwrap_or(false))?;
-    if let Some(model_name) = self.model.as_deref() {
-      let trimmed = model_name.trim();
-      let model_provider = self
-        .model_provider
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
-      if self.oss.unwrap_or(false) {
-        if !trimmed.starts_with("gpt-oss:") {
-          return Err(napi::Error::from_reason(format!(
-            "Invalid model \"{trimmed}\" for OSS mode. Use models prefixed with \"gpt-oss:\", e.g. \"gpt-oss:20b\"."
-          )));
-        }
-      } else if model_provider != Some("github")
-        && trimmed != "gpt-5"
-        && trimmed != "gpt-5-codex"
-        && trimmed != "gpt-5-codex-mini"
-        && trimmed != "gpt-5.1"
-        && trimmed != "gpt-5.1-codex"
-        && trimmed != "gpt-5.1-codex-mini"
-        && trimmed != "gpt-5.1-codex-max"
-      {
-        return Err(napi::Error::from_reason(format!(
-          "Invalid model \"{trimmed}\". Supported models are \"gpt-5\", \"gpt-5-codex\", \"gpt-5-codex-mini\", \"gpt-5.1\", \"gpt-5.1-codex\", \"gpt-5.1-codex-mini\", or \"gpt-5.1-codex-max\"."
-        )));
-      }
-    }
+    validate_model_name(
+      self.model.as_deref(),
+      self.oss.unwrap_or(false),
+      self.model_provider.as_deref(),
+    )?;
 
     Ok(InternalRunRequest {
       prompt: self.prompt,
@@ -1650,6 +1635,11 @@ mod tests_run {
 
   #[test]
   fn accepts_gpt_5_2_codex_model() {
-    assert!(validate_model_name(Some("gpt-5.2-codex"), false).is_ok());
+    assert!(validate_model_name(Some("gpt-5.2-codex"), false, None).is_ok());
+  }
+
+  #[test]
+  fn accepts_gpt_4_1_when_provider_is_non_default() {
+    assert!(validate_model_name(Some("gpt-4.1"), false, Some("github")).is_ok());
   }
 }
