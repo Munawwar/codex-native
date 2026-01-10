@@ -18,6 +18,11 @@ fn registered_native_tools() -> &'static Mutex<Vec<ExternalToolRegistration>> {
   TOOLS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn registered_tool_infos() -> &'static Mutex<Vec<NativeToolInfo>> {
+  static TOOLS: OnceLock<Mutex<Vec<NativeToolInfo>>> = OnceLock::new();
+  TOOLS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 fn pending_plan_updates()
 -> &'static Mutex<HashMap<String, codex_protocol::plan_tool::UpdatePlanArgs>> {
   static UPDATES: OnceLock<Mutex<HashMap<String, codex_protocol::plan_tool::UpdatePlanArgs>>> =
@@ -132,6 +137,83 @@ mod tests {
   use std::sync::{Arc, Mutex};
 
   #[test]
+  fn list_registered_tools_returns_cloned_snapshot() {
+    // seed registry mirrors
+    {
+      let mut infos = registered_tool_infos().lock().unwrap();
+      infos.clear();
+      infos.push(NativeToolInfo {
+        name: "echo".to_string(),
+        description: Some("Echo input".to_string()),
+        parameters: Some(json!({ "type": "object" })),
+        strict: Some(true),
+        supports_parallel: Some(false),
+      });
+    }
+
+    let listed = list_registered_tools().expect("should list tools");
+    assert_eq!(listed.len(), 1);
+    let echo = &listed[0];
+    assert_eq!(echo.name, "echo");
+    assert_eq!(echo.description.as_deref(), Some("Echo input"));
+    assert_eq!(echo.strict, Some(true));
+    assert_eq!(echo.supports_parallel, Some(false));
+
+    // Ensure the returned vec is a snapshot (mutating does not affect registry)
+    let mut listed_mut = listed;
+    listed_mut[0].name = "mutated".to_string();
+    let fresh = list_registered_tools().expect("should still list original");
+    assert_eq!(fresh[0].name, "echo");
+  }
+
+  #[test]
+  fn clear_registered_tools_clears_mirrors() {
+    #[derive(Clone)]
+    struct DummyHandler;
+
+    #[async_trait::async_trait]
+    impl ToolHandler for DummyHandler {
+      fn kind(&self) -> ToolKind {
+        ToolKind::Function
+      }
+
+      async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
+        Ok(ToolOutput::Function {
+          content: format!("ok:{}", invocation.tool_name),
+          content_items: None,
+          success: Some(true),
+        })
+      }
+    }
+
+    {
+      registered_native_tools().lock().unwrap().push(ExternalToolRegistration {
+        spec: create_function_tool_spec_from_schema(
+          "echo".to_string(),
+          Some("Echo".to_string()),
+          json!({ "type": "object" }),
+          false,
+        )
+        .unwrap(),
+        handler: Arc::new(DummyHandler),
+        supports_parallel_tool_calls: true,
+      });
+      registered_tool_infos().lock().unwrap().push(NativeToolInfo {
+        name: "echo".to_string(),
+        description: None,
+        parameters: None,
+        strict: None,
+        supports_parallel: Some(true),
+      });
+    }
+
+    clear_registered_tools().expect("clear should succeed");
+
+    assert!(registered_native_tools().lock().unwrap().is_empty());
+    assert!(registered_tool_infos().lock().unwrap().is_empty());
+  }
+
+  #[test]
   fn emit_background_event_notifies_registered_handler() {
     let thread_id = "test-thread";
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -156,6 +238,7 @@ mod tests {
   }
 }
 
+#[derive(Clone)]
 #[napi(object)]
 pub struct NativeToolInfo {
   pub name: String,
@@ -177,17 +260,30 @@ pub struct NativeToolResponse {
 pub fn clear_registered_tools() -> napi::Result<()> {
   registered_native_tools()
     .lock()
-    .map_err(|e| napi::Error::from_reason(format!("tools mutex poisoned: {e}")))?
+    .map_err(|e| napi::Error::from_reason(format!("tools mutex poisoned: {e}")))? 
+    .clear();
+  registered_tool_infos()
+    .lock()
+    .map_err(|e| napi::Error::from_reason(format!("tools infos mutex poisoned: {e}")))? 
     .clear();
   registered_native_interceptors()
     .lock()
-    .map_err(|e| napi::Error::from_reason(format!("interceptors mutex poisoned: {e}")))?
+    .map_err(|e| napi::Error::from_reason(format!("interceptors mutex poisoned: {e}")))? 
     .clear();
   pending_builtin_calls()
     .lock()
     .map_err(|e| napi::Error::from_reason(format!("pending builtin mutex poisoned: {e}")))?
     .clear();
   Ok(())
+}
+
+#[napi]
+pub fn list_registered_tools() -> napi::Result<Vec<NativeToolInfo>> {
+  let guard = registered_tool_infos()
+    .lock()
+    .map_err(|e| napi::Error::from_reason(format!("tools infos mutex poisoned: {e}")))?;
+
+  Ok(guard.clone())
 }
 
 #[napi]
@@ -229,7 +325,7 @@ pub fn register_tool(
   )]
   handler: Function<JsToolInvocation, NativeToolResponse>,
 ) -> napi::Result<()> {
-  let schema = info.parameters.unwrap_or_else(|| {
+  let schema = info.parameters.clone().unwrap_or_else(|| {
     json!({
         "type": "object",
         "properties": {}
@@ -258,8 +354,18 @@ pub fn register_tool(
 
   registered_native_tools()
     .lock()
-    .map_err(|e| napi::Error::from_reason(format!("tools mutex poisoned: {e}")))?
+    .map_err(|e| napi::Error::from_reason(format!("tools mutex poisoned: {e}")))? 
     .push(registration);
+
+  // Maintain a JS-friendly mirror of tool metadata for inspection/testing.
+  {
+    let mut infos = registered_tool_infos()
+      .lock()
+      .map_err(|e| napi::Error::from_reason(format!("tools infos mutex poisoned: {e}")))?;
+    // Replace any existing entry for the same tool name to avoid duplicates.
+    infos.retain(|t| t.name != info.name);
+    infos.push(info);
+  }
 
   Ok(())
 }

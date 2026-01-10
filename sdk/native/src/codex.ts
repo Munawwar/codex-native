@@ -7,6 +7,7 @@ import {
   NativeToolResult,
   NativeToolInterceptorNativeContext,
   ApprovalRequest,
+  NativeToolInfo,
 } from "./nativeBinding";
 import type {
   NativeConversationConfig,
@@ -99,6 +100,16 @@ export class Codex {
 
   clearSkills(): void {
     this.skills.clear();
+  }
+
+  /**
+   * Inspect currently registered native tools (for debugging/testing).
+   */
+  listRegisteredTools(): NativeToolInfo[] {
+    if (!this.nativeBinding || typeof this.nativeBinding.listRegisteredTools !== "function") {
+      return [];
+    }
+    return this.nativeBinding.listRegisteredTools();
   }
 
   private registerSkillsFromConfig(config: CodexOptions["skills"]): void {

@@ -350,6 +350,7 @@ export type NativeBinding = {
   clearRegisteredTools(): void;
   registerTool(info: NativeToolInfo, handler: (call: NativeToolInvocation) => Promise<NativeToolResult> | NativeToolResult): void;
   registerToolInterceptor(toolName: string, handler: (context: NativeToolInterceptorNativeContext) => Promise<NativeToolResult> | NativeToolResult): void;
+  listRegisteredTools(): NativeToolInfo[];
   registerApprovalCallback?(
     handler: (request: ApprovalRequest) => boolean | Promise<boolean>,
   ): void;
