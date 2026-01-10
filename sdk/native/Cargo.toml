@@ -91,7 +91,6 @@ napi-bindings = ["napi", "napi-derive"]
 
 [profile.release]
 lto = true
-strip = "symbols"
 
 # The upstream crates have not yet released the fixes required for the Codex TUI:
 # - ratatui: pending patch to expose color/style APIs needed by codex-tui

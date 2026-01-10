@@ -308,6 +308,9 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
     ]
 });
 
+static SUPPORTED_MODEL_SLUGS: Lazy<Vec<String>> =
+    Lazy::new(|| PRESETS.iter().map(|preset| preset.model.clone()).collect());
+
 fn gpt_52_codex_upgrade() -> ModelUpgrade {
     ModelUpgrade {
         id: "gpt-5.2-codex".to_string(),
@@ -323,6 +326,10 @@ fn gpt_52_codex_upgrade() -> ModelUpgrade {
 
 pub(super) fn builtin_model_presets(_auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
     PRESETS.iter().cloned().collect()
+}
+
+pub fn supported_model_slugs() -> &'static [String] {
+    &SUPPORTED_MODEL_SLUGS
 }
 
 #[cfg(any(test, feature = "test-support"))]

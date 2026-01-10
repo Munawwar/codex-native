@@ -36,8 +36,6 @@ export async function executeRunCommand(
     await assertTrustedDirectory(request.workingDirectory);
   }
 
-  validateModel(request.model, request.oss === true);
-
   const hookContext = {
     command: "run" as CommandName,
     cwd: context.cwd,
@@ -284,42 +282,6 @@ function extractConversationId(eventPayload: unknown): string | null {
   return null;
 }
 
-function validateModel(model: string | undefined, oss: boolean): void {
-  if (!model) return;
-  const trimmed = String(model).trim();
-  if (oss) {
-    if (!trimmed.startsWith("gpt-oss:")) {
-      throw new Error(
-        `Invalid model "${trimmed}" for OSS mode. Use models prefixed with "gpt-oss:", e.g. "gpt-oss:20b".`,
-      );
-    }
-    return;
-  }
-  const allowed = new Set([
-    // GPT models
-    "gpt-5",
-    "gpt-5-codex",
-    "gpt-5-codex-mini",
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.1",
-    "gpt-5.1-codex",
-    "gpt-5.1-codex-mini",
-    // Claude models
-    "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-  ]);
-
-  // Allow any claude- or gpt- prefixed model (flexible for future models)
-  if (!allowed.has(trimmed) && !trimmed.startsWith("claude-") && !trimmed.startsWith("gpt-")) {
-    throw new Error(
-      `Invalid model "${trimmed}". Supported models: ${Array.from(allowed)
-        .map((m) => `"${m}"`)
-        .join(", " )}, or any model starting with "claude-" or "gpt-".`,
-    );
-  }
-}
 
 async function assertTrustedDirectory(workingDirectory?: string): Promise<void> {
   const directory = workingDirectory ? path.resolve(workingDirectory) : process.cwd();

@@ -1,0 +1,11 @@
+{
+  "name": "@codex-native/examples-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@codex-native/sdk": "file:../.."
+  }
+}

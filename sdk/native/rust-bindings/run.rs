@@ -223,6 +223,42 @@ pub struct InternalRunRequest {
   pub full_auto: bool,
 }
 
+fn supported_hosted_models_list() -> String {
+  codex_core::models_manager::model_presets::supported_model_slugs()
+    .iter()
+    .map(|model| format!("\"{model}\""))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+fn is_supported_hosted_model(model: &str) -> bool {
+  codex_core::models_manager::model_presets::supported_model_slugs()
+    .iter()
+    .any(|supported| supported == model)
+}
+
+fn validate_model_name(model: Option<&str>, oss: bool) -> napi::Result<()> {
+  let Some(model_name) = model else {
+    return Ok(());
+  };
+
+  let trimmed = model_name.trim();
+  if oss && !trimmed.starts_with("gpt-oss:") {
+    return Err(napi::Error::from_reason(format!(
+      "Invalid model \"{trimmed}\" for OSS mode. Use models prefixed with \"gpt-oss:\", e.g. \"gpt-oss:20b\"."
+    )));
+  }
+
+  if !oss && !is_supported_hosted_model(trimmed) {
+    return Err(napi::Error::from_reason(format!(
+      "Invalid model \"{trimmed}\". Supported models are {}.",
+      supported_hosted_models_list()
+    )));
+  }
+
+  Ok(())
+}
+
 impl ConversationConfigRequest {
   fn into_internal_request(self) -> napi::Result<InternalRunRequest> {
     let sandbox_mode = parse_sandbox_mode(self.sandbox_mode.as_deref())?;
@@ -294,20 +330,7 @@ impl RunRequest {
       None => None,
     };
 
-    if let Some(model_name) = self.model.as_deref() {
-      let trimmed = model_name.trim();
-      if self.oss.unwrap_or(false) {
-        if !trimmed.starts_with("gpt-oss:") {
-          return Err(napi::Error::from_reason(format!(
-            "Invalid model \"{trimmed}\" for OSS mode. Use models prefixed with \"gpt-oss:\", e.g. \"gpt-oss:20b\"."
-          )));
-        }
-      } else if trimmed != "gpt-5" && trimmed != "gpt-5-codex" && trimmed != "gpt-5-codex-mini" && trimmed != "gpt-5.1" && trimmed != "gpt-5.1-codex" && trimmed != "gpt-5.1-codex-mini" && trimmed != "gpt-5.1-codex-max" {
-        return Err(napi::Error::from_reason(format!(
-          "Invalid model \"{trimmed}\". Supported models are \"gpt-5\", \"gpt-5-codex\", \"gpt-5-codex-mini\", \"gpt-5.1\", \"gpt-5.1-codex\", \"gpt-5.1-codex-mini\", or \"gpt-5.1-codex-max\"."
-        )));
-      }
-    }
+    validate_model_name(self.model.as_deref(), self.oss.unwrap_or(false))?;
 
     Ok(InternalRunRequest {
       prompt: self.prompt,
@@ -1596,5 +1619,10 @@ mod tests_run {
   fn parses_xhigh_reasoning_effort_alias() {
     let parsed = parse_reasoning_effort(Some("xhigh")).expect("parse succeeds");
     assert_eq!(parsed, Some(ReasoningEffort::High));
+  }
+
+  #[test]
+  fn accepts_gpt_5_2_codex_model() {
+    assert!(validate_model_name(Some("gpt-5.2-codex"), false).is_ok());
   }
 }

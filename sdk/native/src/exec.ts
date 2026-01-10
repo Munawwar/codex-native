@@ -90,9 +90,6 @@ export class CodexExec {
     const binding = this.native;
     const queue = new AsyncQueue<string>();
 
-    // Validate model selection before crossing the N-API boundary.
-    validateModel(args.model, args.oss === true);
-
     const request: NativeRunRequest = {
       prompt: args.input,
       threadId: args.threadId ?? undefined,
@@ -161,7 +158,6 @@ export class CodexExec {
   }
 
   async compact(args: CodexExecArgs): Promise<string[]> {
-    validateModel(args.model, args.oss === true);
     const request: NativeRunRequest = {
       prompt: args.input,
       threadId: args.threadId ?? undefined,
@@ -289,44 +285,5 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 
   [Symbol.asyncIterator](): AsyncIterableIterator<T> {
     return this;
-  }
-}
-
-function validateModel(model: string | undefined | null, oss: boolean): void {
-  if (!model) return;
-  const trimmed = String(model).trim();
-  if (oss) {
-    // In OSS mode, only accept gpt-oss:* models
-    if (!trimmed.startsWith("gpt-oss:")) {
-      throw new Error(
-        `Invalid model "${trimmed}" for OSS mode. Use models prefixed with "gpt-oss:", e.g. "gpt-oss:20b".`
-      );
-    }
-    return;
-  }
-  // Non-OSS mode: restrict to supported hosted models
-  const allowed = new Set([
-    // GPT models
-    "gpt-5",
-    "gpt-5-codex",
-    "gpt-5-codex-mini",
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.1",
-    "gpt-5.1-codex",
-    "gpt-5.1-codex-mini",
-    // Claude models
-    "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-  ]);
-
-  // Allow any claude- or gpt- prefixed model (flexible for future models)
-  if (!allowed.has(trimmed) && !trimmed.startsWith("claude-") && !trimmed.startsWith("gpt-")) {
-    throw new Error(
-      `Invalid model "${trimmed}". Supported models: ${Array.from(allowed)
-        .map((m) => `"${m}"`)
-        .join(", " )}, or any model starting with "claude-" or "gpt-".`
-    );
   }
 }
