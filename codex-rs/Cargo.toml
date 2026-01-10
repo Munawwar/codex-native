@@ -46,6 +46,7 @@ members = [
     "utils/string",
     "codex-client",
     "codex-api",
+    "github",
 ]
 resolver = "2"
 
@@ -78,6 +79,7 @@ codex-execpolicy = { path = "execpolicy" }
 codex-feedback = { path = "feedback" }
 codex-file-search = { path = "file-search" }
 codex-git = { path = "utils/git" }
+codex-github = { path = "github" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }

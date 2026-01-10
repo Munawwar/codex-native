@@ -94,6 +94,10 @@ The `mcp-types` crate provides Rust type definitions and serialization support f
 
 The `codex-ollama` crate provides a client library for interacting with local Ollama instances to support open-source model inference. It manages connections to Ollama servers, fetches available models, downloads (pulls) models with progress tracking, and supports both native Ollama and OpenAI-compatible API endpoints. The crate includes a pluggable progress reporting system and is used to ensure that open-source models are available locally before running AI-assisted development tasks.
 
+### github (`codex-github`)
+
+The `codex-github` crate provides GitHub Copilot auth helpers compatible with OpenCode. It reads Copilot credentials from OpenCode's `auth.json` and refreshes Copilot access tokens via GitHub's `copilot_internal/v2/token` endpoint, allowing Codex to use Copilot as an OpenAI-compatible model provider without relying on environment variables.
+
 ### otel (`codex-otel`)
 
 The `codex-otel` crate provides OpenTelemetry (OTEL) instrumentation and observability capabilities for the Codex CLI application. It exports structured telemetry events (such as conversation starts, API requests, tool execution, sandbox assessments) to OTLP (OpenTelemetry Protocol) endpoints via configurable gRPC or HTTP exporters, enabling monitoring and analysis of application behavior. The crate's `OtelEventManager` creates detailed, structured logs with rich contextual metadata (conversation IDs, model info, user details, token counts, latencies) that can be shipped to observability platforms, with an optional compile-time feature flag to disable OTEL support entirely.

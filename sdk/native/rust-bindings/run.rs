@@ -331,6 +331,33 @@ impl RunRequest {
     };
 
     validate_model_name(self.model.as_deref(), self.oss.unwrap_or(false))?;
+    if let Some(model_name) = self.model.as_deref() {
+      let trimmed = model_name.trim();
+      let model_provider = self
+        .model_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+      if self.oss.unwrap_or(false) {
+        if !trimmed.starts_with("gpt-oss:") {
+          return Err(napi::Error::from_reason(format!(
+            "Invalid model \"{trimmed}\" for OSS mode. Use models prefixed with \"gpt-oss:\", e.g. \"gpt-oss:20b\"."
+          )));
+        }
+      } else if model_provider != Some("github")
+        && trimmed != "gpt-5"
+        && trimmed != "gpt-5-codex"
+        && trimmed != "gpt-5-codex-mini"
+        && trimmed != "gpt-5.1"
+        && trimmed != "gpt-5.1-codex"
+        && trimmed != "gpt-5.1-codex-mini"
+        && trimmed != "gpt-5.1-codex-max"
+      {
+        return Err(napi::Error::from_reason(format!(
+          "Invalid model \"{trimmed}\". Supported models are \"gpt-5\", \"gpt-5-codex\", \"gpt-5-codex-mini\", \"gpt-5.1\", \"gpt-5.1-codex\", \"gpt-5.1-codex-mini\", or \"gpt-5.1-codex-max\"."
+        )));
+      }
+    }
 
     Ok(InternalRunRequest {
       prompt: self.prompt,

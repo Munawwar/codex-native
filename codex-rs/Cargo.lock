@@ -1281,6 +1281,7 @@ dependencies = [
  "codex-execpolicy",
  "codex-file-search",
  "codex-git",
+ "codex-github",
  "codex-keyring-store",
  "codex-otel",
  "codex-protocol",
@@ -1487,6 +1488,22 @@ dependencies = [
  "thiserror 2.0.17",
  "ts-rs",
  "walkdir",
+]
+
+[[package]]
+name = "codex-github"
+version = "0.0.0"
+dependencies = [
+ "dirs",
+ "http 1.3.1",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "url",
 ]
 
 [[package]]

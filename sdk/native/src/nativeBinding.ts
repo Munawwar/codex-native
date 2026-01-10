@@ -110,6 +110,7 @@ export type NativeTuiRequest = {
   prompt?: string;
   images?: string[];
   model?: string;
+  modelProvider?: string;
   oss?: boolean;
   sandboxMode?: SandboxMode;
   approvalMode?: ApprovalMode;

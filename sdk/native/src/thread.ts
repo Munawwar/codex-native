@@ -431,6 +431,7 @@ export class Thread {
       model: options?.model,
       reasoningEffort: options?.reasoningEffort,
       reasoningSummary: options?.reasoningSummary,
+      modelProvider: turnOptions?.modelProvider ?? options?.modelProvider ?? this._options.modelProvider,
       oss: turnOptions?.oss ?? options?.oss,
       sandboxMode: options?.sandboxMode,
       approvalMode: options?.approvalMode,
@@ -530,6 +531,7 @@ export class Thread {
     };
 
     assignIfUndefined("model", this._threadOptions?.model ?? this._options.defaultModel);
+    assignIfUndefined("modelProvider", this._threadOptions?.modelProvider ?? this._options.modelProvider);
     assignIfUndefined("oss", this._threadOptions?.oss);
     assignIfUndefined("sandboxMode", this._threadOptions?.sandboxMode);
     assignIfUndefined("approvalMode", this._threadOptions?.approvalMode);

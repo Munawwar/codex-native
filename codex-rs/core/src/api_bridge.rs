@@ -14,6 +14,8 @@ use crate::error::UnexpectedResponseError;
 use crate::error::UsageLimitReachedError;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::token_data::PlanType;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
     match err {
@@ -104,6 +106,28 @@ pub(crate) async fn auth_provider_from_auth(
     auth: Option<CodexAuth>,
     provider: &ModelProviderInfo,
 ) -> crate::error::Result<CoreAuthProvider> {
+    if is_github_copilot_provider(provider) {
+        // GitHub Copilot auth is sourced from OpenCode's `auth.json`, not CODEX/OPENAI env vars
+        // nor Codex's auth.json.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let client = crate::default_client::build_reqwest_client();
+        let token = codex_github::load_or_refresh_copilot_token(
+            &client,
+            codex_github::copilot_default_headers(),
+            now_ms,
+        )
+        .await
+        .map_err(|err| CodexErr::Fatal(format!("GitHub Copilot auth failed: {err}")))?;
+
+        return Ok(CoreAuthProvider {
+            token: Some(token.token),
+            account_id: None,
+        });
+    }
+
     if let Some(api_key) = provider.api_key()? {
         return Ok(CoreAuthProvider {
             token: Some(api_key),
@@ -130,6 +154,13 @@ pub(crate) async fn auth_provider_from_auth(
             account_id: None,
         })
     }
+}
+
+fn is_github_copilot_provider(provider: &ModelProviderInfo) -> bool {
+    provider
+        .base_url
+        .as_deref()
+        .is_some_and(|url| url.contains("githubcopilot.com"))
 }
 
 #[derive(Debug, Deserialize)]

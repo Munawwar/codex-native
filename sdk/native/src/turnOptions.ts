@@ -3,4 +3,6 @@ export type TurnOptions = {
   outputSchema?: unknown;
   /** Whether to use OSS mode with Ollama models */
   oss?: boolean;
+  /** Override the model provider for this specific turn. */
+  modelProvider?: string;
 };
