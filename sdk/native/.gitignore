@@ -123,6 +123,9 @@ test-*.js
 Cargo.lock
 
 *.node
+# napi-rs generated files (we use dist/ instead)
+/index.js
+/index.d.ts
 .pnp.*
 .yarn/*
 !.yarn/patches

@@ -1,19 +1,12 @@
 import { describe, it, expect, beforeAll } from "@jest/globals";
+import { setupNativeBinding } from "./testHelpers";
 
 let binding: any;
 
 beforeAll(async () => {
-  const { createRequire } = await import("node:module");
-  const req = createRequire(import.meta.url);
-
-  try {
-    binding = req("../index.cjs");
-  } catch {
-    // Fallback to compiled N-API binding entry
-    const mod = await import("../index.js");
-    binding = mod.default ?? mod;
-  }
-  binding = await import("../index.js");
+  setupNativeBinding();
+  const { getNativeBinding } = await import("../src/nativeBinding");
+  binding = getNativeBinding();
 });
 
 describe("tuiTestRun headless snapshots", () => {
@@ -106,4 +99,3 @@ describe("tuiTestRun headless snapshots", () => {
     expect(firstFrame).not.toContain("insi\nde");
   });
 });
-

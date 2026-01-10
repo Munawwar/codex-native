@@ -1,20 +1,11 @@
 import { describe, it, expect } from "@jest/globals";
-import fs from "node:fs";
 import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 const requireFn = createRequire(import.meta.url);
 const distDir = path.join(process.cwd(), "dist");
-const rootIndex = path.join(process.cwd(), "index.js");
-
 describe("module format exports", () => {
-  it("ships the native binding shim at the package root", () => {
-    expect(fs.existsSync(rootIndex)).toBe(true);
-    const contents = fs.readFileSync(rootIndex, "utf8");
-    expect(contents).toContain("codex_native");
-  });
-
   it("loads the CommonJS bundle via require", () => {
     const cjsModule = requireFn(path.join(distDir, "index.cjs"));
     expect(cjsModule).toBeDefined();

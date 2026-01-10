@@ -76,7 +76,7 @@ export class CodexExec {
     const nativeBinding = getNativeBinding();
     if (!nativeBinding) {
       throw new Error(
-        "Native NAPI binding not available. Make sure @openai/codex-native is properly installed and built."
+        "Native NAPI binding not available. Make sure @codex-native/sdk is properly installed and built."
       );
     }
     this.native = nativeBinding;

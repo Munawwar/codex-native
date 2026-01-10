@@ -17,16 +17,15 @@
   },
   "files": [
     "dist",
-    "index.js",
-    "index.d.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release --features napi-bindings && tsup",
-    "build:debug": "napi build --platform --features napi-bindings && tsup",
+    "build": "tsup && napi build --platform --release --output-dir dist",
+    "build:debug": "tsup && napi build --platform --output-dir dist",
     "prepublishOnly": "napi prepublish -t npm",
-    "test": "node ./scripts/run-jest.mjs --runInBand",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --runInBand",
     "version": "napi version"
   },
   "napi": {

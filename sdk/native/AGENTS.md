@@ -14,7 +14,7 @@
 
 ## Quick Start
 ```ts
-import { CodexProvider } from '@openai/codex-native';
+import { CodexProvider } from '@codex-native/sdk';
 import { Agent, Runner } from '@openai/agents';
 
 const provider = new CodexProvider({ defaultModel: 'gpt-5.1-codex' });

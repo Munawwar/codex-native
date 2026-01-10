@@ -568,9 +568,17 @@ function resolveLocalBinaryCandidates(): string[] {
   }
 
   const filename = `codex_native.${platformArchAbi}.node`;
-  return resolvePackageRoots().map((root) =>
-    path.join(root, "npm", platformArchAbi, filename),
-  );
+  const candidates: string[] = [];
+
+  // Check locations in order:
+  // 1. dist/ (where our build outputs for local dev)
+  // 2. npm/<platform>/ (where napi prepublish copies for publishing)
+  for (const root of resolvePackageRoots()) {
+    candidates.push(path.join(root, "dist", filename));
+    candidates.push(path.join(root, "npm", platformArchAbi, filename));
+  }
+
+  return candidates;
 }
 
 function tryRequireNativeBinding(requireFn: NodeJS.Require, candidate: string): NativeBinding | null {
@@ -619,7 +627,7 @@ export function getNativeBinding(): NativeBinding | null {
   const requireFn = resolveRequire();
   const envPath = process.env.CODEX_NATIVE_BINDING;
   if (envPath && envPath.length > 0) {
-    // Let napi-rs generated index.js honor this override
+    // Allow napi-rs loaders and direct requires to honor the override.
     process.env.NAPI_RS_NATIVE_LIBRARY_PATH = envPath;
   }
   if (envPath && envPath.length > 0) {

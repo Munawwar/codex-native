@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { CodexProvider } from '@openai/codex-native/agents';
+ * import { CodexProvider } from '@codex-native/sdk/agents';
  * import { Agent, Runner } from '@openai/agents';
  *
  * const provider = new CodexProvider({

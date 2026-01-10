@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeAll } from "@jest/globals";
 import { Codex, runTui } from "../src/index";
+import { setupNativeBinding } from "./testHelpers";
 import type { NativeTuiRequest } from "../src/tui";
 
 /**
@@ -8,6 +9,7 @@ import type { NativeTuiRequest } from "../src/tui";
  */
 
 beforeAll(() => {
+  setupNativeBinding();
   // Skip git repo check for tests
   process.env.CODEX_TEST_SKIP_GIT_REPO_CHECK = "1";
 });
@@ -164,8 +166,8 @@ describe("TUI headless rendering tests", () => {
   let tuiTestRun: any;
 
   beforeAll(async () => {
-    const binding = await import("../index.js");
-    tuiTestRun = binding.tuiTestRun;
+    const { getNativeBinding } = await import("../src/nativeBinding");
+    tuiTestRun = getNativeBinding()?.tuiTestRun;
   });
 
   it("tuiTestRun is available for headless testing", () => {
