@@ -1,4 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 if (process.env.CI) {
   describe.skip("OpenCodeAgent", () => {
@@ -8,7 +10,8 @@ if (process.env.CI) {
   });
 } else {
   await (async () => {
-    const { OpenCodeAgent } = await import("../dist/index.mjs");
+    const distPath = path.join(process.cwd(), "dist", "index.mjs");
+    const { OpenCodeAgent } = await import(pathToFileURL(distPath).href);
 
     const baseSession = {
       id: "session-1",
