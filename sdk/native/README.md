@@ -799,8 +799,8 @@ pnpm --filter @codex-native/sdk test
 ```
 
 The build emits:
-- Platform-specific `.node` binaries (native addons)
-- TypeScript declarations in `index.d.ts`
+- Platform-specific `.node` binaries under `npm/<platform>/`
+- TypeScript declarations in `dist/index.d.ts`
 - ESM wrapper in `dist/index.mjs`
 
 ## Publishing
@@ -825,13 +825,11 @@ pnpm run release:dry
 
 ### What Happens During Release
 
-1. **Version bump**: Updates version in package.json and all platform packages
-2. **Build**: Compiles native binary + TypeScript wrapper
-3. **Test**: Runs full test suite (34 tests)
-4. **Prepublish**: Copies binaries to platform packages via `prepublishOnly` hook
-5. **Publish**: Publishes 9 packages to npm:
-   - Main: `@codex-native/sdk`
-   - Platforms: `@codex-native/{darwin-arm64,darwin-x64,linux-x64-gnu,linux-arm64-gnu,linux-x64-musl,linux-arm64-musl,win32-x64-msvc,win32-arm64-msvc}`
+1. **Version bump**: Updates version in `package.json`
+2. **Build**: Compiles native binary into `npm/<platform>` + TypeScript wrapper
+3. **Test**: Runs the JS test suite
+4. **Prepublish**: `napi prepublish -t npm --skip-gh-release` updates optionalDependencies and publishes any platform packages whose binaries are present under `npm/`
+5. **Publish**: `npm publish --access public` publishes `@codex-native/sdk`
 
 ### Multi-Platform CI/CD
 
@@ -855,21 +853,19 @@ strategy:
 
 After building all platforms:
 ```bash
-pnpm run artifacts  # Download and organize binaries
-pnpm run release    # Publish all packages
+pnpm run artifacts  # Download and organize binaries into npm/<platform>
+pnpm run release    # Publish platform packages + main SDK
 ```
 
 npm automatically installs the correct platform package as an optional dependency.
 
 ## Releasing
 
-1. Update the version in `package.json` and keep the optional dependency versions in sync.
-2. Record the changes in `CHANGELOG.md` (add a new section for the release).
-3. Regenerate build artifacts: `pnpm run build`.
-4. Run the full test suite: `pnpm run test` (which invokes the native Jest runner).
-5. Publish platform binaries: `pnpm run publish:platforms` (or `npm run publish:platforms`).
-6. Publish the SDK itself: `node scripts/publish-sdk.mjs` (the `release` script chains everything).
-7. Tag the release in git.
+1. Update the version in `package.json` and record changes in `CHANGELOG.md`.
+2. Regenerate build artifacts: `pnpm run build`.
+3. Run the test suite: `pnpm run test`.
+4. Run `pnpm run release` (runs `napi prepublish` + `npm publish`).
+5. Tag the release in git.
 
 ## License
 

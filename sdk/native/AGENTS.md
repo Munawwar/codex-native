@@ -2,11 +2,11 @@
 
 ## Scope
 - `sdk/native` exposes `CodexProvider`, letting the OpenAI Agents JS framework talk to the Rust runtime through N-API bindings.
-- The workspace-built `.node` artifact is always preferred; optional platform packages (e.g., `@codex-native/sdk-darwin-arm64`) are only fallbacks when the local build is unavailable.
+- The workspace build writes the `.node` binary under `sdk/native/npm/<platform>/`; optional platform packages (e.g., `@codex-native/sdk-darwin-arm64`) are only fallbacks when the local build is unavailable.
 
 ## Build & Test Loop
 - Install toolchain deps first: `pnpm -C sdk/native install`.
-- Build everything (Rust + TS) with `pnpm -C sdk/native run build`; this produces the platform-specific `.node` binary and TypeScript dist artifacts.
+- Build everything (Rust + TS) with `pnpm -C sdk/native run build`; this produces the platform-specific `.node` under `npm/<platform>` plus TypeScript dist artifacts.
 - Tests:
   - JavaScript: `pnpm -C sdk/native test`
   - Rust: `cargo test` from `sdk/native`

@@ -82,8 +82,8 @@ The `sdk/native` package provides Node.js bindings to the Rust engine via N‑AP
   - JS: `pnpm -C sdk/native test`
   - Rust: `cargo test` inside `sdk/native`
 - Loader behavior:
-  - The generated `sdk/native/index.js` first tries to load the locally built platform `.node` (e.g. `codex_native.darwin-arm64.node`) from the workspace.
-  - Optional platform packages (e.g. `@codex-native/sdk-darwin-arm64`) are only a publish/runtime fallback; local development should rely on the workspace‑built binary.
+  - The SDK only loads a workspace-built binary from `sdk/native/npm/<platform>/codex_native.<platform>.node` when present.
+  - Otherwise it loads the optional platform package (for example `@codex-native/sdk-darwin-arm64`); it no longer scans the package root for `.node` files or relies on a generated `index.js`.
 - Approval callback (programmatic approvals):
   - The native SDK can expose a programmatic approval hook. Recommended shape:
     - JS: `codex.setApprovalCallback((ctx) => boolean | Promise<boolean>)`
