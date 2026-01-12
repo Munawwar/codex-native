@@ -41,7 +41,7 @@ async fn fast_embed_small_model_produces_normalized_vectors() {
   assert_eq!(embeddings.len(), 2);
 
   for vector in embeddings {
-    assert!(vector.len() > 0, "expected non-empty embedding vector");
+    assert!(!vector.is_empty(), "expected non-empty embedding vector");
     let norm: f64 = vector
       .iter()
       .map(|value| (*value as f64) * (*value as f64))

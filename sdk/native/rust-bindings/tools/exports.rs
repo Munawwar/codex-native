@@ -90,22 +90,29 @@ pub struct JsToolInvocation {
   pub input: Option<String>,
 }
 
+// Order matters: `Either` tries variants in order. Promises are also JS objects,
+// so we must try `Promise<T>` before attempting to decode as the plain object.
+type ToolHandlerReturn =
+  napi::Either<napi::bindgen_prelude::Promise<NativeToolResponse>, NativeToolResponse>;
+type ApprovalHandlerReturn = napi::Either<napi::bindgen_prelude::Promise<bool>, bool>;
+
 struct JsToolHandler {
   // NOTE: Using callee_handled::<false> so JS callback receives (payload) not (err, payload)
   callback: Arc<
-    ThreadsafeFunction<JsToolInvocation, NativeToolResponse, JsToolInvocation, napi::Status, false>,
+    ThreadsafeFunction<JsToolInvocation, ToolHandlerReturn, JsToolInvocation, napi::Status, false>,
   >,
 }
 
 struct JsApprovalInterceptor {
-  callback: ThreadsafeFunction<JsApprovalRequest, bool, JsApprovalRequest, Status, true>,
+  callback:
+    ThreadsafeFunction<JsApprovalRequest, ApprovalHandlerReturn, JsApprovalRequest, Status, true>,
 }
 
 #[allow(dead_code)]
 struct JsToolInterceptor {
   callback: ThreadsafeFunction<
     JsToolInterceptorContext,
-    NativeToolResponse,
+    ToolHandlerReturn,
     JsToolInterceptorContext,
     napi::Status,
     true,
@@ -163,7 +170,7 @@ pub fn list_registered_tools() -> napi::Result<Vec<NativeToolInfo>> {
 pub fn register_approval_callback(
   env: Env,
   #[napi(ts_arg_type = "(request: JsApprovalRequest) => boolean | Promise<boolean>")]
-  handler: Function<JsApprovalRequest, bool>,
+  handler: Function<JsApprovalRequest, ApprovalHandlerReturn>,
 ) -> napi::Result<()> {
   let sensitive_tools = ["local_shell", "exec_command", "apply_patch", "web_search"];
 
@@ -196,7 +203,7 @@ pub fn register_tool(
   #[napi(
     ts_arg_type = "(call: JsToolInvocation) => NativeToolResponse | Promise<NativeToolResponse>"
   )]
-  handler: Function<JsToolInvocation, NativeToolResponse>,
+  handler: Function<JsToolInvocation, ToolHandlerReturn>,
 ) -> napi::Result<()> {
   let schema = info.parameters.clone().unwrap_or_else(|| {
     json!({
@@ -268,10 +275,16 @@ pub async fn call_registered_tool_for_test(
       .ok_or_else(|| napi::Error::from_reason(format!("No registered tool named `{tool_name}`")))?
   };
 
-  callback
+  match callback
     .call_async(invocation)
     .await
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?
+  {
+    napi::Either::A(promise) => promise
+      .await
+      .map_err(|e| napi::Error::from_reason(e.to_string())),
+    napi::Either::B(native_response) => Ok(native_response),
+  }
 }
 
 #[napi]
@@ -281,7 +294,7 @@ pub fn register_tool_interceptor(
   #[napi(
     ts_arg_type = "(context: JsToolInterceptorContext) => NativeToolResponse | Promise<NativeToolResponse>"
   )]
-  handler: Function<JsToolInterceptorContext, NativeToolResponse>,
+  handler: Function<JsToolInterceptorContext, ToolHandlerReturn>,
 ) -> napi::Result<()> {
   let mut tsfn = handler
     .build_threadsafe_function::<JsToolInterceptorContext>()

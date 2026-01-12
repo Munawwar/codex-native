@@ -27,7 +27,13 @@ impl ToolHandler for JsToolHandler {
     };
 
     match self.callback.call_async(js_invocation).await {
-      Ok(native_response) => native_response_to_tool_output(native_response),
+      Ok(napi::Either::A(promise)) => {
+        let native_response = promise
+          .await
+          .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+        native_response_to_tool_output(native_response)
+      }
+      Ok(napi::Either::B(native_response)) => native_response_to_tool_output(native_response),
       Err(err) => Err(FunctionCallError::Fatal(err.to_string())),
     }
   }
@@ -72,7 +78,10 @@ impl ToolInterceptor for JsApprovalInterceptor {
       }))
       .await
     {
-      Ok(value) => value,
+      Ok(napi::Either::A(promise)) => promise
+        .await
+        .map_err(|err| FunctionCallError::Fatal(err.to_string()))?,
+      Ok(napi::Either::B(value)) => value,
       Err(err) => return Err(FunctionCallError::Fatal(err.to_string())),
     };
 
@@ -131,7 +140,10 @@ impl ToolInterceptor for JsToolInterceptor {
       }))
       .await
     {
-      Ok(resp) => resp,
+      Ok(napi::Either::A(promise)) => promise
+        .await
+        .map_err(|err| FunctionCallError::Fatal(err.to_string()))?,
+      Ok(napi::Either::B(resp)) => resp,
       Err(err) => return Err(FunctionCallError::Fatal(err.to_string())),
     };
 

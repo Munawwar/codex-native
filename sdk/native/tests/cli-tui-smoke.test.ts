@@ -16,18 +16,9 @@ beforeAll(async () => {
 });
 
 describe("codex-native tui command", () => {
-  it("starts and renders the welcome screen under a pseudo-TTY", async () => {
-    // Skip when tests run without an interactive TTY. The CLI explicitly errors
-    // in this case (by design).
-    if (!process.stdout.isTTY || !process.stdin.isTTY) {
-      return;
-    }
+  it("fails fast without a TTY (execFile does not allocate a pseudo-TTY)", async () => {
     if (!binding || typeof binding.getNativeBinding !== "function") {
       return; // binding not available
-    }
-    const native = binding.getNativeBinding();
-    if (!native || typeof native.tuiTestRun !== "function") {
-      return; // skip if helper missing in build
     }
 
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,6 +36,6 @@ describe("codex-native tui command", () => {
       },
     );
 
-    await expect(promise).resolves.toMatchObject({ stdout: expect.any(String) });
+    await expect(promise).rejects.toThrow(/requires an interactive terminal/i);
   });
 });

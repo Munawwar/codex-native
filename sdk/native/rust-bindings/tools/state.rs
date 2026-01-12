@@ -9,7 +9,10 @@ fn registered_native_tools() -> &'static Mutex<Vec<ExternalToolRegistration>> {
 type ToolTsfn = Arc<
   ThreadsafeFunction<
     JsToolInvocation,
-    NativeToolResponse,
+    napi::Either<
+      napi::bindgen_prelude::Promise<NativeToolResponse>,
+      NativeToolResponse,
+    >,
     JsToolInvocation,
     napi::Status,
     false,
@@ -104,4 +107,3 @@ fn cleanup_thread_handler(slot: &Arc<Mutex<Option<String>>>) {
       unregister_thread_handler(&id);
   }
 }
-
