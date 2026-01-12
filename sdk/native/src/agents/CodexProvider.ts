@@ -231,6 +231,11 @@ class CodexModel implements Model {
   private getThreadOptions(): ThreadOptions {
     return {
       model: this.modelName,
+      // IMPORTANT: ModelProvider must be forwarded to thread options, otherwise
+      // codex-rs will fall back to the default provider from ~/.codex/config.toml
+      // (or another discovered config). This was causing Agents runs to ignore
+      // `new CodexProvider({ modelProvider: "github" })` and hit the wrong backend.
+      modelProvider: this.options.modelProvider,
       // When a custom baseUrl is provided (e.g., test proxy), do not enable OSS mode,
       // since the backend is not Ollama in that case.
       oss: this.options.baseUrl ? false : this.options.oss,
