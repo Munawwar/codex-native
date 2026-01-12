@@ -39,6 +39,18 @@ pub fn build_cli(
     raw_overrides.push(format!("approval_policy={approval_str}"));
   }
 
+  // Forward model provider selection for non-OSS runs via config overrides.
+  //
+  // `codex-rs/exec` currently only populates `ConfigOverrides.model_provider` in OSS mode.
+  // For remote providers, the provider is resolved from the layered config (including CLI -c
+  // overrides). Without this, `modelProvider` supplied by the JS SDK can be ignored and
+  // codex falls back to ~/.codex/config.toml, which is surprising and can hit the wrong backend.
+  if !options.oss {
+    if let Some(provider) = options.model_provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+      raw_overrides.push(format!("model_provider={provider}"));
+    }
+  }
+
   if let Some(ws_opts) = &options.workspace_write_options {
     if let Some(network_access) = ws_opts.network_access {
       raw_overrides.push(format!(

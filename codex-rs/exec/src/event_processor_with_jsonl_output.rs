@@ -52,6 +52,11 @@ pub struct EventProcessorWithJsonOutput {
     last_total_token_usage: Option<codex_core::protocol::TokenUsage>,
     running_mcp_tool_calls: HashMap<String, RunningMcpToolCall>,
     last_critical_error: Option<ThreadErrorEvent>,
+    // Aggregated streaming text for delta events. We synthesize `item.updated` events
+    // with the full accumulated text so JS clients can diff and print the delta.
+    running_agent_message: Option<RunningTextItem>,
+    running_reasoning_summary: Option<RunningTextItem>,
+    running_reasoning_raw: Option<RunningTextItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +80,12 @@ struct RunningMcpToolCall {
     arguments: JsonValue,
 }
 
+#[derive(Debug, Clone)]
+struct RunningTextItem {
+    item_id: String,
+    text: String,
+}
+
 impl EventProcessorWithJsonOutput {
     pub fn new(last_message_path: Option<PathBuf>) -> Self {
         Self {
@@ -86,6 +97,9 @@ impl EventProcessorWithJsonOutput {
             last_total_token_usage: None,
             running_mcp_tool_calls: HashMap::new(),
             last_critical_error: None,
+            running_agent_message: None,
+            running_reasoning_summary: None,
+            running_reasoning_raw: None,
         }
     }
 
@@ -94,6 +108,11 @@ impl EventProcessorWithJsonOutput {
             protocol::EventMsg::SessionConfigured(ev) => self.handle_session_configured(ev),
             protocol::EventMsg::AgentMessage(ev) => self.handle_agent_message(ev),
             protocol::EventMsg::AgentReasoning(ev) => self.handle_reasoning_event(ev),
+            // Forward streaming deltas so JS consumers (Thread.runStreamed / CodexProvider)
+            // can show incremental output as it is generated.
+            protocol::EventMsg::AgentMessageContentDelta(ev) => self.handle_agent_message_delta(ev),
+            protocol::EventMsg::ReasoningContentDelta(ev) => self.handle_reasoning_delta(ev),
+            protocol::EventMsg::ReasoningRawContentDelta(ev) => self.handle_reasoning_raw_delta(ev),
             protocol::EventMsg::ExecCommandBegin(ev) => self.handle_exec_command_begin(ev),
             protocol::EventMsg::ExecCommandEnd(ev) => self.handle_exec_command_end(ev),
             protocol::EventMsg::TerminalInteraction(ev) => self.handle_terminal_interaction(ev),
@@ -207,6 +226,78 @@ impl EventProcessorWithJsonOutput {
         };
 
         vec![ThreadEvent::ItemCompleted(ItemCompletedEvent { item })]
+    }
+
+    fn handle_agent_message_delta(
+        &mut self,
+        ev: &protocol::AgentMessageContentDeltaEvent,
+    ) -> Vec<ThreadEvent> {
+        if self.running_agent_message.is_none() {
+            self.running_agent_message = Some(RunningTextItem {
+                item_id: self.get_next_item_id(),
+                text: String::new(),
+            });
+        }
+        let entry = self
+            .running_agent_message
+            .as_mut()
+            .expect("running_agent_message initialized above");
+        entry.text.push_str(&ev.delta);
+        let item = ThreadItem {
+            id: entry.item_id.clone(),
+            details: ThreadItemDetails::AgentMessage(AgentMessageItem {
+                text: entry.text.clone(),
+            }),
+        };
+        vec![ThreadEvent::ItemUpdated(ItemUpdatedEvent { item })]
+    }
+
+    fn handle_reasoning_delta(
+        &mut self,
+        ev: &protocol::ReasoningContentDeltaEvent,
+    ) -> Vec<ThreadEvent> {
+        if self.running_reasoning_summary.is_none() {
+            self.running_reasoning_summary = Some(RunningTextItem {
+                item_id: self.get_next_item_id(),
+                text: String::new(),
+            });
+        }
+        let entry = self
+            .running_reasoning_summary
+            .as_mut()
+            .expect("running_reasoning_summary initialized above");
+        entry.text.push_str(&ev.delta);
+        let item = ThreadItem {
+            id: entry.item_id.clone(),
+            details: ThreadItemDetails::Reasoning(ReasoningItem {
+                text: entry.text.clone(),
+            }),
+        };
+        vec![ThreadEvent::ItemUpdated(ItemUpdatedEvent { item })]
+    }
+
+    fn handle_reasoning_raw_delta(
+        &mut self,
+        ev: &protocol::ReasoningRawContentDeltaEvent,
+    ) -> Vec<ThreadEvent> {
+        if self.running_reasoning_raw.is_none() {
+            self.running_reasoning_raw = Some(RunningTextItem {
+                item_id: self.get_next_item_id(),
+                text: String::new(),
+            });
+        }
+        let entry = self
+            .running_reasoning_raw
+            .as_mut()
+            .expect("running_reasoning_raw initialized above");
+        entry.text.push_str(&ev.delta);
+        let item = ThreadItem {
+            id: entry.item_id.clone(),
+            details: ThreadItemDetails::Reasoning(ReasoningItem {
+                text: entry.text.clone(),
+            }),
+        };
+        vec![ThreadEvent::ItemUpdated(ItemUpdatedEvent { item })]
     }
     fn handle_exec_command_begin(
         &mut self,
@@ -461,6 +552,10 @@ impl EventProcessorWithJsonOutput {
 
     fn handle_task_started(&mut self, _: &protocol::TurnStartedEvent) -> Vec<ThreadEvent> {
         self.last_critical_error = None;
+        // New turn: reset streaming text accumulation.
+        self.running_agent_message = None;
+        self.running_reasoning_summary = None;
+        self.running_reasoning_raw = None;
         vec![ThreadEvent::TurnStarted(TurnStartedEvent {})]
     }
 
