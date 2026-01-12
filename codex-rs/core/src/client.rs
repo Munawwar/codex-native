@@ -57,6 +57,37 @@ use crate::model_provider_info::WireApi;
 use crate::tools::spec::create_tools_json_for_chat_completions_api;
 use crate::tools::spec::create_tools_json_for_responses_api;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model_provider_info::built_in_model_providers;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn github_provider_uses_chat_for_gpt_4_1() {
+        let providers = built_in_model_providers();
+        let provider = providers
+            .get(crate::model_provider_info::GITHUB_COPILOT_PROVIDER_ID)
+            .expect("github provider")
+            .clone();
+        assert_eq!(effective_wire_api(&provider, "gpt-4.1"), WireApi::Chat);
+    }
+
+    #[test]
+    fn github_provider_uses_responses_for_gpt_5() {
+        let providers = built_in_model_providers();
+        let provider = providers
+            .get(crate::model_provider_info::GITHUB_COPILOT_PROVIDER_ID)
+            .expect("github provider")
+            .clone();
+        assert_eq!(effective_wire_api(&provider, "gpt-5"), WireApi::Responses);
+        assert_eq!(
+            effective_wire_api(&provider, "gpt-5.2-codex"),
+            WireApi::Responses
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelClient {
     config: Arc<Config>,
@@ -68,6 +99,18 @@ pub struct ModelClient {
     effort: Option<ReasoningEffortConfig>,
     summary: ReasoningSummaryConfig,
     session_source: SessionSource,
+}
+
+fn effective_wire_api(provider: &ModelProviderInfo, model_slug: &str) -> WireApi {
+    if provider.base_url.as_deref() == Some(codex_github::DEFAULT_COPILOT_BASE_URL)
+        && provider.wire_api == WireApi::Chat
+        && model_slug.starts_with("gpt-5")
+    {
+        // Copilot's GPT-5 models are served via the Responses API even though
+        // the provider defaults to Chat Completions for gpt-4.1.
+        return WireApi::Responses;
+    }
+    provider.wire_api
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -118,7 +161,8 @@ impl ModelClient {
     /// For Chat providers, the underlying stream is optionally aggregated
     /// based on the `show_raw_agent_reasoning` flag in the config.
     pub async fn stream(&self, prompt: &Prompt) -> Result<ResponseStream> {
-        match self.provider.wire_api {
+        let wire_api = effective_wire_api(&self.provider, &self.model_info.slug);
+        match wire_api {
             WireApi::Responses => self.stream_responses_api(prompt).await,
             WireApi::Chat => {
                 let api_stream = self.stream_chat_completions(prompt).await?;
@@ -137,6 +181,9 @@ impl ModelClient {
             }
         }
     }
+
+    // NOTE: `effective_wire_api(..)` is a free function to keep the decision
+    // testable without constructing a full `ModelClient`.
 
     /// Streams a turn via the OpenAI Chat Completions API.
     ///

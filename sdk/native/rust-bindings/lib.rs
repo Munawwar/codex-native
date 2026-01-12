@@ -202,14 +202,14 @@ fn ensure_apply_patch_aliases() -> napi::Result<()> {
 // Additional Sections (included from sibling files)
 // ============================================================================
 
-include!("tools.rs");
-include!("run.rs");
+include!("tools/mod.rs");
+include!("run/mod.rs");
 include!("tui.rs");
 include!("tui_components.rs");
 include!("git.rs");
 include!("cloud_tasks.rs");
 include!("events.rs");
-include!("reverie.rs");
+include!("reverie/mod.rs");
 include!("fast_embed.rs");
 include!("tokenizer.rs");
 include!("toon.rs");
