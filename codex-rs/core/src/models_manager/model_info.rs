@@ -111,6 +111,12 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
             slug,
             base_instructions: BASE_INSTRUCTIONS_WITH_APPLY_PATCH.to_string(),
             supports_reasoning_summaries: false,
+            // GitHub/Copilot Chat Completions supports multiple tool calls in a single turn.
+            // We must allow parallel tool calls here; otherwise Codex can emit a burst of
+            // tool calls without correctly appending the corresponding tool outputs in the
+            // follow-up request, leading to:
+            // "An assistant message with 'tool_calls' must be followed by tool messages..."
+            supports_parallel_tool_calls: true,
             context_window: Some(1_047_576),
         )
     } else if slug.starts_with("gpt-oss") || slug.starts_with("openai/gpt-oss") {

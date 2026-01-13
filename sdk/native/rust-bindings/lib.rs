@@ -164,7 +164,16 @@ static APPLY_PATCH_TEMP_DIR: OnceLock<Mutex<TempDir>> = OnceLock::new();
 pub fn ensure_tokio_runtime() {
   // Re-create the shared Tokio runtime if it was previously shut down.
   napi::bindgen_prelude::start_async_runtime();
-  if std::env::var("CODEX_NATIVE_DEBUG_RT").is_ok() {
+  // Prefer the standard DEBUG env var for opt-in logging.
+  // Treat "0" and "" as falsey to match typical conventions.
+  let debug = std::env::var("DEBUG")
+    .ok()
+    .map(|v| {
+      let v = v.trim().to_ascii_lowercase();
+      !(v.is_empty() || v == "0" || v == "false" || v == "off" || v == "no")
+    })
+    .unwrap_or(false);
+  if debug {
     let available = is_tokio_runtime_available();
     eprintln!("ensure_tokio_runtime invoked; runtime_available={available}");
   }
