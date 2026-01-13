@@ -598,16 +598,15 @@ function tryRequireNativeBinding(requireFn: NodeJS.Require, candidate: string): 
 }
 
 function resolveRequire() {
-  const globalRequire = (globalThis as typeof globalThis & { require?: NodeJS.Require }).require;
-  if (typeof globalRequire === "function") {
-    return globalRequire;
-  }
-
+  // Always prefer a require anchored to this package, not a global/root require.
+  // In pnpm workspace layouts, relying on the process CWD can make optional
+  // platform packages (e.g. @codex-native/sdk-darwin-arm64) unreachable from
+  // the main package.
   if (typeof __filename === "string") {
     try {
       return createRequire(__filename);
     } catch {
-      // fall through to other strategies
+      // fall through
     }
   }
 
@@ -616,10 +615,12 @@ function resolveRequire() {
     try {
       return createRequire(importMetaUrl);
     } catch {
-      // fall through to fallback strategy
+      // fall through
     }
   }
 
+  // Final fallback: still create a stable require, but avoid globalThis.require
+  // and prefer a package-adjacent path.
   const fallbackBase = typeof __dirname === "string" ? __dirname : process.cwd();
   const fallbackPath = path.join(fallbackBase, "noop.js");
   return createRequire(fallbackPath);
