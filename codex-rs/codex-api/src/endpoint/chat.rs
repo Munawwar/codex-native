@@ -61,6 +61,7 @@ impl<T: HttpTransport, A: AuthProvider> ChatClient<T, A> {
 
         let request =
             ChatRequestBuilder::new(model, &prompt.instructions, &prompt.input, &prompt.tools)
+                .output_schema(prompt.output_schema.clone())
                 .conversation_id(conversation_id)
                 .session_source(session_source)
                 .build(self.streaming.provider())?;

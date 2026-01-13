@@ -285,6 +285,8 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                 env_key: None,
                 env_key_instructions: None,
                 experimental_bearer_token: None,
+                // Copilot's gpt-4.1 models are served via Chat Completions; keep the default as Chat.
+                // Note: Structured output (output_schema) is not supported via Chat Completions.
                 wire_api: WireApi::Chat,
                 query_params: None,
                 http_headers: Some(copilot_headers),

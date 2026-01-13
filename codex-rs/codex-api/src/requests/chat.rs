@@ -24,6 +24,7 @@ pub struct ChatRequestBuilder<'a> {
     instructions: &'a str,
     input: &'a [ResponseItem],
     tools: &'a [Value],
+    output_schema: Option<Value>,
     conversation_id: Option<String>,
     session_source: Option<SessionSource>,
 }
@@ -40,9 +41,17 @@ impl<'a> ChatRequestBuilder<'a> {
             instructions,
             input,
             tools,
+            output_schema: None,
             conversation_id: None,
             session_source: None,
         }
+    }
+
+    /// Optional output schema (JSON Schema) to enforce structured output via Chat Completions.
+    /// This is mapped to the OpenAI `response_format: { type: "json_schema", json_schema: ... }`.
+    pub fn output_schema(mut self, schema: Option<Value>) -> Self {
+        self.output_schema = schema;
+        self
     }
 
     pub fn conversation_id(mut self, id: Option<String>) -> Self {
@@ -291,12 +300,29 @@ impl<'a> ChatRequestBuilder<'a> {
             }
         }
 
-        let payload = json!({
+        let mut payload = json!({
             "model": self.model,
             "messages": messages,
             "stream": true,
             "tools": self.tools,
         });
+
+        // If a schema was provided, request JSON Schema structured output.
+        if let Some(schema) = self.output_schema {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "response_format".to_string(),
+                    json!({
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "codex_output_schema",
+                            "strict": true,
+                            "schema": schema,
+                        }
+                    }),
+                );
+            }
+        }
 
         let mut headers = build_conversation_headers(self.conversation_id);
         if let Some(subagent) = subagent_header(&self.session_source) {

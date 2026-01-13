@@ -190,12 +190,6 @@ impl ModelClient {
     /// This path is only used when the provider is configured with
     /// `WireApi::Chat`; it does not support `output_schema` today.
     async fn stream_chat_completions(&self, prompt: &Prompt) -> Result<ApiResponseStream> {
-        if prompt.output_schema.is_some() {
-            return Err(CodexErr::UnsupportedOperation(
-                "output_schema is not supported for Chat Completions API".to_string(),
-            ));
-        }
-
         let auth_manager = self.auth_manager.clone();
         let model_info = self.get_model_info();
         let instructions = prompt.get_full_instructions(&model_info).into_owned();
