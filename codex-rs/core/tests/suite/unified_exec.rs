@@ -729,7 +729,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
     let mut task_completed = false;
 
     loop {
-        let msg = wait_for_event(&codex, |_| true).await;
+        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
         match msg {
             EventMsg::ExecCommandBegin(ev) if ev.call_id == call_id => begin_event = Some(ev),
             EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => {
@@ -853,7 +853,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
     let mut terminal_interaction = None;
 
     loop {
-        let msg = wait_for_event(&codex, |_| true).await;
+        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
         match msg {
             EventMsg::TerminalInteraction(ev) if ev.call_id == open_call_id => {
                 terminal_interaction = Some(ev);
@@ -991,7 +991,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
 
     // Consume all events for this turn so we can assert on each stage.
     loop {
-        let msg = wait_for_event(&codex, |_| true).await;
+        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
         match msg {
             EventMsg::ExecCommandBegin(ev) if ev.call_id == open_call_id => {
                 begin_event = Some(ev);
