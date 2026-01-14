@@ -16,7 +16,6 @@ import type {
   Model,
   ModelRequest,
   ModelResponse,
-  ModelSettingsToolChoice,
   StreamEvent,
   AgentInputItem,
   AgentOutputItem,
@@ -25,25 +24,6 @@ import type {
   SerializedTool,
 } from "./types";
 import { Usage } from "./types";
-
-function normalizeToolChoice(choice?: ModelSettingsToolChoice): unknown | undefined {
-  if (choice === undefined || choice === null) {
-    return undefined;
-  }
-  if (typeof choice === "string") {
-    if (choice === "auto" || choice === "required" || choice === "none") {
-      return choice;
-    }
-    return {
-      type: "function",
-      function: { name: choice },
-    };
-  }
-  if (typeof choice === "object") {
-    return choice;
-  }
-  return undefined;
-}
 
 /**
  * Options for creating a CodexProvider
@@ -278,7 +258,7 @@ class CodexModel implements Model {
       }
 
       const input = await this.convertRequestToInput(request);
-      const toolChoice = normalizeToolChoice(request.modelSettings?.toolChoice);
+      const toolChoice = request.modelSettings?.toolChoice ?? undefined;
 
       // Note: ModelSettings like temperature, maxTokens, topP, etc. are not currently
       // supported by the Codex native binding. Tool choice is forwarded when provided.
@@ -329,7 +309,7 @@ class CodexModel implements Model {
       }
 
       const input = await this.convertRequestToInput(request);
-      const toolChoice = normalizeToolChoice(request.modelSettings?.toolChoice);
+      const toolChoice = request.modelSettings?.toolChoice ?? undefined;
 
       const { events } = await thread.runStreamed(input, {
         outputSchema: normalizeAgentsOutputType(request.outputType),
