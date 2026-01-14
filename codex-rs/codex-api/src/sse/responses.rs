@@ -71,8 +71,14 @@ pub fn spawn_response_stream(
         if let Some(etag) = models_etag {
             let _ = tx_event.send(Ok(ResponseEvent::ModelsEtag(etag))).await;
         }
-        process_sse(stream_response.bytes, tx_event, idle_timeout, telemetry, allow_incomplete)
-            .await;
+        process_sse(
+            stream_response.bytes,
+            tx_event,
+            idle_timeout,
+            telemetry,
+            allow_incomplete,
+        )
+        .await;
     });
 
     ResponseStream { rx_event }

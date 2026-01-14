@@ -49,10 +49,7 @@ fn normalize_tool_choice_for_responses(tool_choice: Value) -> Value {
         return tool_choice;
     };
 
-    let tool_type = obj
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let tool_type = obj.get("type").and_then(Value::as_str).unwrap_or_default();
     if tool_type != "function" {
         return Value::Object(obj);
     }
