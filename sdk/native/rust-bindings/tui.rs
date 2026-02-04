@@ -323,7 +323,7 @@ impl Drop for TuiSession {
 
 fn run_tui_sync(
   options: InternalTuiRequest,
-  _shutdown_token: Option<CancellationToken>,
+  shutdown_token: Option<CancellationToken>,
 ) -> napi::Result<TuiExitInfo> {
   ensure_apply_patch_aliases()?;
   let InternalTuiRequest {
@@ -391,7 +391,7 @@ fn run_tui_sync(
   let runtime = tokio::runtime::Runtime::new()
     .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
   let result = runtime.block_on(async move {
-    codex_tui::run_main(cli, linux_sandbox_path.clone())
+    codex_tui::run_main_with_shutdown_token(cli, linux_sandbox_path.clone(), shutdown_token)
       .await
       .map_err(|err| napi::Error::from_reason(err.to_string()))
   });
@@ -450,6 +450,10 @@ mod tests_tui_reasoning_overrides {
       resume_last: false,
       resume_session_id: None,
       resume_show_all: false,
+      fork_picker: false,
+      fork_last: false,
+      fork_session_id: None,
+      fork_show_all: false,
       model: None,
       oss: false,
       oss_provider: None,

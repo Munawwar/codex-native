@@ -6,7 +6,6 @@ use codex_core::config::Config;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::SessionConfiguredEvent;
-use codex_core::protocol::TurnCompleteEvent;
 use std::path::PathBuf;
 
 struct CallbackEventProcessor {
@@ -46,10 +45,10 @@ impl EventProcessor for CallbackEventProcessor {
         }
 
         let Event { msg, .. } = event;
-        if let EventMsg::TurnComplete(TurnCompleteEvent { .. }) = msg {
-            CodexStatus::InitiateShutdown
-        } else {
-            CodexStatus::Running
+        match msg {
+            EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => CodexStatus::InitiateShutdown,
+            EventMsg::ShutdownComplete => CodexStatus::Shutdown,
+            _ => CodexStatus::Running,
         }
     }
 }
@@ -59,4 +58,49 @@ pub(crate) fn callback_event_processor(
     last_message_file: Option<PathBuf>,
 ) -> Box<dyn EventProcessor> {
     Box::new(CallbackEventProcessor::new(callback, last_message_file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::callback_event_processor;
+    use crate::event_processor::CodexStatus;
+    use codex_core::protocol::Event;
+    use codex_core::protocol::EventMsg;
+    use codex_core::protocol::TurnAbortReason;
+    use codex_core::protocol::TurnAbortedEvent;
+    use codex_core::protocol::TurnCompleteEvent;
+
+    #[test]
+    fn callback_processor_initiates_shutdown_on_turn_aborted() {
+        let mut processor = callback_event_processor(Box::new(|_| {}), None);
+        let status = processor.process_event(Event {
+            id: "".to_string(),
+            msg: EventMsg::TurnAborted(TurnAbortedEvent {
+                reason: TurnAbortReason::Interrupted,
+            }),
+        });
+        assert!(matches!(status, CodexStatus::InitiateShutdown));
+    }
+
+    #[test]
+    fn callback_processor_returns_shutdown_on_shutdown_complete() {
+        let mut processor = callback_event_processor(Box::new(|_| {}), None);
+        let status = processor.process_event(Event {
+            id: "".to_string(),
+            msg: EventMsg::ShutdownComplete,
+        });
+        assert!(matches!(status, CodexStatus::Shutdown));
+    }
+
+    #[test]
+    fn callback_processor_initiates_shutdown_on_turn_complete() {
+        let mut processor = callback_event_processor(Box::new(|_| {}), None);
+        let status = processor.process_event(Event {
+            id: "".to_string(),
+            msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                last_agent_message: None,
+            }),
+        });
+        assert!(matches!(status, CodexStatus::InitiateShutdown));
+    }
 }

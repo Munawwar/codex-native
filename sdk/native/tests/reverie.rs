@@ -8,7 +8,7 @@ use codex_native::{
   reverie_list_conversations, reverie_search_conversations, reverie_search_semantic,
   set_fast_embed_rerank_hook,
 };
-use codex_protocol::ConversationId;
+use codex_protocol::ThreadId;
 use codex_protocol::models::{ContentItem, ResponseItem};
 use codex_protocol::protocol::{
   EventMsg, RolloutItem, RolloutLine, SessionMeta, SessionMetaLine, SessionSource, UserMessageEvent,
@@ -64,14 +64,16 @@ fn make_fake_codex_home() -> (tempfile::TempDir, PathBuf) {
       timestamp: timestamp.clone(),
       item: RolloutItem::SessionMeta(SessionMetaLine {
         meta: SessionMeta {
-          id: ConversationId::from_string(uuid).unwrap(),
+          id: ThreadId::from_string(uuid).unwrap(),
+          forked_from_id: None,
           timestamp: timestamp.clone(),
-          instructions: None,
           cwd: tmp.path().to_path_buf(),
           originator: "test".to_string(),
           cli_version: "0.0.0".to_string(),
           model_provider: Some("test-provider".to_string()),
           source: SessionSource::VSCode,
+          base_instructions: None,
+          dynamic_tools: None,
         },
         git: None,
       }),
@@ -83,6 +85,8 @@ fn make_fake_codex_home() -> (tempfile::TempDir, PathBuf) {
         message: "We fixed the auth timeout bug by adjusting retries with reverie test keyword"
           .to_string(),
         images: None,
+        local_images: Vec::new(),
+        text_elements: Vec::new(),
       })),
     },
     // Assistant response with "auth" keyword
@@ -94,6 +98,8 @@ fn make_fake_codex_home() -> (tempfile::TempDir, PathBuf) {
         content: vec![ContentItem::OutputText {
           text: "The auth timeout issue has been resolved using exponential backoff in the reverie system".to_string(),
         }],
+        end_turn: None,
+        phase: None,
       }),
     },
     // Another assistant response with "reverie" keyword
@@ -105,6 +111,8 @@ fn make_fake_codex_home() -> (tempfile::TempDir, PathBuf) {
         content: vec![ContentItem::OutputText {
           text: "Successfully authenticated with retry logic for reverie integration".to_string(),
         }],
+        end_turn: None,
+        phase: None,
       }),
     },
   ];

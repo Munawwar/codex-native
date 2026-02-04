@@ -142,7 +142,7 @@ async fn run_main_with_event_processor(
         prompt,
         output_schema: output_schema_path,
         config_overrides,
-        input_items: _,
+        input_items,
     } = cli;
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
@@ -408,13 +408,14 @@ async fn run_main_with_event_processor(
     } else {
         thread_manager.start_thread(config.clone()).await?
     };
-    let (initial_operation, prompt_summary) = match (command, prompt, images) {
-        (Some(ExecCommand::Review(review_cli)), _, _) => {
+
+    let (initial_operation, prompt_summary) = match (command, prompt, images, input_items) {
+        (Some(ExecCommand::Review(review_cli)), _, _, _) => {
             let review_request = build_review_request(review_cli)?;
             let summary = codex_core::review_prompts::user_facing_hint(&review_request.target);
             (InitialOperation::Review { review_request }, summary)
         }
-        (Some(ExecCommand::Resume(args)), root_prompt, imgs) => {
+        (Some(ExecCommand::Resume(args)), root_prompt, imgs, input_items) => {
             let prompt_arg = args
                 .prompt
                 .clone()
@@ -426,17 +427,9 @@ async fn run_main_with_event_processor(
                     }
                 })
                 .or(root_prompt);
-            let prompt_text = resolve_prompt(prompt_arg);
-            let mut items: Vec<UserInput> = imgs
-                .into_iter()
-                .chain(args.images.into_iter())
-                .map(|path| UserInput::LocalImage { path })
-                .collect();
-            items.push(UserInput::Text {
-                text: prompt_text.clone(),
-                // CLI input doesn't track UI element ranges, so none are available here.
-                text_elements: Vec::new(),
-            });
+            let images = imgs.into_iter().chain(args.images.into_iter()).collect();
+            let (items, prompt_text) =
+                build_user_turn_items_and_summary(input_items, prompt_arg, images);
             let output_schema = load_output_schema(output_schema_path.clone());
             (
                 InitialOperation::UserTurn {
@@ -446,17 +439,9 @@ async fn run_main_with_event_processor(
                 prompt_text,
             )
         }
-        (None, root_prompt, imgs) => {
-            let prompt_text = resolve_prompt(root_prompt);
-            let mut items: Vec<UserInput> = imgs
-                .into_iter()
-                .map(|path| UserInput::LocalImage { path })
-                .collect();
-            items.push(UserInput::Text {
-                text: prompt_text.clone(),
-                // CLI input doesn't track UI element ranges, so none are available here.
-                text_elements: Vec::new(),
-            });
+        (None, root_prompt, imgs, input_items) => {
+            let (items, prompt_text) =
+                build_user_turn_items_and_summary(input_items, root_prompt, imgs);
             let output_schema = load_output_schema(output_schema_path);
             (
                 InitialOperation::UserTurn {
@@ -594,6 +579,72 @@ async fn run_main_with_event_processor(
     }
 
     Ok(())
+}
+
+fn build_user_turn_items_and_summary(
+    input_items: Option<Vec<UserInput>>,
+    prompt_arg: Option<String>,
+    images: Vec<PathBuf>,
+) -> (Vec<UserInput>, String) {
+    if let Some(items) = input_items {
+        (items, prompt_arg.unwrap_or_default())
+    } else {
+        let prompt_text = resolve_prompt(prompt_arg);
+        let mut items: Vec<UserInput> = images
+            .into_iter()
+            .map(|path| UserInput::LocalImage { path })
+            .collect();
+        items.push(UserInput::Text {
+            text: prompt_text.clone(),
+            // CLI input doesn't track UI element ranges, so none are available here.
+            text_elements: Vec::new(),
+        });
+        (items, prompt_text)
+    }
+}
+
+#[cfg(test)]
+mod user_turn_items_tests {
+    use super::UserInput;
+    use super::build_user_turn_items_and_summary;
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+
+    #[test]
+    fn build_items_uses_input_items_verbatim_and_ignores_images() {
+        let input_items = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let images = vec![PathBuf::from("/tmp/should-not-be-used.png")];
+        let (items, summary) = build_user_turn_items_and_summary(
+            Some(input_items.clone()),
+            Some("prompt".to_string()),
+            images,
+        );
+        assert_eq!(items, input_items);
+        assert_eq!(summary, "prompt");
+    }
+
+    #[test]
+    fn build_items_falls_back_to_prompt_and_images() {
+        let images = vec![PathBuf::from("/tmp/example.png")];
+        let (items, summary) =
+            build_user_turn_items_and_summary(None, Some("hello".to_string()), images.clone());
+        assert_eq!(
+            items,
+            vec![
+                UserInput::LocalImage {
+                    path: images[0].clone()
+                },
+                UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                },
+            ]
+        );
+        assert_eq!(summary, "hello");
+    }
 }
 
 fn spawn_thread_listener(

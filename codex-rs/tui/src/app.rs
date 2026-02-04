@@ -98,6 +98,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::unbounded_channel;
+use tokio_util::sync::CancellationToken;
 use toml::Value as TomlValue;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
@@ -921,10 +922,20 @@ impl App {
         session_selection: SessionSelection,
         feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
+        shutdown_token: Option<CancellationToken>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
         let app_event_tx = AppEventSender::new(app_event_tx);
+
+        if let Some(shutdown_token) = shutdown_token {
+            let tx = app_event_tx.clone();
+            tokio::spawn(async move {
+                shutdown_token.cancelled().await;
+                tx.send(AppEvent::Exit(ExitMode::ShutdownFirst));
+            });
+        }
+
         emit_project_config_warnings(&app_event_tx, &config);
         tui.set_notification_method(config.tui_notification_method);
 

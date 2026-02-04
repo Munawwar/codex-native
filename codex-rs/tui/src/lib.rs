@@ -46,6 +46,7 @@ use cwd_prompt::CwdSelection;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
@@ -123,8 +124,16 @@ pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
 
 pub async fn run_main(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
+    run_main_with_shutdown_token(cli, codex_linux_sandbox_exe, None).await
+}
+
+pub async fn run_main_with_shutdown_token(
     mut cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    shutdown_token: Option<CancellationToken>,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -402,6 +411,7 @@ pub async fn run_main(
         cli_kv_overrides,
         cloud_requirements,
         feedback,
+        shutdown_token,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -414,6 +424,7 @@ async fn run_ratatui_app(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
+    shutdown_token: Option<CancellationToken>,
 ) -> color_eyre::Result<AppExitInfo> {
     color_eyre::install()?;
 
@@ -692,6 +703,7 @@ async fn run_ratatui_app(
         session_selection,
         feedback,
         should_show_trust_screen, // Proxy to: is it a first run in this directory?
+        shutdown_token,
     )
     .await;
 
