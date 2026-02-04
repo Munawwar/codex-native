@@ -3,13 +3,36 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ApprovalMode, SandboxMode, WorkspaceWriteOptions, ReasoningEffort, ReasoningSummary, McpServerConfig } from "./threadOptions";
+import type {
+  ApprovalMode,
+  SandboxMode,
+  WorkspaceWriteOptions,
+  ReasoningEffort,
+  ReasoningSummary,
+  McpServerConfig,
+  Personality,
+  WebSearchMode,
+  DynamicToolSpec,
+} from "./threadOptions";
 
 const CLI_ENTRYPOINT_ENV = "CODEX_NODE_CLI_ENTRYPOINT";
 
+type NativeByteRange = {
+  start: number;
+  end: number;
+};
+
+type NativeTextElement = {
+  byte_range: NativeByteRange;
+  placeholder?: string;
+};
+
 export type NativeUserInputItem =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; text_elements?: NativeTextElement[] }
   | { type: "local_image"; path: string }
+  | { type: "image"; image_url: string }
+  | { type: "skill"; name: string; path: string }
+  | { type: "mention"; name: string; path: string }
   | { type: "skill_inline"; name: string; contents: string };
 
 export type NativeRunRequest = {
@@ -32,8 +55,11 @@ export type NativeRunRequest = {
   linuxSandboxPath?: string;
   reasoningEffort?: ReasoningEffort;
   reasoningSummary?: ReasoningSummary;
-  /** @deprecated Use sandboxMode and approvalMode instead */
-  fullAuto?: boolean;
+  personality?: Personality;
+  turnPersonality?: Personality;
+  ephemeral?: boolean;
+  webSearchMode?: WebSearchMode;
+  dynamicTools?: DynamicToolSpec[];
   reviewMode?: boolean;
   reviewHint?: string;
   /** MCP servers to register, keyed by server name */
@@ -59,7 +85,6 @@ export type NativeForkRequest = {
   baseUrl?: string;
   apiKey?: string;
   linuxSandboxPath?: string;
-  fullAuto?: boolean;
 };
 
 export type NativeConversationConfig = {
@@ -76,7 +101,9 @@ export type NativeConversationConfig = {
   linuxSandboxPath?: string;
   reasoningEffort?: ReasoningEffort;
   reasoningSummary?: ReasoningSummary;
-  fullAuto?: boolean;
+  personality?: Personality;
+  ephemeral?: boolean;
+  webSearchMode?: WebSearchMode;
 };
 
 export type NativeConversationListRequest = {
@@ -125,7 +152,6 @@ export type NativeTuiRequest = {
   resumeSessionId?: string;
   resumeLast?: boolean;
   resumePicker?: boolean;
-  fullAuto?: boolean;
   dangerouslyBypassApprovalsAndSandbox?: boolean;
   workingDirectory?: string;
   configProfile?: string;
@@ -369,7 +395,7 @@ export type NativeBinding = {
   emitBackgroundEvent(request: NativeEmitBackgroundEventRequest): Promise<void>;
   emitPlanUpdate(request: NativeEmitPlanUpdateRequest): Promise<void>;
   modifyPlan(request: NativeModifyPlanRequest): Promise<void>;
-  startTui?(request: NativeTuiRequest): NativeTuiSession;
+  startTui(request: NativeTuiRequest): NativeTuiSession;
   // SSE test helpers (exposed for TypeScript tests)
   ev_completed(id: string): string;
   ev_response_created(id: string): string;

@@ -4,7 +4,8 @@ impl ConversationConfigRequest {
     let approval_mode = parse_approval_mode(self.approval_mode.as_deref())?;
     let reasoning_effort = parse_reasoning_effort(self.reasoning_effort.as_deref())?;
     let reasoning_summary = parse_reasoning_summary(self.reasoning_summary.as_deref())?;
-
+    let personality = parse_personality(self.personality.as_deref())?;
+    let web_search_mode = parse_web_search_mode(self.web_search_mode.as_deref())?;
     Ok(InternalRunRequest {
       prompt: String::new(),
       input_items: None,
@@ -26,7 +27,11 @@ impl ConversationConfigRequest {
       linux_sandbox_path: self.linux_sandbox_path.map(PathBuf::from),
       reasoning_effort,
       reasoning_summary,
-      full_auto: self.full_auto.unwrap_or(true),
+      personality,
+      turn_personality: None,
+      ephemeral: self.ephemeral,
+      web_search_mode,
+      dynamic_tools: None,
       mcp: None,
       inherit_mcp: true,
     })
@@ -39,6 +44,9 @@ impl RunRequest {
     let approval_mode = parse_approval_mode(self.approval_mode.as_deref())?;
     let reasoning_effort = parse_reasoning_effort(self.reasoning_effort.as_deref())?;
     let reasoning_summary = parse_reasoning_summary(self.reasoning_summary.as_deref())?;
+    let personality = parse_personality(self.personality.as_deref())?;
+    let turn_personality = parse_personality(self.turn_personality.as_deref())?;
+    let web_search_mode = parse_web_search_mode(self.web_search_mode.as_deref())?;
 
     let review_request = if self.review_mode.unwrap_or(false) {
       let prompt_trimmed = self.prompt.trim().to_string();
@@ -71,6 +79,12 @@ impl RunRequest {
       })?),
       None => None,
     };
+    let dynamic_tools = match self.dynamic_tools {
+      Some(value) => Some(serde_json::from_value(value).map_err(|err| {
+        napi::Error::from_reason(format!("Invalid dynamicTools payload: {err}"))
+      })?),
+      None => None,
+    };
 
     validate_model_name(
       self.model.as_deref(),
@@ -99,7 +113,11 @@ impl RunRequest {
       linux_sandbox_path: self.linux_sandbox_path.map(PathBuf::from),
       reasoning_effort,
       reasoning_summary,
-      full_auto: self.full_auto.unwrap_or(true),
+      personality,
+      turn_personality,
+      ephemeral: self.ephemeral,
+      web_search_mode,
+      dynamic_tools,
       mcp: self.mcp,
       inherit_mcp: self.inherit_mcp.unwrap_or(true),
     })
@@ -140,11 +158,15 @@ impl ForkRequest {
       linux_sandbox_path: self.linux_sandbox_path,
       reasoning_effort: self.reasoning_effort,
       reasoning_summary: self.reasoning_summary,
-      full_auto: self.full_auto,
       review_mode: None,
       review_hint: None,
       mcp: None,
       inherit_mcp: None,
+      personality: None,
+      turn_personality: None,
+      ephemeral: None,
+      web_search_mode: None,
+      dynamic_tools: None,
     };
 
     let run_options = run_request.into_internal()?;
@@ -205,6 +227,21 @@ fn parse_reasoning_summary(input: Option<&str>) -> napi::Result<Option<Reasoning
     "concise" => ReasoningSummary::Concise,
     "detailed" => ReasoningSummary::Detailed,
     "none" => ReasoningSummary::None,
+  )
+}
+
+fn parse_personality(input: Option<&str>) -> napi::Result<Option<Personality>> {
+  parse_enum_arg!(input, "personality",
+    "friendly" => Personality::Friendly,
+    "pragmatic" => Personality::Pragmatic,
+  )
+}
+
+fn parse_web_search_mode(input: Option<&str>) -> napi::Result<Option<WebSearchMode>> {
+  parse_enum_arg!(input, "web search mode",
+    "disabled" => WebSearchMode::Disabled,
+    "cached" => WebSearchMode::Cached,
+    "live" => WebSearchMode::Live,
   )
 }
 

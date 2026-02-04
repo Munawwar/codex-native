@@ -336,43 +336,6 @@ describe("Codex", () => {
     }
   });
 
-  it("passes webSearchEnabled to exec", async () => {
-    const { url, close } = await startResponsesTestProxy({
-      statusCode: 200,
-      responseBodies: [
-        sse(
-          responseStarted("response_1"),
-          assistantMessage("Web search enabled", "item_1"),
-          responseCompleted("response_1"),
-        ),
-      ],
-    });
-
-    const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
-
-    try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
-
-      const thread = client.startThread({
-        webSearchEnabled: true,
-      });
-      await thread.run("test web search");
-
-      const commandArgs = spawnArgs[0];
-      expect(commandArgs).toBeDefined();
-      expectPair(commandArgs, ["--config", 'web_search="live"']);
-    } finally {
-      restore();
-      await close();
-    }
-  });
-
   it("passes webSearchMode to exec", async () => {
     const { url, close } = await startResponsesTestProxy({
       statusCode: 200,
@@ -400,38 +363,6 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--config", 'web_search="cached"']);
     } finally {
       restore();
-      await close();
-    }
-  });
-
-  it("passes webSearchEnabled false to exec", async () => {
-    const { url, close } = await startResponsesTestProxy({
-      statusCode: 200,
-      responseBodies: [
-        sse(
-          responseStarted("response_1"),
-          assistantMessage("Web search disabled", "item_1"),
-          responseCompleted("response_1"),
-        ),
-      ],
-    });
-
-    const { args: spawnArgs, restore } = codexExecSpy();
-
-    try {
-      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
-
-      const thread = client.startThread({
-        webSearchEnabled: false,
-      });
-      await thread.run("test web search disabled");
-
-      const commandArgs = spawnArgs[0];
-      expect(commandArgs).toBeDefined();
-      expectPair(commandArgs, ["--config", 'web_search="disabled"']);
-    } finally {
-      restore();
-      cleanup();
       await close();
     }
   });
@@ -467,6 +398,47 @@ describe("Codex", () => {
       const commandArgs = spawnArgs[0];
       expect(commandArgs).toBeDefined();
       expectPair(commandArgs, ["--config", 'approval_policy="on-request"']);
+    } finally {
+      restore();
+      cleanup();
+      await close();
+    }
+  });
+
+  it("passes personality and ephemeral options to exec", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Personality applied", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, restore } = codexExecSpy();
+    const { env, cleanup } = createCodexTestEnv();
+
+    try {
+      const client = new Codex({
+        codexPathOverride: codexExecPath,
+        baseUrl: `${url}/v1`,
+        apiKey: "test",
+        env,
+      });
+
+      const thread = client.startThread({
+        personality: "friendly",
+        ephemeral: true,
+      });
+      await thread.run("apply personality", { personality: "pragmatic" });
+
+      const commandArgs = spawnArgs[0];
+      expect(commandArgs).toBeDefined();
+      expectPair(commandArgs, ["--config", 'personality="friendly"']);
+      expectPair(commandArgs, ["--config", "ephemeral=true"]);
+      expectPair(commandArgs, ["--turn-personality", "pragmatic"]);
     } finally {
       restore();
       cleanup();
@@ -722,6 +694,7 @@ describe("Codex", () => {
         ),
       ],
     });
+    const { args: spawnArgs, inputItemsPayloads, restore } = codexExecSpy();
     const { env, cleanup } = createCodexTestEnv();
 
     try {
@@ -734,15 +707,86 @@ describe("Codex", () => {
 
       const thread = client.startThread();
       await thread.run([
-        { type: "text", text: "Describe file changes" },
+        {
+          type: "text",
+          text: "Describe file changes",
+          textElements: [{ byteRange: { start: 0, end: 8 }, placeholder: "files" }],
+        },
         { type: "text", text: "Focus on impacted tests" },
+      ]);
+
+      const commandArgs = spawnArgs[0];
+      const inputItemsIndex = commandArgs?.indexOf("--input-items") ?? -1;
+      expect(inputItemsIndex).toBeGreaterThan(-1);
+      const inputItemsPath = commandArgs?.[inputItemsIndex + 1];
+      expect(typeof inputItemsPath).toBe("string");
+      expect(inputItemsPayloads.length).toBeGreaterThan(0);
+      const inputItems = inputItemsPayloads[0] as Array<Record<string, unknown>>;
+      expect(inputItems).toEqual([
+        {
+          type: "text",
+          text: "Describe file changes",
+          text_elements: [{ byte_range: { start: 0, end: 8 }, placeholder: "files" }],
+        },
+        {
+          type: "text",
+          text: "Focus on impacted tests",
+          text_elements: [],
+        },
       ]);
 
       const payload = requests[0];
       expect(payload).toBeDefined();
       const lastUser = payload!.json.input.at(-1);
-      expect(lastUser?.content?.[0]?.text).toBe("Describe file changes\n\nFocus on impacted tests");
+      expect(lastUser?.content?.[0]?.text).toBe("Describe file changes");
     } finally {
+      restore();
+      cleanup();
+      await close();
+    }
+  });
+
+  it("serializes mention and image input items", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Input items applied", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { inputItemsPayloads, restore } = codexExecSpy();
+    const { env, cleanup } = createCodexTestEnv();
+
+    try {
+      const client = new Codex({
+        codexPathOverride: codexExecPath,
+        baseUrl: `${url}/v1`,
+        apiKey: "test",
+        env,
+      });
+
+      const thread = client.startThread();
+      await thread.run([
+        { type: "text", text: "Review these inputs" },
+        { type: "image", url: "https://example.com/image.png" },
+        { type: "mention", name: "docs", path: "app://docs" },
+        { type: "skill", name: "lint", path: "/tmp/skills/LINT.md" },
+      ]);
+
+      expect(inputItemsPayloads.length).toBeGreaterThan(0);
+      const inputItems = inputItemsPayloads[0] as Array<Record<string, unknown>>;
+      expect(inputItems).toEqual([
+        { type: "text", text: "Review these inputs", text_elements: [] },
+        { type: "image", image_url: "https://example.com/image.png" },
+        { type: "mention", name: "docs", path: "app://docs" },
+        { type: "skill", name: "lint", path: "/tmp/skills/LINT.md" },
+      ]);
+    } finally {
+      restore();
       cleanup();
       await close();
     }
@@ -759,7 +803,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, inputItemsPayloads, restore } = codexExecSpy();
     const { env, cleanup } = createCodexTestEnv();
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-images-"));
     const imagesDirectoryEntries: [string, string] = [
@@ -787,15 +831,75 @@ describe("Codex", () => {
 
       const commandArgs = spawnArgs[0];
       expect(commandArgs).toBeDefined();
-      const forwardedImages: string[] = [];
-      for (let i = 0; i < commandArgs!.length; i += 1) {
-        if (commandArgs![i] === "--image") {
-          forwardedImages.push(commandArgs![i + 1] ?? "");
-        }
-      }
-      expect(forwardedImages).toEqual(imagesDirectoryEntries);
+      expect(commandArgs).not.toContain("--image");
+      const inputItemsIndex = commandArgs?.indexOf("--input-items") ?? -1;
+      expect(inputItemsIndex).toBeGreaterThan(-1);
+      const inputItemsPath = commandArgs?.[inputItemsIndex + 1];
+      expect(typeof inputItemsPath).toBe("string");
+      expect(inputItemsPayloads.length).toBeGreaterThan(0);
+      const inputItems = inputItemsPayloads[0] as Array<Record<string, unknown>>;
+      expect(inputItems).toEqual([
+        { type: "text", text: "describe the images", text_elements: [] },
+        { type: "local_image", path: imagesDirectoryEntries[0] },
+        { type: "local_image", path: imagesDirectoryEntries[1] },
+      ]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
+      restore();
+      cleanup();
+      await close();
+    }
+  });
+
+  it("passes dynamic tools to exec on first run", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Dynamic tools applied", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, dynamicToolsPayloads, restore } = codexExecSpy();
+    const { env, cleanup } = createCodexTestEnv();
+
+    try {
+      const client = new Codex({
+        codexPathOverride: codexExecPath,
+        baseUrl: `${url}/v1`,
+        apiKey: "test",
+        env,
+      });
+
+      const thread = client.startThread({
+        dynamicTools: [
+          {
+            name: "summarize",
+            description: "Summarize input",
+            inputSchema: { type: "object", properties: { text: { type: "string" } } },
+          },
+        ],
+      });
+      await thread.run("use dynamic tools");
+
+      const commandArgs = spawnArgs[0];
+      const dynamicToolsIndex = commandArgs?.indexOf("--dynamic-tools") ?? -1;
+      expect(dynamicToolsIndex).toBeGreaterThan(-1);
+      const dynamicToolsPath = commandArgs?.[dynamicToolsIndex + 1];
+      expect(typeof dynamicToolsPath).toBe("string");
+      expect(dynamicToolsPayloads.length).toBeGreaterThan(0);
+      const payload = dynamicToolsPayloads[0] as Array<Record<string, unknown>>;
+      expect(payload).toEqual([
+        {
+          name: "summarize",
+          description: "Summarize input",
+          inputSchema: { type: "object", properties: { text: { type: "string" } } },
+        },
+      ]);
+    } finally {
       restore();
       cleanup();
       await close();

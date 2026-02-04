@@ -28,7 +28,11 @@ mod tests_run {
       linux_sandbox_path: None,
       reasoning_effort: None,
       reasoning_summary: None,
-      full_auto: true,
+      personality: None,
+      turn_personality: None,
+      ephemeral: None,
+      web_search_mode: None,
+      dynamic_tools: None,
       mcp: None,
       inherit_mcp: true,
     }
@@ -239,7 +243,11 @@ mod tests_run {
         linux_sandbox_path: None,
         reasoning_effort: None,
         reasoning_summary: None,
-        full_auto: None,
+        personality: None,
+        turn_personality: None,
+        ephemeral: None,
+        web_search_mode: None,
+        dynamic_tools: None,
         mcp: Some(serde_json::json!({
           "server1": {"command": "npx", "args": ["test"]}
         })),
@@ -275,7 +283,11 @@ mod tests_run {
         linux_sandbox_path: None,
         reasoning_effort: None,
         reasoning_summary: None,
-        full_auto: None,
+        personality: None,
+        turn_personality: None,
+        ephemeral: None,
+        web_search_mode: None,
+        dynamic_tools: None,
         mcp: None,
         inherit_mcp: None,
       };

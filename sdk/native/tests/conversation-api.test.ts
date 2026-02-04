@@ -64,7 +64,6 @@ describe("Codex conversation management API", () => {
       skipGitRepoCheck: true,
       reasoningEffort: "high",
       reasoningSummary: "concise",
-      fullAuto: true,
     };
 
     const result = await codex.listConversations(options);
@@ -82,7 +81,6 @@ describe("Codex conversation management API", () => {
         skipGitRepoCheck: true,
         reasoningEffort: "high",
         reasoningSummary: "concise",
-        fullAuto: true,
         baseUrl: "https://example.com",
         apiKey: "api-key",
       },
@@ -111,7 +109,6 @@ describe("Codex conversation management API", () => {
       skipGitRepoCheck: true,
       reasoningEffort: "low",
       reasoningSummary: "auto",
-      fullAuto: false,
     };
 
     const result = await codex.deleteConversation("thread-1", options);
@@ -130,7 +127,6 @@ describe("Codex conversation management API", () => {
         skipGitRepoCheck: true,
         reasoningEffort: "low",
         reasoningSummary: "auto",
-        fullAuto: false,
         baseUrl: "https://example.com",
         apiKey: "api-key",
       },
@@ -158,7 +154,6 @@ describe("Codex conversation management API", () => {
       skipGitRepoCheck: true,
       reasoningEffort: "minimal",
       reasoningSummary: "none",
-      fullAuto: true,
     };
 
     const thread = await codex.resumeConversationFromRollout("/tmp/rollout", options);
@@ -176,7 +171,6 @@ describe("Codex conversation management API", () => {
         skipGitRepoCheck: true,
         reasoningEffort: "minimal",
         reasoningSummary: "none",
-        fullAuto: true,
         baseUrl: "https://example.com",
         apiKey: "api-key",
       },

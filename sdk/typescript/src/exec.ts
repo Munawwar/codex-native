@@ -1,13 +1,27 @@
 import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { CodexConfigObject, CodexConfigValue } from "./codexOptions";
-import { SandboxMode, ModelReasoningEffort, ApprovalMode, WebSearchMode } from "./threadOptions";
+import {
+  SandboxMode,
+  ModelReasoningEffort,
+  ApprovalMode,
+  WebSearchMode,
+  Personality,
+  DynamicToolSpec,
+} from "./threadOptions";
 
 export type CodexExecArgs = {
   input: string;
+  inputItems?: unknown[];
+  dynamicTools?: DynamicToolSpec[];
+  turnPersonality?: Personality;
+  personality?: Personality;
+  ephemeral?: boolean;
 
   baseUrl?: string;
   apiKey?: string;
@@ -33,8 +47,6 @@ export type CodexExecArgs = {
   networkAccessEnabled?: boolean;
   // --config web_search
   webSearchMode?: WebSearchMode;
-  // legacy --config features.web_search_request
-  webSearchEnabled?: boolean;
   // --config approval_policy
   approvalPolicy?: ApprovalMode;
 };
@@ -59,6 +71,7 @@ export class CodexExec {
 
   async *run(args: CodexExecArgs): AsyncGenerator<string> {
     const commandArgs: string[] = ["exec", "--experimental-json"];
+    const cleanupTasks: Array<() => Promise<void>> = [];
 
     if (this.configOverrides) {
       for (const override of serializeConfigOverrides(this.configOverrides)) {
@@ -96,6 +109,14 @@ export class CodexExec {
       commandArgs.push("--config", `model_reasoning_effort="${args.modelReasoningEffort}"`);
     }
 
+    if (args.personality) {
+      commandArgs.push("--config", `personality="${args.personality}"`);
+    }
+
+    if (args.ephemeral !== undefined) {
+      commandArgs.push("--config", `ephemeral=${args.ephemeral}`);
+    }
+
     if (args.networkAccessEnabled !== undefined) {
       commandArgs.push(
         "--config",
@@ -105,20 +126,32 @@ export class CodexExec {
 
     if (args.webSearchMode) {
       commandArgs.push("--config", `web_search="${args.webSearchMode}"`);
-    } else if (args.webSearchEnabled === true) {
-      commandArgs.push("--config", `web_search="live"`);
-    } else if (args.webSearchEnabled === false) {
-      commandArgs.push("--config", `web_search="disabled"`);
     }
 
     if (args.approvalPolicy) {
       commandArgs.push("--config", `approval_policy="${args.approvalPolicy}"`);
     }
 
+    if (args.turnPersonality) {
+      commandArgs.push("--turn-personality", args.turnPersonality);
+    }
+
     if (args.images?.length) {
       for (const image of args.images) {
         commandArgs.push("--image", image);
       }
+    }
+
+    if (args.inputItems) {
+      const inputItemsFile = await createJsonFile("input-items", args.inputItems);
+      cleanupTasks.push(inputItemsFile.cleanup);
+      commandArgs.push("--input-items", inputItemsFile.path);
+    }
+
+    if (args.dynamicTools && args.dynamicTools.length > 0) {
+      const dynamicToolsFile = await createJsonFile("dynamic-tools", args.dynamicTools);
+      cleanupTasks.push(dynamicToolsFile.cleanup);
+      commandArgs.push("--dynamic-tools", dynamicToolsFile.path);
     }
 
     if (args.threadId) {
@@ -206,7 +239,32 @@ export class CodexExec {
       } catch {
         // ignore
       }
+      await Promise.allSettled(cleanupTasks.map((task) => task()));
     }
+  }
+}
+
+type JsonTempFile = {
+  path: string;
+  cleanup: () => Promise<void>;
+};
+
+async function createJsonFile(prefix: string, payload: unknown): Promise<JsonTempFile> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `codex-${prefix}-`));
+  const filePath = path.join(dir, "payload.json");
+  const cleanup = async () => {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+    } catch {
+      // suppress
+    }
+  };
+  try {
+    await fs.writeFile(filePath, JSON.stringify(payload), "utf8");
+    return { path: filePath, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
   }
 }
 

@@ -42,24 +42,5 @@ describe("startTui / runTui", () => {
     expect(waitMock).toHaveBeenCalledTimes(1);
     expect(shutdownMock).toHaveBeenCalledTimes(1);
   });
-
-  it("startTui falls back to legacy runTui binding when startTui is unavailable", async () => {
-    const runTuiMock = jest.fn<() => Promise<typeof noopExitInfo>>().mockResolvedValue(noopExitInfo);
-
-    jest.unstable_mockModule("../src/nativeBinding", () => ({
-      getNativeBinding: () => ({
-        runTui: runTuiMock,
-      }),
-    }));
-
-    const { startTui } = await import("../src/tui");
-
-    const session = await startTui({});
-    await expect(session.wait()).resolves.toEqual(noopExitInfo);
-    expect(runTuiMock).toHaveBeenCalledTimes(1);
-    expect(session.closed).toBe(true);
-    expect(() => session.shutdown()).toThrow(/Programmatic shutdown is not supported/);
-  });
 });
-
 

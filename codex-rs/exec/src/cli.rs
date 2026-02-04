@@ -3,6 +3,8 @@ use clap::FromArgMatches;
 use clap::Parser;
 use clap::ValueEnum;
 use codex_common::CliConfigOverrides;
+use codex_protocol::config_types::Personality;
+use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::user_input::UserInput;
 use std::path::PathBuf;
 
@@ -82,6 +84,22 @@ pub struct Cli {
     /// Structured input items for the initial prompt (for programmatic callers).
     #[clap(skip)]
     pub input_items: Option<Vec<UserInput>>,
+
+    /// Structured input items for the initial prompt (read from JSON file).
+    #[arg(long = "input-items", value_name = "FILE")]
+    pub input_items_path: Option<PathBuf>,
+
+    /// Dynamic tools for the thread start (for programmatic callers).
+    #[clap(skip)]
+    pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+
+    /// Dynamic tools for the thread start (read from JSON file).
+    #[arg(long = "dynamic-tools", value_name = "FILE")]
+    pub dynamic_tools_path: Option<PathBuf>,
+
+    /// Override the personality for this turn.
+    #[arg(long = "turn-personality", value_enum, value_name = "PERSONALITY")]
+    pub turn_personality: Option<PersonalityCliArg>,
 
     /// Specifies color settings for use in the output.
     #[arg(long = "color", value_enum, default_value_t = Color::Auto)]
@@ -248,6 +266,22 @@ pub enum Color {
     Never,
     #[default]
     Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum PersonalityCliArg {
+    Friendly,
+    Pragmatic,
+}
+
+impl From<PersonalityCliArg> for Personality {
+    fn from(value: PersonalityCliArg) -> Self {
+        match value {
+            PersonalityCliArg::Friendly => Self::Friendly,
+            PersonalityCliArg::Pragmatic => Self::Pragmatic,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,11 @@ fn base_run_request(prompt: &str) -> RunRequest {
     linux_sandbox_path: None,
     reasoning_effort: None,
     reasoning_summary: None,
-    full_auto: None,
+    personality: None,
+    turn_personality: None,
+    ephemeral: None,
+    web_search_mode: None,
+    dynamic_tools: None,
     mcp: None,
     inherit_mcp: None,
   }
@@ -39,7 +43,6 @@ fn test_run_request_default_values() {
   assert!(req.input_items.is_none());
   assert!(req.thread_id.is_none());
   assert!(req.images.is_none());
-  assert!(req.full_auto.is_none());
   assert!(req.reasoning_effort.is_none());
   assert!(req.reasoning_summary.is_none());
 }
@@ -66,10 +69,20 @@ fn test_run_request_with_all_fields() {
   req.base_url = Some("https://api.example.com".to_string());
   req.api_key = Some("sk-test-key".to_string());
   req.linux_sandbox_path = Some("/path/to/sandbox".to_string());
-  req.full_auto = Some(true);
   req.review_mode = Some(false);
   req.reasoning_effort = Some("medium".to_string());
   req.reasoning_summary = Some("concise".to_string());
+  req.personality = Some("friendly".to_string());
+  req.turn_personality = Some("pragmatic".to_string());
+  req.ephemeral = Some(true);
+  req.web_search_mode = Some("cached".to_string());
+  req.dynamic_tools = Some(json!([
+    {
+      "name": "summarize",
+      "description": "Summarize input",
+      "inputSchema": { "type": "object" }
+    }
+  ]));
 
   assert_eq!(req.prompt, "complex request");
   assert_eq!(req.thread_id, Some("thread-123".to_string()));
@@ -78,10 +91,14 @@ fn test_run_request_with_all_fields() {
   assert_eq!(req.sandbox_mode, Some("workspace-write".to_string()));
   assert_eq!(req.oss, Some(true));
   assert_eq!(req.approval_mode, Some("never".to_string()));
-  assert_eq!(req.full_auto, Some(true));
   assert_eq!(req.output_schema, Some(schema));
   assert_eq!(req.reasoning_effort, Some("medium".to_string()));
   assert_eq!(req.reasoning_summary, Some("concise".to_string()));
+  assert_eq!(req.personality, Some("friendly".to_string()));
+  assert_eq!(req.turn_personality, Some("pragmatic".to_string()));
+  assert_eq!(req.ephemeral, Some(true));
+  assert_eq!(req.web_search_mode, Some("cached".to_string()));
+  assert!(req.dynamic_tools.is_some());
 }
 
 #[test]

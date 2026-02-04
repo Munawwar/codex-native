@@ -30,8 +30,6 @@ pub struct TuiRequest {
   pub resume_last: Option<bool>,
   #[napi(js_name = "resumePicker")]
   pub resume_picker: Option<bool>,
-  #[napi(js_name = "fullAuto")]
-  pub full_auto: Option<bool>,
   #[napi(js_name = "dangerouslyBypassApprovalsAndSandbox")]
   pub dangerously_bypass_approvals_and_sandbox: Option<bool>,
   #[napi(js_name = "workingDirectory")]
@@ -105,7 +103,7 @@ impl TuiRequest {
       config_profile: self.config_profile,
       sandbox_mode,
       approval_policy: approval_mode,
-      full_auto: self.full_auto.unwrap_or(false),
+      full_auto: false,
       dangerously_bypass_approvals_and_sandbox: self
         .dangerously_bypass_approvals_and_sandbox
         .unwrap_or(false),

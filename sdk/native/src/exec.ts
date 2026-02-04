@@ -4,6 +4,9 @@ import {
   ReasoningEffort,
   ReasoningSummary,
   SandboxMode,
+  DynamicToolSpec,
+  Personality,
+  WebSearchMode,
   WorkspaceWriteOptions,
 } from "./threadOptions";
 import {
@@ -41,8 +44,11 @@ export type CodexExecArgs = {
   toolChoice?: unknown;
   reasoningEffort?: ReasoningEffort;
   reasoningSummary?: ReasoningSummary;
-  /** @deprecated Use sandboxMode and approvalMode instead */
-  fullAuto?: boolean;
+  personality?: Personality;
+  turnPersonality?: Personality;
+  ephemeral?: boolean;
+  webSearchMode?: WebSearchMode;
+  dynamicTools?: DynamicToolSpec[];
   review?: ReviewExecOptions | null;
   /** MCP servers to register, keyed by server name */
   mcp?: Record<string, McpServerConfig>;
@@ -71,7 +77,6 @@ export type CodexForkArgs = {
   workingDirectory?: string;
   skipGitRepoCheck?: boolean;
   linuxSandboxPath?: string;
-  fullAuto?: boolean;
 };
 
 /**
@@ -118,7 +123,11 @@ export class CodexExec {
       modelProvider: args.modelProvider,
       reasoningEffort: args.reasoningEffort,
       reasoningSummary: args.reasoningSummary,
-      fullAuto: args.fullAuto,
+      personality: args.personality,
+      turnPersonality: args.turnPersonality,
+      ephemeral: args.ephemeral,
+      webSearchMode: args.webSearchMode,
+      dynamicTools: args.dynamicTools,
       reviewMode: args.review ? true : undefined,
       reviewHint: args.review?.userFacingHint,
       mcp: args.mcp,
@@ -186,7 +195,6 @@ export class CodexExec {
       toolChoice: args.toolChoice,
       baseUrl: args.baseUrl,
       apiKey: args.apiKey,
-      fullAuto: args.fullAuto,
       reasoningEffort: args.reasoningEffort,
       reasoningSummary: args.reasoningSummary,
       reviewMode: args.review ? true : undefined,
@@ -213,7 +221,6 @@ export class CodexExec {
       apiKey: args.apiKey,
       modelProvider: args.modelProvider,
       linuxSandboxPath: args.linuxSandboxPath,
-      fullAuto: args.fullAuto,
     };
     return this.native.forkThread(request);
   }

@@ -25,13 +25,38 @@ export type StreamedTurn = {
 export type RunStreamedResult = StreamedTurn;
 
 /** An input to send to the agent. */
+export type ByteRange = {
+  start: number;
+  end: number;
+};
+
+export type TextElement = {
+  byteRange: ByteRange;
+  placeholder?: string;
+};
+
 export type UserInput =
   | {
       type: "text";
       text: string;
+      textElements?: TextElement[];
     }
   | {
       type: "local_image";
+      path: string;
+    }
+  | {
+      type: "image";
+      url: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
       path: string;
     };
 
@@ -73,13 +98,15 @@ export class Thread {
   ): AsyncGenerator<ThreadEvent> {
     const { schemaPath, cleanup } = await createOutputSchemaFile(turnOptions.outputSchema);
     const options = this._threadOptions;
-    const { prompt, images } = normalizeInput(input);
+    const { prompt, images, inputItems } = normalizeInput(input);
+    const dynamicTools = this._id ? undefined : options?.dynamicTools;
     const generator = this._exec.run({
       input: prompt,
       baseUrl: this._options.baseUrl,
       apiKey: this._options.apiKey,
       threadId: this._id,
       images,
+      inputItems,
       model: options?.model,
       sandboxMode: options?.sandboxMode,
       workingDirectory: options?.workingDirectory,
@@ -89,9 +116,12 @@ export class Thread {
       signal: turnOptions.signal,
       networkAccessEnabled: options?.networkAccessEnabled,
       webSearchMode: options?.webSearchMode,
-      webSearchEnabled: options?.webSearchEnabled,
       approvalPolicy: options?.approvalPolicy,
       additionalDirectories: options?.additionalDirectories,
+      personality: options?.personality,
+      ephemeral: options?.ephemeral,
+      dynamicTools,
+      turnPersonality: turnOptions.personality,
     });
     try {
       for await (const item of generator) {
@@ -145,18 +175,84 @@ export class Thread {
   }
 }
 
-function normalizeInput(input: Input): { prompt: string; images: string[] } {
+type WireByteRange = {
+  start: number;
+  end: number;
+};
+
+type WireTextElement = {
+  byte_range: WireByteRange;
+  placeholder?: string;
+};
+
+type WireUserInput =
+  | {
+      type: "text";
+      text: string;
+      text_elements: WireTextElement[];
+    }
+  | {
+      type: "local_image";
+      path: string;
+    }
+  | {
+      type: "image";
+      image_url: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
+      path: string;
+    };
+
+function normalizeInput(input: Input): {
+  prompt: string;
+  images: string[];
+  inputItems?: WireUserInput[];
+} {
   if (typeof input === "string") {
     return { prompt: input, images: [] };
   }
   const promptParts: string[] = [];
-  const images: string[] = [];
-  for (const item of input) {
-    if (item.type === "text") {
-      promptParts.push(item.text);
-    } else if (item.type === "local_image") {
-      images.push(item.path);
+  const items: WireUserInput[] = input.map((item) => {
+    switch (item.type) {
+      case "text": {
+        promptParts.push(item.text);
+        const textElements = item.textElements ?? [];
+        return {
+          type: "text",
+          text: item.text,
+          text_elements: textElements.map((element) => ({
+            byte_range: {
+              start: element.byteRange.start,
+              end: element.byteRange.end,
+            },
+            placeholder: element.placeholder,
+          })),
+        };
+      }
+      case "local_image":
+        return { type: "local_image", path: item.path };
+      case "image":
+        return { type: "image", image_url: item.url };
+      case "skill":
+        return { type: "skill", name: item.name, path: item.path };
+      case "mention":
+        return { type: "mention", name: item.name, path: item.path };
+      default: {
+        const exhaustive: never = item;
+        return exhaustive;
+      }
     }
-  }
-  return { prompt: promptParts.join("\n\n"), images };
+  });
+  return {
+    prompt: promptParts.join("\n\n"),
+    images: [],
+    inputItems: items,
+  };
 }

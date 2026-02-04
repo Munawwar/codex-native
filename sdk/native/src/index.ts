@@ -10,6 +10,10 @@ export type {
   ThreadError,
   ThreadErrorEvent,
   Usage,
+  BackgroundEvent,
+  ExitedReviewModeEvent,
+  ReviewFinding,
+  ReviewOutputEvent,
 } from "./events";
 export type {
   ThreadItem,
@@ -23,14 +27,24 @@ export type {
   FileUpdateChange,
   McpToolCallItem,
   McpToolCallStatus,
+  CollabToolCallItem,
   WebSearchItem,
+  WebSearchAction,
   TodoListItem,
   TodoItem,
   ErrorItem,
 } from "./items";
 
 export { Thread } from "./thread";
-export type { RunResult, RunStreamedResult, Input, UserInput, ForkOptions } from "./thread";
+export type {
+  RunResult,
+  RunStreamedResult,
+  Input,
+  UserInput,
+  TextElement,
+  ByteRange,
+  ForkOptions,
+} from "./thread";
 
 export { Codex } from "./codex";
 export type { ConversationListOptions, ConversationListPage, ConversationSummary } from "./codex";
@@ -60,6 +74,9 @@ export type {
   McpServerConfig,
   McpStdioTransport,
   McpHttpTransport,
+  WebSearchMode,
+  Personality,
+  DynamicToolSpec,
 } from "./threadOptions";
 export type { TurnOptions } from "./turnOptions";
 export type { SkillDefinition, SkillMentionTrigger } from "./skills";

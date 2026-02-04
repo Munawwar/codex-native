@@ -14,6 +14,7 @@ pub mod exec_events;
 pub use cli::Cli;
 pub use cli::Color;
 pub use cli::Command;
+pub use cli::PersonalityCliArg;
 pub use cli::ResumeArgs;
 pub use cli::ReviewArgs;
 use codex_cloud_requirements::cloud_requirements_loader;
@@ -48,10 +49,12 @@ use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Read;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -143,7 +146,25 @@ async fn run_main_with_event_processor(
         output_schema: output_schema_path,
         config_overrides,
         input_items,
+        input_items_path,
+        dynamic_tools,
+        dynamic_tools_path,
+        turn_personality,
     } = cli;
+
+    let input_items = match (input_items, input_items_path) {
+        (Some(items), _) => Some(items),
+        (None, Some(path)) => Some(load_json_from_file(&path, "input items")?),
+        (None, None) => None,
+    };
+
+    let dynamic_tools = match (dynamic_tools, dynamic_tools_path) {
+        (Some(tools), _) => tools,
+        (None, Some(path)) => load_json_from_file(&path, "dynamic tools")?,
+        (None, None) => Vec::new(),
+    };
+
+    let turn_personality = resolve_turn_personality(turn_personality);
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -397,16 +418,21 @@ async fn run_main_with_event_processor(
         session_configured,
     } = if let Some(ExecCommand::Resume(args)) = command.as_ref() {
         let resume_path = resolve_resume_path(&config, args).await?;
+        ensure_dynamic_tools_allowed_for_resume(resume_path.as_deref(), &dynamic_tools)?;
 
         if let Some(path) = resume_path {
             thread_manager
                 .resume_thread_from_rollout(config.clone(), path, auth_manager.clone())
                 .await?
         } else {
-            thread_manager.start_thread(config.clone()).await?
+            thread_manager
+                .start_thread_with_tools(config.clone(), dynamic_tools.clone())
+                .await?
         }
     } else {
-        thread_manager.start_thread(config.clone()).await?
+        thread_manager
+            .start_thread_with_tools(config.clone(), dynamic_tools.clone())
+            .await?
     };
 
     let (initial_operation, prompt_summary) = match (command, prompt, images, input_items) {
@@ -521,7 +547,7 @@ async fn run_main_with_event_processor(
                     summary: default_summary,
                     final_output_json_schema: output_schema,
                     collaboration_mode: None,
-                    personality: None,
+                    personality: turn_personality,
                 })
                 .await?;
             info!("Sent prompt with event ID: {task_id}");
@@ -647,6 +673,72 @@ mod user_turn_items_tests {
     }
 }
 
+#[cfg(test)]
+mod cli_input_tests {
+    use super::ensure_dynamic_tools_allowed_for_resume;
+    use super::load_json_from_file;
+    use super::resolve_turn_personality;
+    use crate::cli::PersonalityCliArg;
+    use codex_protocol::config_types::Personality;
+    use codex_protocol::dynamic_tools::DynamicToolSpec;
+    use codex_protocol::user_input::UserInput;
+    use pretty_assertions::assert_eq;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn load_json_from_file_parses_input_items() {
+        let items = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let file = NamedTempFile::new().expect("temp file");
+        let contents = serde_json::to_string(&items).expect("serialize input items");
+        fs::write(file.path(), contents).expect("write input items");
+
+        let parsed: Vec<UserInput> =
+            load_json_from_file(file.path(), "input items").expect("parse input items");
+        assert_eq!(parsed, items);
+    }
+
+    #[test]
+    fn load_json_from_file_parses_dynamic_tools() {
+        let tools = vec![DynamicToolSpec {
+            name: "test_tool".to_string(),
+            description: "test tool".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let file = NamedTempFile::new().expect("temp file");
+        let contents = serde_json::to_string(&tools).expect("serialize dynamic tools");
+        fs::write(file.path(), contents).expect("write dynamic tools");
+
+        let parsed: Vec<DynamicToolSpec> =
+            load_json_from_file(file.path(), "dynamic tools").expect("parse dynamic tools");
+        assert_eq!(parsed, tools);
+    }
+
+    #[test]
+    fn resolve_turn_personality_maps_values() {
+        assert_eq!(
+            resolve_turn_personality(Some(PersonalityCliArg::Friendly)),
+            Some(Personality::Friendly)
+        );
+        assert_eq!(resolve_turn_personality(None), None);
+    }
+
+    #[test]
+    fn dynamic_tools_disallowed_on_resume_path() {
+        let tools = vec![DynamicToolSpec {
+            name: "test_tool".to_string(),
+            description: "test tool".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let result = ensure_dynamic_tools_allowed_for_resume(Some(Path::new("resume")), &tools);
+        assert!(result.is_err());
+    }
+}
+
 fn spawn_thread_listener(
     thread_id: codex_protocol::ThreadId,
     thread: Arc<codex_core::CodexThread>,
@@ -749,6 +841,36 @@ fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
             std::process::exit(1);
         }
     }
+}
+
+fn load_json_from_file<T>(path: &Path, label: &str) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let path_display = path.display();
+    let mut file = std::fs::File::open(path)
+        .map_err(|err| anyhow::anyhow!("Failed to open {label} file {path_display}: {err}"))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|err| anyhow::anyhow!("Failed to read {label} file {path_display}: {err}"))?;
+    serde_json::from_str(&contents)
+        .map_err(|err| anyhow::anyhow!("Failed to parse {label} file {path_display}: {err}"))
+}
+
+fn resolve_turn_personality(
+    turn_personality: Option<cli::PersonalityCliArg>,
+) -> Option<codex_protocol::config_types::Personality> {
+    turn_personality.map(Into::into)
+}
+
+fn ensure_dynamic_tools_allowed_for_resume(
+    resume_path: Option<&Path>,
+    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+) -> anyhow::Result<()> {
+    if resume_path.is_some() && !dynamic_tools.is_empty() {
+        anyhow::bail!("dynamic tools are only supported when starting a new thread");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

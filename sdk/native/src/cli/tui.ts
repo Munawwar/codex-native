@@ -81,7 +81,6 @@ function buildTuiConfig(params: {
   if (argv.resume !== undefined) request.resumeSessionId = argv.resume;
   if (argv.resumeLast !== undefined) request.resumeLast = argv.resumeLast;
   if (argv.resumePicker !== undefined) request.resumePicker = argv.resumePicker;
-  if (argv.fullAuto !== undefined) request.fullAuto = argv.fullAuto;
   if (argv.dangerouslyBypassApprovalsAndSandbox !== undefined) {
     request.dangerouslyBypassApprovalsAndSandbox = argv.dangerouslyBypassApprovalsAndSandbox;
   }

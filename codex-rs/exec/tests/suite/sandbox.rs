@@ -79,6 +79,11 @@ async fn python_multiprocessing_lock_works_under_sandbox() {
     let python_code = r#"import multiprocessing
 from multiprocessing import Lock, Process
 
+try:
+    multiprocessing.set_start_method("fork")
+except RuntimeError:
+    pass
+
 def f(lock):
     with lock:
         print("Lock acquired in child process")
@@ -101,7 +106,7 @@ if __name__ == '__main__':
         command_cwd,
         &policy,
         sandbox_cwd.as_path(),
-        StdioPolicy::Inherit,
+        StdioPolicy::RedirectForShellTool,
         HashMap::new(),
     )
     .await
@@ -117,6 +122,8 @@ async fn python_getpwuid_works_under_sandbox() {
 
     if std::process::Command::new("python3")
         .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .is_err()
     {
@@ -179,13 +186,13 @@ async fn sandbox_distinguishes_command_and_policy_cwds() {
     let mut child = spawn_command_under_sandbox(
         vec![
             "bash".to_string(),
-            "-lc".to_string(),
-            "echo forbidden > forbidden.txt".to_string(),
+            "-c".to_string(),
+            "echo forbidden > forbidden.txt 2>/dev/null".to_string(),
         ],
         command_root.clone(),
         &policy,
         canonical_sandbox_root.as_path(),
-        StdioPolicy::Inherit,
+        StdioPolicy::RedirectForShellTool,
         HashMap::new(),
     )
     .await

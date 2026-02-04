@@ -121,7 +121,6 @@ export interface RunCommandOptions extends GlobalOptions {
   baseUrl?: string;
   apiKey?: string;
   linuxSandboxPath?: string;
-  fullAuto?: boolean;
   skipGitRepoCheck?: boolean;
   cd?: string;
   image?: string[];
@@ -138,7 +137,6 @@ export interface TuiCommandOptions extends GlobalOptions {
   resume?: string;
   resumeLast?: boolean;
   resumePicker?: boolean;
-  fullAuto?: boolean;
   dangerouslyBypassApprovalsAndSandbox?: boolean;
   cd?: string;
   configProfile?: string;

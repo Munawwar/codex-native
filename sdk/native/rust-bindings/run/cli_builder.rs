@@ -42,7 +42,7 @@ pub fn build_cli(
 ) -> Cli {
   let sandbox_mode = options.sandbox_mode;
   let wants_danger = matches!(sandbox_mode, Some(SandboxModeCliArg::DangerFullAccess));
-  let cli_full_auto = options.full_auto && !wants_danger;
+  let cli_full_auto = false;
   let add_dir: Vec<PathBuf> = options
     .workspace_write_options
     .as_ref()
@@ -75,6 +75,18 @@ pub fn build_cli(
       ApprovalModeCliArg::Untrusted => "untrusted",
     };
     raw_overrides.push(format!("approval_policy={approval_str}"));
+  }
+
+  if let Some(personality) = options.personality {
+    raw_overrides.push(format!("personality=\"{personality}\""));
+  }
+
+  if let Some(ephemeral) = options.ephemeral {
+    raw_overrides.push(format!("ephemeral={ephemeral}"));
+  }
+
+  if let Some(mode) = options.web_search_mode {
+    raw_overrides.push(format!("web_search=\"{mode}\""));
   }
 
   // Forward model provider selection for non-OSS runs via config overrides.
@@ -131,6 +143,11 @@ pub fn build_cli(
     }
   }
 
+  let turn_personality = options.turn_personality.map(|personality| match personality {
+    Personality::Friendly => codex_exec::PersonalityCliArg::Friendly,
+    Personality::Pragmatic => codex_exec::PersonalityCliArg::Pragmatic,
+  });
+
 	  Cli {
 	    command,
 	    images: options.images.clone(),
@@ -147,6 +164,10 @@ pub fn build_cli(
 	    output_schema: schema_path,
 	    config_overrides: CliConfigOverrides { raw_overrides },
 	    input_items: options.input_items.clone(),
+	    input_items_path: None,
+	    dynamic_tools: options.dynamic_tools.clone(),
+	    dynamic_tools_path: None,
+	    turn_personality,
 	    color: Color::Never,
 	    json: false,
 	    last_message_file: None,

@@ -88,6 +88,44 @@ export type ThreadErrorEvent = {
   message: string;
 };
 
+/** Review finding emitted after exiting review mode. */
+export type ReviewLineRange = {
+  start: number;
+  end: number;
+};
+
+export type ReviewCodeLocation = {
+  absolute_file_path: string;
+  line_range: ReviewLineRange;
+};
+
+export type ReviewFinding = {
+  title: string;
+  body: string;
+  confidence_score: number;
+  priority: number;
+  code_location: ReviewCodeLocation;
+};
+
+export type ReviewOutputEvent = {
+  findings: ReviewFinding[];
+  overall_correctness: string;
+  overall_explanation: string;
+  overall_confidence_score: number;
+};
+
+/** Signals that Codex exited review mode and optionally provides structured output. */
+export type ExitedReviewModeEvent = {
+  type: "exited_review_mode";
+  review_output?: ReviewOutputEvent | null;
+};
+
+/** Background notification emitted alongside an active turn. */
+export type BackgroundEvent = {
+  type: "background_event";
+  message: string;
+};
+
 /** Top-level JSONL events emitted by codex exec. */
 export type ThreadEvent =
   | ThreadStartedEvent
@@ -100,4 +138,6 @@ export type ThreadEvent =
   | RawEvent
   | TokenCountEvent
   | TokenUsageEvent
-  | ThreadErrorEvent;
+  | ThreadErrorEvent
+  | ExitedReviewModeEvent
+  | BackgroundEvent;

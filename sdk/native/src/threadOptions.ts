@@ -20,6 +20,16 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
  */
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
 
+export type WebSearchMode = "disabled" | "cached" | "live";
+
+export type Personality = "friendly" | "pragmatic";
+
+export type DynamicToolSpec = {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+};
+
 export type WorkspaceWriteOptions = {
   /** Enable network access in workspace-write mode. Default: false */
   networkAccess?: boolean;
@@ -99,8 +109,14 @@ export type ThreadOptions = {
   reasoningEffort?: ReasoningEffort;
   /** Reasoning summary preference (only honored for reasoning-capable models). Defaults to "auto" when undefined. */
   reasoningSummary?: ReasoningSummary;
-  /** @deprecated Use sandboxMode and approvalMode instead */
-  fullAuto?: boolean;
+  /** Web search mode (cached/live/disabled). */
+  webSearchMode?: WebSearchMode;
+  /** Set a default personality for the session. */
+  personality?: Personality;
+  /** Keep the session ephemeral (in-memory only). */
+  ephemeral?: boolean;
+  /** Dynamic tools to register when starting a new thread. */
+  dynamicTools?: DynamicToolSpec[];
   /**
    * Programmatically registered skills (no SKILL.md files required) for this thread.
    * These augment any skills registered on the parent Codex instance.

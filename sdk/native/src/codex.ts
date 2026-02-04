@@ -217,7 +217,6 @@ export class Codex {
       skipGitRepoCheck: options.skipGitRepoCheck,
       reasoningEffort: options.reasoningEffort,
       reasoningSummary: options.reasoningSummary,
-      fullAuto: options.fullAuto,
       baseUrl: this.options.baseUrl,
       apiKey: this.options.apiKey,
     };
@@ -494,7 +493,6 @@ export class Codex {
       skipGitRepoCheck: threadOptions.skipGitRepoCheck,
       outputSchemaFile: schemaFile.schemaPath,
       outputSchema: normalizedSchema,
-      fullAuto: threadOptions.fullAuto,
       review: {
         userFacingHint: hint,
       },
