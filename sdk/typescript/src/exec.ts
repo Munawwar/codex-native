@@ -6,7 +6,14 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { CodexConfigObject, CodexConfigValue } from "./codexOptions";
-import { SandboxMode, ModelReasoningEffort, ApprovalMode, WebSearchMode } from "./threadOptions";
+import {
+  SandboxMode,
+  ModelReasoningEffort,
+  ApprovalMode,
+  WebSearchMode,
+  Personality,
+  DynamicToolSpec,
+} from "./threadOptions";
 
 export type CodexExecArgs = {
   input: string;
@@ -40,8 +47,6 @@ export type CodexExecArgs = {
   networkAccessEnabled?: boolean;
   // --config web_search
   webSearchMode?: WebSearchMode;
-  // legacy --config features.web_search_request
-  webSearchEnabled?: boolean;
   // --config approval_policy
   approvalPolicy?: ApprovalMode;
 };
@@ -67,12 +72,6 @@ export class CodexExec {
   async *run(args: CodexExecArgs): AsyncGenerator<string> {
     const commandArgs: string[] = ["exec", "--experimental-json"];
     const cleanupTasks: Array<() => Promise<void>> = [];
-
-    if (this.configOverrides) {
-      for (const override of serializeConfigOverrides(this.configOverrides)) {
-        commandArgs.push("--config", override);
-      }
-    }
 
     if (this.configOverrides) {
       for (const override of serializeConfigOverrides(this.configOverrides)) {
@@ -127,10 +126,6 @@ export class CodexExec {
 
     if (args.webSearchMode) {
       commandArgs.push("--config", `web_search="${args.webSearchMode}"`);
-    } else if (args.webSearchEnabled === true) {
-      commandArgs.push("--config", `web_search="live"`);
-    } else if (args.webSearchEnabled === false) {
-      commandArgs.push("--config", `web_search="disabled"`);
     }
 
     if (args.approvalPolicy) {
@@ -246,6 +241,30 @@ export class CodexExec {
       }
       await Promise.allSettled(cleanupTasks.map((task) => task()));
     }
+  }
+}
+
+type JsonTempFile = {
+  path: string;
+  cleanup: () => Promise<void>;
+};
+
+async function createJsonFile(prefix: string, payload: unknown): Promise<JsonTempFile> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `codex-${prefix}-`));
+  const filePath = path.join(dir, "payload.json");
+  const cleanup = async () => {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+    } catch {
+      // suppress
+    }
+  };
+  try {
+    await fs.writeFile(filePath, JSON.stringify(payload), "utf8");
+    return { path: filePath, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
   }
 }
 

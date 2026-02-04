@@ -20,7 +20,8 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::time::timeout;
 
-const CLOUD_REQUIREMENTS_TIMEOUT: Duration = Duration::from_secs(15);
+/// This blocks codex startup, so must be short.
+const CLOUD_REQUIREMENTS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[async_trait]
 trait RequirementsFetcher: Send + Sync {

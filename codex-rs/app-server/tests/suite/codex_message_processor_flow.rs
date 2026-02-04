@@ -36,7 +36,7 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_codex_jsonrpc_conversation_flow() -> Result<()> {
@@ -76,7 +76,6 @@ async fn test_codex_jsonrpc_conversation_flow() -> Result<()> {
     let new_conv_id = mcp
         .send_new_conversation_request(NewConversationParams {
             cwd: Some(working_directory.to_string_lossy().into_owned()),
-            sandbox: Some(SandboxMode::DangerFullAccess),
             ..Default::default()
         })
         .await?;

@@ -165,12 +165,6 @@ pub struct ResponsesStreamEvent {
     content_index: Option<i64>,
 }
 
-impl ResponsesStreamEvent {
-    pub fn kind(&self) -> &str {
-        &self.kind
-    }
-}
-
 #[derive(Debug)]
 pub enum ResponsesEventError {
     Api(ApiError),
