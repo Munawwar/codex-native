@@ -2,7 +2,6 @@ use std::mem::swap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wiremock::MockServer;
 
 use anyhow::Result;
 use codex_core::CodexAuth;
@@ -21,6 +20,7 @@ use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::user_input::UserInput;
 use serde_json::Value;
 use tempfile::TempDir;
+use wiremock::MockServer;
 
 use crate::load_default_config_for_test;
 use crate::responses::WebSocketTestServer;

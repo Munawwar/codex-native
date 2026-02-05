@@ -751,7 +751,7 @@ async fn unified_exec_full_lifecycle_with_background_end_event() -> Result<()> {
     let mut task_completed = false;
 
     loop {
-        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
+        let msg = wait_for_event(&codex, |_| true).await;
         match msg {
             EventMsg::ExecCommandBegin(ev) if ev.call_id == call_id => begin_event = Some(ev),
             EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => {
@@ -879,7 +879,7 @@ async fn unified_exec_emits_terminal_interaction_for_write_stdin() -> Result<()>
     let mut terminal_interaction = None;
 
     loop {
-        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
+        let msg = wait_for_event(&codex, |_| true).await;
         match msg {
             EventMsg::TerminalInteraction(ev) if ev.call_id == open_call_id => {
                 terminal_interaction = Some(ev);
@@ -1021,7 +1021,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
 
     // Consume all events for this turn so we can assert on each stage.
     loop {
-        let msg = wait_for_event_with_timeout(&codex, |_| true, Duration::from_secs(12)).await;
+        let msg = wait_for_event(&codex, |_| true).await;
         match msg {
             EventMsg::ExecCommandBegin(ev) if ev.call_id == open_call_id => {
                 begin_event = Some(ev);
@@ -2367,7 +2367,7 @@ PY
     let args = serde_json::json!({
         "cmd": script,
         "max_output_tokens": 100,
-        "yield_time_ms": 2000,
+        "yield_time_ms": 500,
     });
 
     let responses = vec![
@@ -2417,7 +2417,7 @@ PY
 
     let output_text = large_output.output.replace("\r\n", "\n");
     let truncated_pattern = r"(?s)^Total output lines: \d+\n\n(token token \n){5,}.*…\d+ tokens truncated….*(token token \n){5,}$";
-    assert_regex_match(truncated_pattern, output_text.as_str());
+    assert_regex_match(truncated_pattern, &output_text);
 
     let original_tokens = large_output
         .original_token_count

@@ -652,17 +652,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
         normalize_compact_prompts(arr);
     }
     assert_eq!(requests.len(), 5);
-    let actual = requests
-        .iter()
-        .map(strip_request_for_history_compare)
-        .collect::<Vec<_>>();
-    let expected = expected
-        .as_array()
-        .expect("expected array")
-        .iter()
-        .map(strip_request_for_history_compare)
-        .collect::<Vec<_>>();
-    assert_eq!(actual, expected);
+    assert_eq!(json!(requests), expected);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -868,14 +858,6 @@ fn normalize_line_endings(value: &mut Value) {
         }
         _ => {}
     }
-}
-
-fn strip_request_for_history_compare(request: &Value) -> Value {
-    json!({
-        "model": request.get("model").cloned().unwrap_or(Value::Null),
-        "instructions": request.get("instructions").cloned().unwrap_or(Value::Null),
-        "input": request.get("input").cloned().unwrap_or(Value::Null),
-    })
 }
 
 fn gather_request_bodies(request_log: &[ResponseMock]) -> Vec<Value> {

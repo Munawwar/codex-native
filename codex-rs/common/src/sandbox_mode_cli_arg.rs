@@ -9,7 +9,7 @@
 use clap::ValueEnum;
 use codex_protocol::config_types::SandboxMode;
 
-#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum SandboxModeCliArg {
     ReadOnly,

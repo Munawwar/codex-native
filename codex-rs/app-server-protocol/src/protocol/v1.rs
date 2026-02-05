@@ -34,6 +34,7 @@ use crate::protocol::common::GitSha;
 pub struct InitializeParams {
     pub client_info: ClientInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
     pub capabilities: Option<InitializeCapabilities>,
 }
 

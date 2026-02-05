@@ -884,8 +884,7 @@ mod tests {
     use uuid::Uuid;
 
     fn unique_temp_dir() -> PathBuf {
-        let id = Uuid::new_v4();
-        std::env::temp_dir().join(format!("codex-state-runtime-test-{id}"))
+        std::env::temp_dir().join(format!("codex-state-runtime-test-{}", Uuid::new_v4()))
     }
 
     #[tokio::test]

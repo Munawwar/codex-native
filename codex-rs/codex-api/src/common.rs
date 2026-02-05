@@ -24,8 +24,6 @@ pub struct Prompt {
     /// JSON-encoded tool definitions compatible with the target API.
     // TODO(jif) have a proper type here
     pub tools: Vec<Value>,
-    /// Tool choice override for the request payload.
-    pub tool_choice: Option<Value>,
     /// Whether parallel tool calls are permitted.
     pub parallel_tool_calls: bool,
     /// Optional output schema used to build the `text.format` controls.
@@ -158,8 +156,7 @@ pub struct ResponsesApiRequest<'a> {
     pub instructions: &'a str,
     pub input: &'a [ResponseItem],
     pub tools: &'a [serde_json::Value],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
+    pub tool_choice: &'static str,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
     pub store: bool,

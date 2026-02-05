@@ -2,7 +2,6 @@ import http from "node:http";
 
 const DEFAULT_RESPONSE_ID = "resp_mock";
 const DEFAULT_MESSAGE_ID = "msg_mock";
-const EMPTY_MODELS_RESPONSE = JSON.stringify({ models: [], etag: "" });
 
 type ResponseCompletedUsage = {
   input_tokens: number;
@@ -93,10 +92,7 @@ export async function startResponsesTestProxy(
 
   const server = http.createServer((req, res) => {
     async function handle(): Promise<void> {
-      const parsedUrl = new URL(req.url ?? "", "http://127.0.0.1");
-      const path = parsedUrl.pathname;
-
-      if (req.method === "POST" && (path === "/responses" || path === "/v1/responses")) {
+      if (req.method === "POST" && req.url === "/responses") {
         const body = await readRequestBody(req);
         const json = JSON.parse(body);
         requests.push({ body, json, headers: { ...req.headers } });
@@ -110,13 +106,6 @@ export async function startResponsesTestProxy(
           res.write(formatSseEvent(event));
         }
         res.end();
-        return;
-      }
-
-      if (req.method === "GET" && (path === "/models" || path === "/v1/models")) {
-        res.statusCode = 200;
-        res.setHeader("content-type", "application/json");
-        res.end(EMPTY_MODELS_RESPONSE);
         return;
       }
 

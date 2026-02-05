@@ -98,7 +98,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::unbounded_channel;
-use tokio_util::sync::CancellationToken;
 use toml::Value as TomlValue;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
@@ -922,7 +921,6 @@ impl App {
         session_selection: SessionSelection,
         feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
-        _shutdown_token: Option<CancellationToken>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
@@ -2328,6 +2326,7 @@ impl App {
 
     fn personality_label(personality: Personality) -> &'static str {
         match personality {
+            Personality::None => "None",
             Personality::Friendly => "Friendly",
             Personality::Pragmatic => "Pragmatic",
         }

@@ -355,7 +355,7 @@ pub async fn call_tool_builtin(
 
   match next.call(invocation).await {
     Ok(output) => tool_output_to_native_response(output).map_err(napi::Error::from_reason),
-    Err(FunctionCallError::RespondToModel(message)) | Err(FunctionCallError::Denied(message)) => {
+    Err(FunctionCallError::RespondToModel(message)) => {
       Ok(NativeToolResponse {
         output: None,
         success: Some(false),

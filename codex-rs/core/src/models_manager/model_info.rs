@@ -133,12 +133,6 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
             slug,
             base_instructions: BASE_INSTRUCTIONS_WITH_APPLY_PATCH.to_string(),
             supports_reasoning_summaries: false,
-            // GitHub/Copilot Chat Completions supports multiple tool calls in a single turn.
-            // We must allow parallel tool calls here; otherwise Codex can emit a burst of
-            // tool calls without correctly appending the corresponding tool outputs in the
-            // follow-up request, leading to:
-            // "An assistant message with 'tool_calls' must be followed by tool messages..."
-            supports_parallel_tool_calls: true,
             context_window: Some(1_047_576),
         )
     } else if slug.starts_with("gpt-oss") || slug.starts_with("openai/gpt-oss") {
@@ -308,18 +302,6 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
             context_window: Some(CONTEXT_WINDOW_272K),
             supported_reasoning_levels: supported_reasoning_level_low_medium_high_non_codex(),
         )
-    } else if slug.starts_with("gpt-5-mini") {
-        // gpt-5-mini via GitHub Copilot Responses API supports multiple tool calls per turn.
-        model_info!(
-            slug,
-            base_instructions: BASE_INSTRUCTIONS_WITH_APPLY_PATCH.to_string(),
-            shell_type: ConfigShellToolType::Default,
-            supports_reasoning_summaries: true,
-            support_verbosity: true,
-            supports_parallel_tool_calls: true,
-            truncation_policy: TruncationPolicyConfig::bytes(10_000),
-            context_window: Some(CONTEXT_WINDOW_272K),
-        )
     } else if slug.starts_with("gpt-5") {
         model_info!(
             slug,
@@ -415,27 +397,4 @@ fn supported_reasoning_level_low_medium_high_xhigh_non_codex() -> Vec<ReasoningE
             description: "Extra high reasoning for complex problems".to_string(),
         },
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::find_model_info_for_slug;
-
-    #[test]
-    fn gpt_4_1_supports_parallel_tool_calls() {
-        let info = find_model_info_for_slug("gpt-4.1");
-        assert!(
-            info.supports_parallel_tool_calls,
-            "gpt-4.1 must allow parallel tool calls for Chat Completions"
-        );
-    }
-
-    #[test]
-    fn gpt_5_mini_supports_parallel_tool_calls() {
-        let info = find_model_info_for_slug("gpt-5-mini");
-        assert!(
-            info.supports_parallel_tool_calls,
-            "gpt-5-mini must allow parallel tool calls for Responses API"
-        );
-    }
 }

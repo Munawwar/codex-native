@@ -59,6 +59,7 @@ indoc = { workspace = true }
 keyring = { workspace = true, features = ["crypto-rust"] }
 libc = { workspace = true }
 multimap = { workspace = true }
+notify = { workspace = true }
 once_cell = { workspace = true }
 os_info = { workspace = true }
 rand = { workspace = true }
@@ -141,7 +142,6 @@ keyring = { workspace = true, features = ["sync-secret-service"] }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
-portable-pty = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-core = { path = ".", default-features = false, features = [
     "deterministic_process_ids",
@@ -169,4 +169,4 @@ wiremock = { workspace = true }
 zstd = { workspace = true }
 
 [package.metadata.cargo-shear]
-ignored = ["openssl-sys", "portable-pty"]
+ignored = ["openssl-sys"]

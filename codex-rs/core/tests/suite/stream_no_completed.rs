@@ -15,6 +15,7 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use wiremock::Mock;
+use wiremock::MockServer;
 use wiremock::Request;
 use wiremock::Respond;
 use wiremock::ResponseTemplate;
@@ -29,7 +30,7 @@ fn sse_incomplete() -> String {
 async fn retries_on_early_close() {
     skip_if_no_network!();
 
-    let server = core_test_support::responses::start_mock_server().await;
+    let server = MockServer::start().await;
 
     struct SeqResponder;
     impl Respond for SeqResponder {
@@ -70,7 +71,7 @@ async fn retries_on_early_close() {
         name: "openai".into(),
         base_url: Some(format!("{}/v1", server.uri())),
         // Environment variable that should exist in the test environment.
-        // ModelClientSession will return an error if the environment variable for the
+        // ModelClient will return an error if the environment variable for the
         // provider is not set.
         env_key: Some("PATH".into()),
         env_key_instructions: None,

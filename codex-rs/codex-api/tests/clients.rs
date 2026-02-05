@@ -265,7 +265,6 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
             phase: None,
         }],
         tools: Vec::<Value>::new(),
-        tool_choice: Some(Value::String("auto".to_string())),
         parallel_tool_calls: false,
         output_schema: None,
     };

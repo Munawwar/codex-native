@@ -375,6 +375,10 @@ pub fn sse(events: Vec<Value>) -> String {
     out
 }
 
+pub fn sse_completed(id: &str) -> String {
+    sse(vec![ev_response_created(id), ev_completed(id)])
+}
+
 /// Convenience: SSE event for a completed response with a specific id.
 pub fn ev_completed(id: &str) -> Value {
     serde_json::json!({
@@ -723,7 +727,7 @@ fn compact_mock() -> (MockBuilder, ResponseMock) {
 fn models_mock() -> (MockBuilder, ModelsMock) {
     let models_mock = ModelsMock::new();
     let mock = Mock::given(method("GET"))
-        .and(path_regex(r".*/models(?:\?.*)?$"))
+        .and(path_regex(".*/models$"))
         .and(models_mock.clone());
     (mock, models_mock)
 }
@@ -834,24 +838,6 @@ pub async fn mount_models_once_with_etag(
     models_mock
 }
 
-pub async fn mount_models_once_with_priority(
-    server: &MockServer,
-    body: ModelsResponse,
-    priority: u8,
-) -> ModelsMock {
-    let (mock, models_mock) = models_mock();
-    mock.respond_with(
-        ResponseTemplate::new(200)
-            .insert_header("content-type", "application/json")
-            .set_body_json(body.clone()),
-    )
-    .up_to_n_times(1)
-    .with_priority(priority)
-    .mount(server)
-    .await;
-    models_mock
-}
-
 pub async fn start_mock_server() -> MockServer {
     let server = MockServer::builder()
         .body_print_limit(BodyPrintLimit::Limited(80_000))
@@ -859,9 +845,7 @@ pub async fn start_mock_server() -> MockServer {
         .await;
 
     // Provide a default `/models` response so tests remain hermetic when the client queries it.
-    let _ =
-        mount_models_once_with_priority(&server, ModelsResponse { models: Vec::new() }, u8::MAX)
-            .await;
+    let _ = mount_models_once(&server, ModelsResponse { models: Vec::new() }).await;
 
     server
 }

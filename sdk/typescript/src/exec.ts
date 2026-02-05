@@ -4,22 +4,10 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { CodexConfigObject, CodexConfigValue } from "./codexOptions";
-import type {
-  ApprovalMode,
-  DynamicToolSpec,
-  ModelReasoningEffort,
-  Personality,
-  SandboxMode,
-  WebSearchMode,
-} from "./threadOptions";
+import { SandboxMode, ModelReasoningEffort, ApprovalMode, WebSearchMode } from "./threadOptions";
 
 export type CodexExecArgs = {
   input: string;
-  inputItems?: unknown[];
-  dynamicTools?: DynamicToolSpec[];
-  turnPersonality?: Personality;
-  personality?: Personality;
-  ephemeral?: boolean;
 
   baseUrl?: string;
   apiKey?: string;
@@ -108,14 +96,6 @@ export class CodexExec {
       commandArgs.push("--config", `model_reasoning_effort="${args.modelReasoningEffort}"`);
     }
 
-    if (args.personality) {
-      commandArgs.push("--config", `personality="${args.personality}"`);
-    }
-
-    if (args.ephemeral !== undefined) {
-      commandArgs.push("--config", `ephemeral=${args.ephemeral}`);
-    }
-
     if (args.networkAccessEnabled !== undefined) {
       commandArgs.push(
         "--config",
@@ -135,22 +115,10 @@ export class CodexExec {
       commandArgs.push("--config", `approval_policy="${args.approvalPolicy}"`);
     }
 
-    if (args.turnPersonality) {
-      commandArgs.push("--turn-personality", args.turnPersonality);
-    }
-
     if (args.images?.length) {
       for (const image of args.images) {
         commandArgs.push("--image", image);
       }
-    }
-
-    if (args.inputItems) {
-      commandArgs.push("--input-items-json", JSON.stringify(args.inputItems));
-    }
-
-    if (args.dynamicTools && args.dynamicTools.length > 0) {
-      commandArgs.push("--dynamic-tools-json", JSON.stringify(args.dynamicTools));
     }
 
     if (args.threadId) {

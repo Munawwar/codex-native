@@ -3,6 +3,7 @@ use crate::config::types::Personality;
 use crate::error::Result;
 pub use codex_api::common::ResponseEvent;
 use codex_protocol::models::BaseInstructions;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ResponseItem;
 use futures::Stream;
 use serde::Deserialize;
@@ -29,10 +30,7 @@ pub struct Prompt {
 
     /// Tools available to the model, including additional tools sourced from
     /// external MCP servers.
-    pub tools: Vec<ToolSpec>,
-
-    /// Optional tool choice override for this prompt.
-    pub tool_choice: Option<Value>,
+    pub(crate) tools: Vec<ToolSpec>,
 
     /// Whether parallel tool calls are permitted for this prompt.
     pub(crate) parallel_tool_calls: bool,
@@ -100,9 +98,11 @@ fn reserialize_shell_outputs(items: &mut [ResponseItem]) {
         }
         ResponseItem::FunctionCallOutput { call_id, output } => {
             if shell_call_ids.remove(call_id)
-                && let Some(structured) = parse_structured_shell_output(&output.content)
+                && let Some(structured) = output
+                    .text_content()
+                    .and_then(parse_structured_shell_output)
             {
-                output.content = structured
+                output.body = FunctionCallOutputBody::Text(structured);
             }
         }
         _ => {}
@@ -186,7 +186,7 @@ pub(crate) mod tools {
     }
 
     impl ToolSpec {
-        pub fn name(&self) -> &str {
+        pub(crate) fn name(&self) -> &str {
             match self {
                 ToolSpec::Function(tool) => tool.name.as_str(),
                 ToolSpec::LocalShell {} => "local_shell",
@@ -241,7 +241,6 @@ mod tests {
     use codex_api::common::TextControls;
     use codex_api::create_text_param_for_request;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
 
     use super::*;
 
@@ -254,7 +253,7 @@ mod tests {
             instructions: "i",
             input: &input,
             tools: &tools,
-            tool_choice: Some(json!("auto")),
+            tool_choice: "auto",
             parallel_tool_calls: true,
             reasoning: None,
             store: false,
@@ -295,7 +294,7 @@ mod tests {
             instructions: "i",
             input: &input,
             tools: &tools,
-            tool_choice: Some(json!("auto")),
+            tool_choice: "auto",
             parallel_tool_calls: true,
             reasoning: None,
             store: false,
@@ -331,7 +330,7 @@ mod tests {
             instructions: "i",
             input: &input,
             tools: &tools,
-            tool_choice: Some(json!("auto")),
+            tool_choice: "auto",
             parallel_tool_calls: true,
             reasoning: None,
             store: false,

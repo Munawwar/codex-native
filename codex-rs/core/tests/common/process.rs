@@ -1,7 +1,6 @@
 use anyhow::Context;
 use std::fs;
 use std::path::Path;
-use std::process::Stdio;
 use std::time::Duration;
 
 pub async fn wait_for_pid_file(path: &Path) -> anyhow::Result<String> {
@@ -25,8 +24,6 @@ pub async fn wait_for_pid_file(path: &Path) -> anyhow::Result<String> {
 pub fn process_is_alive(pid: &str) -> anyhow::Result<bool> {
     let status = std::process::Command::new("kill")
         .args(["-0", pid])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status()
         .context("failed to probe process liveness with kill -0")?;
     Ok(status.success())

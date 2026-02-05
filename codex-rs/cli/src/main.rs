@@ -79,10 +79,11 @@ struct MultitoolCli {
 }
 
 #[derive(Debug, clap::Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Subcommand {
     /// Run Codex non-interactively.
     #[clap(visible_alias = "e")]
-    Exec(Box<ExecCli>),
+    Exec(ExecCli),
 
     /// Run a code review non-interactively.
     Review(ReviewArgs),
@@ -534,33 +535,10 @@ fn stage_str(stage: codex_core::features::Stage) -> &'static str {
 }
 
 fn main() -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        // Windows runners have a small default main-thread stack; run the CLI
-        // inside a thread with a larger stack to avoid stack overflows when
-        // tests spawn the binary.
-        let handle = std::thread::Builder::new()
-            .name("codex-main".to_string())
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
-                    cli_main(codex_linux_sandbox_exe).await?;
-                    Ok(())
-                })
-            })?;
-        match handle.join() {
-            Ok(res) => res,
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
-            cli_main(codex_linux_sandbox_exe).await?;
-            Ok(())
-        })
-    }
+    arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
+        cli_main(codex_linux_sandbox_exe).await?;
+        Ok(())
+    })
 }
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
@@ -589,7 +567,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            codex_exec::run_main(*exec_cli, codex_linux_sandbox_exe).await?;
+            codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Review(review_args)) => {
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
@@ -1110,7 +1088,6 @@ mod tests {
         let Some(Subcommand::Exec(exec)) = cli.subcommand else {
             panic!("expected exec subcommand");
         };
-        let exec = *exec;
         let Some(codex_exec::Command::Resume(args)) = exec.command else {
             panic!("expected exec resume");
         };

@@ -3,6 +3,4 @@ export type TurnOptions = {
   outputSchema?: unknown;
   /** AbortSignal to cancel the turn. */
   signal?: AbortSignal;
-  /** Override the personality for this turn. */
-  personality?: import("./threadOptions").Personality;
 };

@@ -83,56 +83,16 @@ const turn = await thread.run("Summarize repository status", {
 console.log(turn.finalResponse);
 ```
 
-### Structured inputs (images, mentions, skills)
+### Attaching images
 
-Provide structured input entries when you need to include images, mentions, or skill references alongside text. Structured inputs are serialized into `input_items` and preserve ordering exactly.
-The SDK serializes these inputs as inline JSON and passes them to the CLI via `--input-items-json`.
+Provide structured input entries when you need to include images alongside text. Text entries are concatenated into the final prompt while image entries are passed to the Codex CLI via `--image`.
 
 ```typescript
 const turn = await thread.run([
-  {
-    type: "text",
-    text: "Describe these screenshots",
-    textElements: [{ byteRange: { start: 0, end: 9 }, placeholder: "images" }],
-  },
+  { type: "text", text: "Describe these screenshots" },
   { type: "local_image", path: "./ui.png" },
   { type: "local_image", path: "./diagram.jpg" },
-  { type: "image", url: "https://example.com/hero.png" },
-  { type: "mention", name: "docs", path: "app://docs" },
-  { type: "skill", name: "lint", path: "/path/to/skills/LINT.md" },
 ]);
-```
-
-### Personality and ephemeral threads
-
-Set a session personality (and override it per turn if needed). Use `ephemeral` to keep the session in-memory only.
-
-```typescript
-const thread = codex.startThread({
-  personality: "friendly",
-  ephemeral: true,
-});
-
-await thread.run("Summarize the diff", { personality: "pragmatic" });
-```
-
-### Dynamic tools
-
-Provide additional tool specs when starting a new thread. These are only honored on the initial `run()`.
-The SDK passes dynamic tool specs inline via `--dynamic-tools-json`.
-
-```typescript
-const thread = codex.startThread({
-  dynamicTools: [
-    {
-      name: "summarize",
-      description: "Summarize input",
-      inputSchema: { type: "object", properties: { text: { type: "string" } } },
-    },
-  ],
-});
-
-await thread.run("Use summarize tool");
 ```
 
 ### Resuming an existing thread

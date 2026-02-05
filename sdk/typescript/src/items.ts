@@ -1,7 +1,9 @@
 // based on item types from codex-rs/exec/src/exec_events.rs
 
+import type { ContentBlock as McpContentBlock } from "@modelcontextprotocol/sdk/types.js";
+
 /** The status of a command execution. */
-export type CommandExecutionStatus = "in_progress" | "completed" | "failed" | "declined";
+export type CommandExecutionStatus = "in_progress" | "completed" | "failed";
 
 /** A command executed by the agent. */
 export type CommandExecutionItem = {
@@ -57,8 +59,8 @@ export type McpToolCallItem = {
   arguments: unknown;
   /** Result payload returned by the MCP server for successful calls. */
   result?: {
-    content: unknown[];
-    structured_content?: unknown;
+    content: McpContentBlock[];
+    structured_content: unknown;
   };
   /** Error message reported for failed calls. */
   error?: {
@@ -66,45 +68,6 @@ export type McpToolCallItem = {
   };
   /** Current status of the tool invocation. */
   status: McpToolCallStatus;
-};
-
-/** The status of a collab tool call. */
-export type CollabToolCallStatus = "in_progress" | "completed" | "failed";
-
-/** Supported collab tools. */
-export type CollabTool = "spawn_agent" | "send_input" | "wait" | "close_agent";
-
-/** The status of a collab agent. */
-export type CollabAgentStatus =
-  | "pending_init"
-  | "running"
-  | "completed"
-  | "errored"
-  | "shutdown"
-  | "not_found";
-
-/** Last known state of a collab agent. */
-export type CollabAgentState = {
-  status: CollabAgentStatus;
-  message?: string;
-};
-
-/** Represents a call to a collab tool. */
-export type CollabToolCallItem = {
-  id: string;
-  type: "collab_tool_call";
-  /** Name of the collab tool that was invoked. */
-  tool: CollabTool;
-  /** Thread ID of the agent issuing the collab request. */
-  sender_thread_id: string;
-  /** Thread IDs of the receiving agent(s). */
-  receiver_thread_ids: string[];
-  /** Prompt text sent with the collab tool call, when available. */
-  prompt?: string;
-  /** Last known status of target agents, keyed by agent id. */
-  agents_states: Record<string, CollabAgentState>;
-  /** Current status of the tool invocation. */
-  status: CollabToolCallStatus;
 };
 
 /** Response from the agent. Either natural-language text or JSON when structured output is requested. */
@@ -122,32 +85,11 @@ export type ReasoningItem = {
   text: string;
 };
 
-/** Describes what kind of web search action was taken. */
-export type WebSearchAction =
-  | {
-      type: "search";
-      query?: string;
-      queries?: string[];
-    }
-  | {
-      type: "open_page";
-      url?: string;
-    }
-  | {
-      type: "find_in_page";
-      url?: string;
-      pattern?: string;
-    }
-  | {
-      type: "other";
-    };
-
 /** Captures a web search request. Completes when results are returned to the agent. */
 export type WebSearchItem = {
   id: string;
   type: "web_search";
   query: string;
-  action: WebSearchAction;
 };
 
 /** Describes a non-fatal error surfaced as an item. */
@@ -180,7 +122,6 @@ export type ThreadItem =
   | CommandExecutionItem
   | FileChangeItem
   | McpToolCallItem
-  | CollabToolCallItem
   | WebSearchItem
   | TodoListItem
   | ErrorItem;

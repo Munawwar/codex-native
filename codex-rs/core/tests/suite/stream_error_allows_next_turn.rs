@@ -11,6 +11,7 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use wiremock::Mock;
+use wiremock::MockServer;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::body_string_contains;
 use wiremock::matchers::method;
@@ -20,7 +21,7 @@ use wiremock::matchers::path;
 async fn continue_after_stream_error() {
     skip_if_no_network!();
 
-    let server = core_test_support::responses::start_mock_server().await;
+    let server = MockServer::start().await;
 
     let fail = ResponseTemplate::new(500)
         .insert_header("content-type", "application/json")

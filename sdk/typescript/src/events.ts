@@ -57,26 +57,6 @@ export type ItemCompletedEvent = {
   item: ThreadItem;
 };
 
-/** Unstructured raw event emitted by the executor; primarily for diagnostics. */
-export type RawEvent = {
-  type: "raw_event";
-  raw: unknown;
-};
-
-/** Token usage snapshot emitted during a turn. */
-export type TokenCountEvent = {
-  type: "token_count";
-  info?: unknown;
-  rate_limits?: unknown;
-};
-
-/** Additional token usage event emitted at shutdown. */
-export type TokenUsageEvent = {
-  type: "token_usage";
-  info?: unknown;
-  rate_limits?: unknown;
-};
-
 /** Fatal error emitted by the stream. */
 export type ThreadError = {
   message: string;
@@ -85,44 +65,6 @@ export type ThreadError = {
 /** Represents an unrecoverable error emitted directly by the event stream. */
 export type ThreadErrorEvent = {
   type: "error";
-  message: string;
-};
-
-/** Review finding emitted after exiting review mode. */
-export type ReviewLineRange = {
-  start: number;
-  end: number;
-};
-
-export type ReviewCodeLocation = {
-  absolute_file_path: string;
-  line_range: ReviewLineRange;
-};
-
-export type ReviewFinding = {
-  title: string;
-  body: string;
-  confidence_score: number;
-  priority: number;
-  code_location: ReviewCodeLocation;
-};
-
-export type ReviewOutputEvent = {
-  findings: ReviewFinding[];
-  overall_correctness: string;
-  overall_explanation: string;
-  overall_confidence_score: number;
-};
-
-/** Signals that Codex exited review mode and optionally provides structured output. */
-export type ExitedReviewModeEvent = {
-  type: "exited_review_mode";
-  review_output?: ReviewOutputEvent | null;
-};
-
-/** Background notification emitted alongside an active turn. */
-export type BackgroundEvent = {
-  type: "background_event";
   message: string;
 };
 
@@ -135,9 +77,4 @@ export type ThreadEvent =
   | ItemStartedEvent
   | ItemUpdatedEvent
   | ItemCompletedEvent
-  | RawEvent
-  | TokenCountEvent
-  | TokenUsageEvent
-  | ThreadErrorEvent
-  | ExitedReviewModeEvent
-  | BackgroundEvent;
+  | ThreadErrorEvent;

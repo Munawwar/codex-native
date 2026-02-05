@@ -135,8 +135,10 @@ impl SlashCommand {
     }
 
     fn is_visible(self) -> bool {
-        !matches!(self, SlashCommand::Rollout | SlashCommand::TestApproval)
-            || cfg!(debug_assertions)
+        match self {
+            SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
+            _ => true,
+        }
     }
 }
 

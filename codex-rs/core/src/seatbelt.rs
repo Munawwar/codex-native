@@ -61,46 +61,6 @@ pub(crate) fn create_seatbelt_command_args(
             let mut writable_folder_policies: Vec<String> = Vec::new();
             let mut file_write_params = Vec::new();
 
-            if matches!(sandbox_policy, SandboxPolicy::ReadOnly) {
-                // Some system-provided tools (notably `/usr/bin/python3` on macOS) rely on
-                // creating ephemeral files under `/tmp` (e.g. `xcrun_db-*`) even when they
-                // are otherwise only performing read-only operations. Allow writes to
-                // `/tmp` so read-only sandboxed commands can still start up reliably.
-                //
-                // This does not grant write access to the user's workspace or other
-                // sensitive paths.
-                let cwd = sandbox_policy_cwd
-                    .canonicalize()
-                    .unwrap_or_else(|_| sandbox_policy_cwd.to_path_buf());
-                let cwd_param = "READ_ONLY_CWD".to_string();
-                file_write_params.push((cwd_param.clone(), cwd.clone()));
-
-                let tmp = PathBuf::from("/tmp")
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from("/tmp"));
-                let root_param = "READ_ONLY_TMP".to_string();
-                file_write_params.push((root_param.clone(), tmp.clone()));
-                writable_folder_policies.push(if cwd.starts_with(&tmp) {
-                    format!(
-                        "(require-all (subpath (param \"{root_param}\")) (require-not (subpath (param \"{cwd_param}\"))) )"
-                    )
-                } else {
-                    format!("(subpath (param \"{root_param}\"))")
-                });
-
-                if let Some(tmpdir) = confstr_path(libc::_CS_DARWIN_USER_TEMP_DIR) {
-                    let root_param = "DARWIN_USER_TEMP_DIR".to_string();
-                    file_write_params.push((root_param.clone(), tmpdir.clone()));
-                    writable_folder_policies.push(if cwd.starts_with(&tmpdir) {
-                        format!(
-                            "(require-all (subpath (param \"{root_param}\")) (require-not (subpath (param \"{cwd_param}\"))) )"
-                        )
-                    } else {
-                        format!("(subpath (param \"{root_param}\"))")
-                    });
-                }
-            }
-
             for (index, wr) in writable_roots.iter().enumerate() {
                 // Canonicalize to avoid mismatches like /var vs /private/var on macOS.
                 let canonical_root = wr

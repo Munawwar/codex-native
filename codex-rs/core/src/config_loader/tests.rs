@@ -628,6 +628,7 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
 
     Ok(())
 }
+
 #[tokio::test]
 async fn project_layers_prefer_closest_cwd() -> std::io::Result<()> {
     let tmp = tempdir()?;

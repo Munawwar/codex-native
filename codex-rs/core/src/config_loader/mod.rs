@@ -67,13 +67,13 @@ const DEFAULT_REQUIREMENTS_TOML_FILE_UNIX: &str = "/etc/codex/requirements.toml"
 pub const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = "/etc/codex/config.toml";
 
 const DEFAULT_PROJECT_ROOT_MARKERS: &[&str] = &[".git"];
+
 /// To build up the set of admin-enforced constraints, we build up from multiple
 /// configuration layers in the following order, but a constraint defined in an
 /// earlier layer cannot be overridden by a later layer:
 ///
 /// - cloud:    managed cloud requirements
 /// - admin:    managed preferences (*)
-/// - cloud:    managed cloud requirements
 /// - system    `/etc/codex/requirements.toml`
 ///
 /// For backwards compatibility, we also load from
@@ -120,11 +120,6 @@ pub async fn load_config_layers_state(
             .as_deref(),
     )
     .await?;
-
-    if let Some(requirements) = cloud_requirements.get().await {
-        config_requirements_toml
-            .merge_unset_fields(RequirementSource::CloudRequirements, requirements);
-    }
 
     // Honor /etc/codex/requirements.toml.
     if cfg!(unix) {
@@ -339,6 +334,7 @@ async fn load_config_toml_for_required_layer(
 
     Ok(create_entry(toml_value))
 }
+
 /// If available, apply requirements from `/etc/codex/requirements.toml` to
 /// `config_requirements_toml` by filling in any unset fields.
 async fn load_requirements_toml(

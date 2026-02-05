@@ -143,9 +143,10 @@ pub fn build_cli(
     }
   }
 
-  let turn_personality = options.turn_personality.map(|personality| match personality {
-    Personality::Friendly => codex_exec::PersonalityCliArg::Friendly,
-    Personality::Pragmatic => codex_exec::PersonalityCliArg::Pragmatic,
+  let turn_personality = options.turn_personality.and_then(|personality| match personality {
+    Personality::Friendly => Some(codex_exec::PersonalityCliArg::Friendly),
+    Personality::Pragmatic => Some(codex_exec::PersonalityCliArg::Pragmatic),
+    Personality::None => None,
   });
 
 	  Cli {
@@ -165,8 +166,10 @@ pub fn build_cli(
 	    config_overrides: CliConfigOverrides { raw_overrides },
 	    input_items: options.input_items.clone(),
 	    input_items_path: None,
+	    input_items_json: None,
 	    dynamic_tools: options.dynamic_tools.clone(),
 	    dynamic_tools_path: None,
+	    dynamic_tools_json: None,
 	    turn_personality,
 	    color: Color::Never,
 	    json: false,
