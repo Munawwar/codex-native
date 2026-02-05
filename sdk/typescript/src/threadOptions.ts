@@ -6,6 +6,14 @@ export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhig
 
 export type WebSearchMode = "disabled" | "cached" | "live";
 
+export type Personality = "friendly" | "pragmatic";
+
+export type DynamicToolSpec = {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+};
+
 export type ThreadOptions = {
   model?: string;
   sandboxMode?: SandboxMode;

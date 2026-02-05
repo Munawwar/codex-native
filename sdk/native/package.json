@@ -62,6 +62,7 @@
     "@openai/agents-core": "^0.3.3",
     "@opencode-ai/sdk": "^1.0.164",
     "@toon-format/toon": "^1.0.0",
+    "hono": "^4.0.0",
     "pyright": "^1.1.386",
     "typescript-language-server": "^4.3.3",
     "vscode-jsonrpc": "^8.2.1",

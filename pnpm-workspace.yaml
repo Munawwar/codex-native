@@ -1,6 +1,7 @@
 packages:
   - codex-cli
   - codex-rs/responses-api-proxy/npm
+  - sdk/native
   - sdk/typescript
   - codex-agents-suite
   - shell-tool-mcp

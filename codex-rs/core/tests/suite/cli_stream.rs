@@ -118,20 +118,14 @@ async fn exec_cli_applies_model_instructions_file() {
     std::fs::write(&custom_path, marker).unwrap();
     let custom_path_str = custom_path.to_string_lossy().replace('\\', "/");
 
-    let home = TempDir::new().unwrap();
-    let base_url = format!("{}/v1", server.uri());
-    let config_toml = format!(
-        r#"model_provider = "mock"
-model_instructions_file = "{custom_path_str}"
-
-[model_providers.mock]
-name = "mock"
-base_url = "{base_url}"
-env_key = "PATH"
-wire_api = "responses"
-"#,
+    // Build a provider override that points at the mock server and instructs
+    // Codex to use the Responses API with the dummy env var.
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
     );
-    std::fs::write(home.path().join(CONFIG_TOML_FILE), config_toml).unwrap();
+
+    let home = TempDir::new().unwrap();
     let repo_root = repo_root();
     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
     let mut cmd = AssertCommand::new(bin);
@@ -165,11 +159,9 @@ wire_api = "responses"
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    // Model instructions file parsing is covered in config_loader tests; here we
-    // only validate that exec produces non-empty instructions.
     assert!(
-        !instructions.is_empty(),
-        "expected instructions to be populated; got: {instructions}"
+        instructions.contains(marker),
+        "instructions did not contain custom marker; got: {instructions}"
     );
 }
 

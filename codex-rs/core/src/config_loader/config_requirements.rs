@@ -380,40 +380,6 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
             }
             None => ConstrainedWithSource::new(Constrained::allow_any(None), None),
         };
-        let exec_policy = match rules {
-            Some(Sourced { value, source }) => {
-                let policy = value.to_requirements_policy().map_err(|err| {
-                    ConstraintError::ExecPolicyParse {
-                        requirement_source: source.clone(),
-                        reason: err.to_string(),
-                    }
-                })?;
-                Some(Sourced::new(policy, source))
-            }
-            None => None,
-        };
-
-        let enforce_residency: Constrained<Option<ResidencyRequirement>> = match enforce_residency {
-            Some(Sourced {
-                value: residency,
-                source: requirement_source,
-            }) => {
-                let required = Some(residency);
-                Constrained::new(required, move |candidate| {
-                    if candidate == &required {
-                        Ok(())
-                    } else {
-                        Err(ConstraintError::InvalidValue {
-                            field_name: "enforce_residency",
-                            candidate: format!("{candidate:?}"),
-                            allowed: format!("{required:?}"),
-                            requirement_source: requirement_source.clone(),
-                        })
-                    }
-                })?
-            }
-            None => Constrained::allow_any(None),
-        };
         Ok(ConfigRequirements {
             approval_policy,
             sandbox_policy,

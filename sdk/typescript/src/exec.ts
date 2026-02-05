@@ -6,7 +6,14 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { CodexConfigObject, CodexConfigValue } from "./codexOptions";
-import { SandboxMode, ModelReasoningEffort, ApprovalMode, WebSearchMode } from "./threadOptions";
+import type {
+  ApprovalMode,
+  DynamicToolSpec,
+  ModelReasoningEffort,
+  Personality,
+  SandboxMode,
+  WebSearchMode,
+} from "./threadOptions";
 
 export type CodexExecArgs = {
   input: string;
@@ -67,12 +74,6 @@ export class CodexExec {
   async *run(args: CodexExecArgs): AsyncGenerator<string> {
     const commandArgs: string[] = ["exec", "--experimental-json"];
     const cleanupTasks: Array<() => Promise<void>> = [];
-
-    if (this.configOverrides) {
-      for (const override of serializeConfigOverrides(this.configOverrides)) {
-        commandArgs.push("--config", override);
-      }
-    }
 
     if (this.configOverrides) {
       for (const override of serializeConfigOverrides(this.configOverrides)) {

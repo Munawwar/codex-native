@@ -881,15 +881,11 @@ mod tests {
     use sqlx::Row;
     use std::path::Path;
     use std::path::PathBuf;
-    use std::time::SystemTime;
-    use std::time::UNIX_EPOCH;
     use uuid::Uuid;
 
     fn unique_temp_dir() -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos());
-        std::env::temp_dir().join(format!("codex-state-runtime-test-{nanos}"))
+        let id = Uuid::new_v4();
+        std::env::temp_dir().join(format!("codex-state-runtime-test-{id}"))
     }
 
     #[tokio::test]

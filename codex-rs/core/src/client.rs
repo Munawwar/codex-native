@@ -174,7 +174,7 @@ impl ModelClient {
             .state
             .provider
             .to_api_provider(auth.as_ref().map(CodexAuth::internal_auth_mode))?;
-        let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider)?;
+        let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider).await?;
         let transport = ReqwestTransport::new(build_reqwest_client());
         let request_telemetry = self.build_request_telemetry();
         let client = ApiCompactClient::new(transport, api_provider, api_auth)
@@ -214,7 +214,7 @@ impl ModelClient {
             .state
             .provider
             .to_api_provider(auth.as_ref().map(CodexAuth::internal_auth_mode))?;
-        let api_auth = auth_provider_from_auth(auth, &self.state.provider)?;
+        let api_auth = auth_provider_from_auth(auth, &self.state.provider).await?;
         let transport = ReqwestTransport::new(build_reqwest_client());
         let request_telemetry = self.build_request_telemetry();
         let client = ApiMemoriesClient::new(transport, api_provider, api_auth)
@@ -505,7 +505,7 @@ impl ModelClientSession {
                 .state
                 .provider
                 .to_api_provider(auth.as_ref().map(CodexAuth::internal_auth_mode))?;
-            let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider)?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider).await?;
             let transport = ReqwestTransport::new(build_reqwest_client());
             let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
             let compression = self.responses_request_compression(auth.as_ref());
@@ -551,7 +551,7 @@ impl ModelClientSession {
                 .state
                 .provider
                 .to_api_provider(auth.as_ref().map(CodexAuth::internal_auth_mode))?;
-            let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider)?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.state.provider).await?;
             let compression = self.responses_request_compression(auth.as_ref());
 
             let options = self.build_responses_options(prompt, compression);
