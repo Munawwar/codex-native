@@ -16,7 +16,6 @@
  * Examples:
  *   npx tsx testagent.ts "Review the codebase"
  *   npx tsx testagent.ts --resume-last
- *   npx tsx testagent.ts --full-auto --sandbox workspace-write
  *   npx tsx testagent.ts --model gpt-5-codex "Complex analysis task"
  */
 
@@ -87,7 +86,6 @@ async function main(): Promise<void> {
     sandboxMode: tuiRequest.sandboxMode,
     approvalMode: tuiRequest.approvalMode,
     workingDirectory: resolvedWorkingDirectory,
-    fullAuto: request.fullAuto,
     oss: request.oss,
     skipGitRepoCheck: true,
   };
@@ -128,9 +126,6 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "-h":
       case "--help":
         return { request, prompt, showHelp: true };
-      case "--full-auto":
-        request.fullAuto = true;
-        continue;
       case "--resume-picker":
         request.resumePicker = true;
         continue;
@@ -277,7 +272,6 @@ function logLaunchInfo(request: NativeTuiRequest, prompt?: string): void {
     request.resumeSessionId ? `resumeSessionId=${request.resumeSessionId}` : undefined,
     request.resumeLast ? "resumeLast=true" : undefined,
     request.resumePicker ? "resumePicker=true" : undefined,
-    request.fullAuto ? "fullAuto=true" : undefined,
     request.webSearch ? "webSearch=true" : undefined,
   ].filter(Boolean);
 
@@ -317,7 +311,6 @@ Usage:
 
 Options:
   -h, --help                Show this help message.
-  --full-auto               Enable fully autonomous mode.
   --resume <id>             Resume the conversation with the given session ID.
   --resume-last             Resume the most recent conversation.
   --resume-picker           Show the resume picker when launching.
@@ -340,6 +333,5 @@ If no prompt or resume option is provided, a default prompt will be used.
 }
 
 void main();
-
 
 

@@ -59,7 +59,6 @@ fn test_build_cli_new_conversation() {
     cli.sandbox_mode,
     Some(SandboxModeCliArg::WorkspaceWrite)
   ));
-  assert!(!cli.full_auto);
   assert!(cli.skip_git_repo_check);
   assert!(!cli.oss);
 }
@@ -102,7 +101,6 @@ fn test_build_cli_minimal_options() {
   assert_eq!(cli.prompt, Some("minimal".to_string()));
   assert!(cli.images.is_empty());
   assert!(cli.model.is_none());
-  assert!(!cli.full_auto);
   assert!(!cli.skip_git_repo_check);
 }
 

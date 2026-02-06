@@ -441,31 +441,32 @@ mod tests_tui_reasoning_overrides {
 
   #[test]
   fn apply_reasoning_overrides_sets_raw_overrides() {
-    let mut cli = TuiCli {
+    let mut cli = TuiRequest {
       prompt: None,
-      images: Vec::new(),
-      resume_picker: false,
-      resume_last: false,
-      resume_session_id: None,
-      resume_show_all: false,
-      fork_picker: false,
-      fork_last: false,
-      fork_session_id: None,
-      fork_show_all: false,
+      images: None,
       model: None,
-      oss: false,
-      oss_provider: None,
-      config_profile: None,
+      oss: None,
       sandbox_mode: None,
-      approval_policy: None,
-      full_auto: false,
-      dangerously_bypass_approvals_and_sandbox: false,
-      cwd: None,
-      web_search: false,
-      add_dir: Vec::new(),
-      no_alt_screen: false,
-      config_overrides: CliConfigOverrides { raw_overrides: Vec::new() },
-    };
+      approval_mode: None,
+      resume_session_id: None,
+      resume_last: None,
+      resume_picker: None,
+      dangerously_bypass_approvals_and_sandbox: None,
+      working_directory: None,
+      config_profile: None,
+      config_overrides: Some(Vec::new()),
+      add_dir: None,
+      web_search: None,
+      linux_sandbox_path: None,
+      base_url: None,
+      api_key: None,
+      reasoning_effort: None,
+      reasoning_summary: None,
+      no_alt_screen: None,
+    }
+    .into_internal()
+    .expect("into_internal")
+    .cli;
 
     apply_reasoning_overrides(&mut cli, Some(ReasoningEffort::High), Some(ReasoningSummary::Concise));
 

@@ -73,7 +73,8 @@ class PRDeepReviewer {
         model: this.config.model ?? DEFAULT_MODEL,
         workingDirectory: repoContext.cwd,
         skipGitRepoCheck: this.config.skipGitRepoCheck,
-        fullAuto: true,
+        sandboxMode: "workspace-write",
+        approvalMode: "on-request",
       },
     });
 

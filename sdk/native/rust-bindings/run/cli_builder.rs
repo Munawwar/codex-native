@@ -42,7 +42,6 @@ pub fn build_cli(
 ) -> Cli {
   let sandbox_mode = options.sandbox_mode;
   let wants_danger = matches!(sandbox_mode, Some(SandboxModeCliArg::DangerFullAccess));
-  let cli_full_auto = false;
   let add_dir: Vec<PathBuf> = options
     .workspace_write_options
     .as_ref()
@@ -157,7 +156,7 @@ pub fn build_cli(
 	    oss_provider: options.model_provider.clone(),
 	    sandbox_mode,
 	    config_profile: None,
-	    full_auto: cli_full_auto,
+	    full_auto: false,
 	    dangerously_bypass_approvals_and_sandbox: wants_danger,
 	    cwd: options.working_directory.clone(),
 	    skip_git_repo_check: options.skip_git_repo_check,

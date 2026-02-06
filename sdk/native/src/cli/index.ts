@@ -359,7 +359,6 @@ Options:
   --resume <id>          Resume a saved session by id
   --resume-last          Resume the most recent saved session
   --resume-picker        Show the resume picker on startup
-  --full-auto            Enable workspace-write auto approvals
   --dangerously-bypass-approvals-and-sandbox
                         Disable approvals and sandboxing (unsafe)
   --cd <path>            Working directory for the session
@@ -385,7 +384,6 @@ Options:
   --base-url <url>       Override the Codex API base URL
   --api-key <key>        API key for Codex requests
   --linux-sandbox-path   Path to codex-linux-sandbox binary
-  --full-auto            Enable workspace-write auto approvals
   --skip-git-repo-check  Skip git repository validation
   --cd <path>            Working directory for the run
   --image <path>         Attach an image (repeatable)
