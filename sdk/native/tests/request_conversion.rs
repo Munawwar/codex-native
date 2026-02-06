@@ -1,5 +1,7 @@
 use codex_common::SandboxModeCliArg;
 use codex_native::*;
+use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::WebSearchMode;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::path::PathBuf;
@@ -25,9 +27,13 @@ fn base_run_request(prompt: &str) -> RunRequest {
     linux_sandbox_path: None,
     reasoning_effort: None,
     reasoning_summary: None,
-    full_auto: None,
     review_mode: None,
     review_hint: None,
+    personality: None,
+    turn_personality: None,
+    ephemeral: None,
+    web_search_mode: None,
+    dynamic_tools: None,
     mcp: None,
     inherit_mcp: None,
   }
@@ -42,7 +48,6 @@ fn test_run_request_into_internal_default_values() {
   assert!(internal.thread_id.is_none());
   assert!(internal.images.is_empty());
   assert!(!internal.skip_git_repo_check);
-  assert!(internal.full_auto);
   assert!(internal.review_request.is_none());
   assert!(internal.reasoning_effort.is_none());
   assert!(internal.reasoning_summary.is_none());
@@ -75,7 +80,22 @@ fn test_run_request_sandbox_mode_conversions() {
     req.sandbox_mode = Some(mode_str.to_string());
 
     let internal = req.into_internal().unwrap();
-    assert_eq!(internal.sandbox_mode, Some(expected));
+    assert!(
+      matches!(
+        (internal.sandbox_mode, expected),
+        (
+          Some(SandboxModeCliArg::ReadOnly),
+          SandboxModeCliArg::ReadOnly
+        ) | (
+          Some(SandboxModeCliArg::WorkspaceWrite),
+          SandboxModeCliArg::WorkspaceWrite
+        ) | (
+          Some(SandboxModeCliArg::DangerFullAccess),
+          SandboxModeCliArg::DangerFullAccess
+        )
+      ),
+      "expected sandbox mode {mode_str} to round-trip"
+    );
   }
 }
 
@@ -151,4 +171,27 @@ fn test_run_request_with_output_schema() {
 
   let internal = req.into_internal().unwrap();
   assert_eq!(internal.output_schema, Some(schema));
+}
+
+#[test]
+fn test_run_request_parses_personality_and_dynamic_tools() {
+  let mut req = base_run_request("test");
+  req.personality = Some("friendly".to_string());
+  req.turn_personality = Some("pragmatic".to_string());
+  req.web_search_mode = Some("live".to_string());
+  req.ephemeral = Some(true);
+  req.dynamic_tools = Some(json!([
+    {
+      "name": "summarize",
+      "description": "Summarize input",
+      "inputSchema": { "type": "object" }
+    }
+  ]));
+
+  let internal = req.into_internal().unwrap();
+  assert_eq!(internal.personality, Some(Personality::Friendly));
+  assert_eq!(internal.turn_personality, Some(Personality::Pragmatic));
+  assert_eq!(internal.web_search_mode, Some(WebSearchMode::Live));
+  assert_eq!(internal.ephemeral, Some(true));
+  assert!(internal.dynamic_tools.is_some());
 }

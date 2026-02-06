@@ -13,7 +13,6 @@ async function main(): Promise<void> {
   const request: NativeTuiRequest = {
     prompt,
     resumePicker: false,
-    fullAuto: false,
     workingDirectory: process.cwd(),
     sandboxMode: "workspace-write",
     approvalMode: "on-request",

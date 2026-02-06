@@ -170,10 +170,22 @@ fn extract_text_content(value: &serde_json::Value) -> Option<String> {
     .or_else(|| target.get("message").and_then(|m| m.as_str()).map(String::from))
 }
 
-fn conversation_matches_project(head_records: &[String], project_root: Option<&Path>) -> bool {
+fn conversation_matches_project(
+  conversation_cwd: Option<&str>,
+  head_records: &[String],
+  project_root: Option<&Path>,
+) -> bool {
   let Some(root) = project_root else {
     return true;
   };
+
+  if let Some(cwd) = conversation_cwd {
+    let candidate = normalize_path(cwd);
+    if path_starts_with(&candidate, root) {
+      return true;
+    }
+  }
+
   for record in head_records {
     if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(record)
       && let Some(cwd) = json_value
@@ -241,3 +253,32 @@ fn build_excerpt(text: &str) -> String {
   }
 }
 
+#[cfg(test)]
+mod json_utils_tests {
+  use super::conversation_matches_project;
+  use std::path::Path;
+
+  #[test]
+  fn project_match_prefers_conversation_cwd() {
+    let matches = conversation_matches_project(
+      Some("/tmp/workspace/project"),
+      &[],
+      Some(Path::new("/tmp/workspace")),
+    );
+    assert!(matches);
+  }
+
+  #[test]
+  fn project_match_uses_meta_cwd_from_records() {
+    let head_records = vec![r#"{"meta":{"cwd":"/tmp/workspace/project"}}"#.to_string()];
+    let matches = conversation_matches_project(None, &head_records, Some(Path::new("/tmp/workspace")));
+    assert!(matches);
+  }
+
+  #[test]
+  fn project_match_ignores_legacy_payload_cwd() {
+    let head_records = vec![r#"{"payload":{"cwd":"/tmp/workspace/project"}}"#.to_string()];
+    let matches = conversation_matches_project(None, &head_records, Some(Path::new("/tmp/workspace")));
+    assert!(!matches);
+  }
+}

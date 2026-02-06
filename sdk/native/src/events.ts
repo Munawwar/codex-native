@@ -75,18 +75,22 @@ export type ThreadErrorEvent = {
 };
 
 /** Review finding with code location */
+export type ReviewLineRange = {
+  start: number;
+  end: number;
+};
+
+export type ReviewCodeLocation = {
+  absolute_file_path: string;
+  line_range: ReviewLineRange;
+};
+
 export type ReviewFinding = {
   title: string;
   body: string;
   confidence_score: number;
   priority: number;
-  code_location: {
-    absolute_file_path: string;
-    line_range: {
-      start: number;
-      end: number;
-    };
-  };
+  code_location: ReviewCodeLocation;
 };
 
 /** Structured review output */
@@ -100,7 +104,7 @@ export type ReviewOutputEvent = {
 /** Emitted when exiting review mode with optional structured results */
 export type ExitedReviewModeEvent = {
   type: "exited_review_mode";
-  review_output: ReviewOutputEvent | null;
+  review_output?: ReviewOutputEvent | null;
 };
 
 /** Top-level JSONL events emitted by codex exec. */

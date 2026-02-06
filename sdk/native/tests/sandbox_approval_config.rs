@@ -22,9 +22,13 @@ fn base_run_request(prompt: &str) -> RunRequest {
     linux_sandbox_path: None,
     reasoning_effort: None,
     reasoning_summary: None,
-    full_auto: None,
     review_mode: None,
     review_hint: None,
+    personality: None,
+    turn_personality: None,
+    ephemeral: None,
+    web_search_mode: None,
+    dynamic_tools: None,
     mcp: None,
     inherit_mcp: None,
   }
@@ -122,7 +126,6 @@ fn test_run_request_with_workspace_write_options() {
   req.workspace_write_options = Some(opts);
   req.working_directory = Some("/workspace".to_string());
   req.skip_git_repo_check = Some(true);
-  req.full_auto = Some(false);
 
   assert_eq!(req.model, Some("gpt-5-codex".to_string()));
   assert_eq!(req.sandbox_mode, Some("workspace-write".to_string()));

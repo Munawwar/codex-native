@@ -51,7 +51,6 @@ const RUN_OPTION_DEFS = {
   "base-url": { type: "string" } as const,
   "api-key": { type: "string" } as const,
   "linux-sandbox-path": { type: "string" } as const,
-  "full-auto": { type: "boolean" } as const,
   "skip-git-repo-check": { type: "boolean" } as const,
   cd: { type: "string" } as const,
   image: { type: "string", multiple: true } as const,
@@ -67,7 +66,6 @@ const TUI_OPTION_DEFS = {
   resume: { type: "string" } as const,
   "resume-last": { type: "boolean" } as const,
   "resume-picker": { type: "boolean" } as const,
-  "full-auto": { type: "boolean" } as const,
   "dangerously-bypass-approvals-and-sandbox": { type: "boolean" } as const,
   cd: { type: "string" } as const,
   "config-profile": { type: "string" } as const,
@@ -301,7 +299,6 @@ Run options:
   --base-url <url>       Override the Codex API base URL
   --api-key <key>        API key for Codex requests
   --linux-sandbox-path   Path to codex-linux-sandbox binary
-  --full-auto            Enable workspace-write auto approvals
   --skip-git-repo-check  Skip git repository validation
   --cd <path>            Working directory for the run
   --image <path>         Attach an image (repeatable)
@@ -316,7 +313,6 @@ TUI options:
   --resume <id>          Resume a saved session by id
   --resume-last          Resume the most recent saved session
   --resume-picker        Show the resume picker on startup
-  --full-auto            Enable workspace-write auto approvals
   --dangerously-bypass-approvals-and-sandbox
                         Disable approvals and sandboxing (unsafe)
   --cd <path>            Working directory for the session
@@ -363,7 +359,6 @@ Options:
   --resume <id>          Resume a saved session by id
   --resume-last          Resume the most recent saved session
   --resume-picker        Show the resume picker on startup
-  --full-auto            Enable workspace-write auto approvals
   --dangerously-bypass-approvals-and-sandbox
                         Disable approvals and sandboxing (unsafe)
   --cd <path>            Working directory for the session
@@ -389,7 +384,6 @@ Options:
   --base-url <url>       Override the Codex API base URL
   --api-key <key>        API key for Codex requests
   --linux-sandbox-path   Path to codex-linux-sandbox binary
-  --full-auto            Enable workspace-write auto approvals
   --skip-git-repo-check  Skip git repository validation
   --cd <path>            Working directory for the run
   --image <path>         Attach an image (repeatable)

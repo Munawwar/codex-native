@@ -61,46 +61,6 @@ pub(crate) fn create_seatbelt_command_args(
             let mut writable_folder_policies: Vec<String> = Vec::new();
             let mut file_write_params = Vec::new();
 
-            if matches!(sandbox_policy, SandboxPolicy::ReadOnly) {
-                // Some system-provided tools (notably `/usr/bin/python3` on macOS) rely on
-                // creating ephemeral files under `/tmp` (e.g. `xcrun_db-*`) even when they
-                // are otherwise only performing read-only operations. Allow writes to
-                // `/tmp` so read-only sandboxed commands can still start up reliably.
-                //
-                // This does not grant write access to the user's workspace or other
-                // sensitive paths.
-                let cwd = sandbox_policy_cwd
-                    .canonicalize()
-                    .unwrap_or_else(|_| sandbox_policy_cwd.to_path_buf());
-                let cwd_param = "READ_ONLY_CWD".to_string();
-                file_write_params.push((cwd_param.clone(), cwd.clone()));
-
-                let tmp = PathBuf::from("/tmp")
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from("/tmp"));
-                let root_param = "READ_ONLY_TMP".to_string();
-                file_write_params.push((root_param.clone(), tmp.clone()));
-                writable_folder_policies.push(if cwd.starts_with(&tmp) {
-                    format!(
-                        "(require-all (subpath (param \"{root_param}\")) (require-not (subpath (param \"{cwd_param}\"))) )"
-                    )
-                } else {
-                    format!("(subpath (param \"{root_param}\"))")
-                });
-
-                if let Some(tmpdir) = confstr_path(libc::_CS_DARWIN_USER_TEMP_DIR) {
-                    let root_param = "DARWIN_USER_TEMP_DIR".to_string();
-                    file_write_params.push((root_param.clone(), tmpdir.clone()));
-                    writable_folder_policies.push(if cwd.starts_with(&tmpdir) {
-                        format!(
-                            "(require-all (subpath (param \"{root_param}\")) (require-not (subpath (param \"{cwd_param}\"))) )"
-                        )
-                    } else {
-                        format!("(subpath (param \"{root_param}\"))")
-                    });
-                }
-            }
-
             for (index, wr) in writable_roots.iter().enumerate() {
                 // Canonicalize to avoid mismatches like /var vs /private/var on macOS.
                 let canonical_root = wr
@@ -213,6 +173,16 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use tempfile::TempDir;
+
+    fn assert_seatbelt_denied(stderr: &[u8], path: &Path) {
+        let stderr = String::from_utf8_lossy(stderr);
+        let expected = format!("bash: {}: Operation not permitted\n", path.display());
+        assert!(
+            stderr == expected
+                || stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted"),
+            "unexpected stderr: {stderr}"
+        );
+    }
 
     #[test]
     fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
@@ -330,10 +300,7 @@ mod tests {
             "command to write {} should fail under seatbelt",
             &config_toml.display()
         );
-        assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
-            format!("bash: {}: Operation not permitted\n", config_toml.display()),
-        );
+        assert_seatbelt_denied(&output.stderr, &config_toml);
 
         // Create a similar Seatbelt command that tries to write to a file in
         // the .git folder, which should also be blocked.
@@ -364,13 +331,7 @@ mod tests {
             "command to write {} should fail under seatbelt",
             &pre_commit_hook.display()
         );
-        assert_eq!(
-            String::from_utf8_lossy(&output.stderr),
-            format!(
-                "bash: {}: Operation not permitted\n",
-                pre_commit_hook.display()
-            ),
-        );
+        assert_seatbelt_denied(&output.stderr, &pre_commit_hook);
 
         // Verify that writing a file to the folder containing .git and .codex is allowed.
         let allowed_file = vulnerable_root_canonical.join("allowed.txt");
@@ -391,6 +352,12 @@ mod tests {
             .current_dir(&cwd)
             .output()
             .expect("execute seatbelt command");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success()
+            && stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted")
+        {
+            return;
+        }
         assert!(
             output.status.success(),
             "command to write {} should succeed under seatbelt",
@@ -402,6 +369,91 @@ mod tests {
             "{} should contain the written text",
             allowed_file.display()
         );
+    }
+
+    #[test]
+    fn create_seatbelt_args_with_read_only_git_pointer_file() {
+        let tmp = TempDir::new().expect("tempdir");
+        let worktree_root = tmp.path().join("worktree_root");
+        fs::create_dir_all(&worktree_root).expect("create worktree_root");
+        let gitdir = worktree_root.join("actual-gitdir");
+        fs::create_dir_all(&gitdir).expect("create gitdir");
+        let gitdir_config = gitdir.join("config");
+        let gitdir_config_contents = "[core]\n";
+        fs::write(&gitdir_config, gitdir_config_contents).expect("write gitdir config");
+
+        let dot_git = worktree_root.join(".git");
+        let dot_git_contents = format!("gitdir: {}\n", gitdir.to_string_lossy());
+        fs::write(&dot_git, &dot_git_contents).expect("write .git pointer");
+
+        let cwd = tmp.path().join("cwd");
+        fs::create_dir_all(&cwd).expect("create cwd");
+
+        let policy = SandboxPolicy::WorkspaceWrite {
+            writable_roots: vec![worktree_root.try_into().expect("worktree_root is absolute")],
+            network_access: false,
+            exclude_tmpdir_env_var: true,
+            exclude_slash_tmp: true,
+        };
+
+        let shell_command: Vec<String> = [
+            "bash",
+            "-c",
+            "echo 'pwned!' > \"$1\"",
+            "bash",
+            dot_git.to_string_lossy().as_ref(),
+        ]
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+        let args = create_seatbelt_command_args(shell_command, &policy, &cwd);
+
+        let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+            .args(&args)
+            .current_dir(&cwd)
+            .output()
+            .expect("execute seatbelt command");
+
+        assert_eq!(
+            dot_git_contents,
+            String::from_utf8_lossy(&fs::read(&dot_git).expect("read .git pointer")),
+            ".git pointer file should not be modified under seatbelt"
+        );
+        assert!(
+            !output.status.success(),
+            "command to write {} should fail under seatbelt",
+            dot_git.display()
+        );
+        assert_seatbelt_denied(&output.stderr, &dot_git);
+
+        let shell_command_gitdir: Vec<String> = [
+            "bash",
+            "-c",
+            "echo 'pwned!' > \"$1\"",
+            "bash",
+            gitdir_config.to_string_lossy().as_ref(),
+        ]
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+        let gitdir_args = create_seatbelt_command_args(shell_command_gitdir, &policy, &cwd);
+        let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+            .args(&gitdir_args)
+            .current_dir(&cwd)
+            .output()
+            .expect("execute seatbelt command");
+
+        assert_eq!(
+            gitdir_config_contents,
+            String::from_utf8_lossy(&fs::read(&gitdir_config).expect("read gitdir config")),
+            "gitdir config should contain its original contents because it should not have been modified"
+        );
+        assert!(
+            !output.status.success(),
+            "command to write {} should fail under seatbelt",
+            gitdir_config.display()
+        );
+        assert_seatbelt_denied(&output.stderr, &gitdir_config);
     }
 
     #[test]

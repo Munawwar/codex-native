@@ -1,6 +1,5 @@
 import { getNativeBinding } from "./nativeBinding";
 import type {
-  NativeBinding,
   NativeTuiRequest,
   NativeTuiExitInfo,
   NativeTokenUsage,
@@ -36,11 +35,7 @@ export function startTui(request: NativeTuiRequest): TuiSession {
     return wrapNativeSession(nativeSession);
   }
 
-  if (typeof binding.runTui === "function") {
-    return createLegacySession(binding, request);
-  }
-
-  throw new Error("Native binding does not expose startTui or runTui");
+  throw new Error("Native binding does not expose startTui");
 }
 
 /**
@@ -81,36 +76,6 @@ function wrapNativeSession(nativeSession: NativeTuiSession): TuiSession {
   };
 }
 
-function createLegacySession(binding: NativeBinding, request: NativeTuiRequest): TuiSession {
-  if (typeof binding.runTui !== "function") {
-    throw new Error("Native binding does not expose runTui");
-  }
-
-  let closed = false;
-  const promise = binding.runTui(request).then(
-    (result) => {
-      closed = true;
-      return result;
-    },
-    (error) => {
-      closed = true;
-      throw error;
-    },
-  );
-
-  return {
-    wait: () => promise,
-    shutdown() {
-      throw new Error(
-        "Programmatic shutdown is not supported by this native binding build. Rebuild the SDK to enable startTui().",
-      );
-    },
-    get closed() {
-      return closed;
-    },
-  };
-}
-
 export type {
   NativeTuiRequest,
   NativeTuiExitInfo,
@@ -118,4 +83,3 @@ export type {
   NativeUpdateActionInfo,
   NativeUpdateActionKind,
 };
-

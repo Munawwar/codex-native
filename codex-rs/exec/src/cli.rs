@@ -1,6 +1,10 @@
+use clap::Args;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap::ValueEnum;
 use codex_common::CliConfigOverrides;
+use codex_protocol::config_types::Personality;
+use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::user_input::UserInput;
 use std::path::PathBuf;
 
@@ -70,6 +74,10 @@ pub struct Cli {
     #[arg(long = "add-dir", value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     pub add_dir: Vec<PathBuf>,
 
+    /// Run without persisting session files to disk.
+    #[arg(long = "ephemeral", global = true, default_value_t = false)]
+    pub ephemeral: bool,
+
     /// Path to a JSON Schema file describing the model's final response shape.
     #[arg(long = "output-schema", value_name = "FILE")]
     pub output_schema: Option<PathBuf>,
@@ -80,6 +88,38 @@ pub struct Cli {
     /// Structured input items for the initial prompt (for programmatic callers).
     #[clap(skip)]
     pub input_items: Option<Vec<UserInput>>,
+
+    /// Structured input items for the initial prompt (read from JSON file).
+    #[arg(long = "input-items", value_name = "FILE")]
+    pub input_items_path: Option<PathBuf>,
+
+    /// Structured input items for the initial prompt (inline JSON array).
+    #[arg(
+        long = "input-items-json",
+        value_name = "JSON",
+        conflicts_with = "input_items_path"
+    )]
+    pub input_items_json: Option<String>,
+
+    /// Dynamic tools for the thread start (for programmatic callers).
+    #[clap(skip)]
+    pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+
+    /// Dynamic tools for the thread start (read from JSON file).
+    #[arg(long = "dynamic-tools", value_name = "FILE")]
+    pub dynamic_tools_path: Option<PathBuf>,
+
+    /// Dynamic tools for the thread start (inline JSON array).
+    #[arg(
+        long = "dynamic-tools-json",
+        value_name = "JSON",
+        conflicts_with = "dynamic_tools_path"
+    )]
+    pub dynamic_tools_json: Option<String>,
+
+    /// Override the personality for this turn.
+    #[arg(long = "turn-personality", value_enum, value_name = "PERSONALITY")]
+    pub turn_personality: Option<PersonalityCliArg>,
 
     /// Specifies color settings for use in the output.
     #[arg(long = "color", value_enum, default_value_t = Color::Auto)]
@@ -113,16 +153,22 @@ pub enum Command {
     Review(ReviewArgs),
 }
 
-#[derive(Parser, Debug)]
-pub struct ResumeArgs {
-    /// Conversation/session id (UUID). When provided, resumes this session.
+#[derive(Args, Debug)]
+struct ResumeArgsRaw {
+    // Note: This is the direct clap shape. We reinterpret the positional when --last is set
+    // so "codex resume --last <prompt>" treats the positional as a prompt, not a session id.
+    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
     /// If omitted, use --last to pick the most recent recorded session.
     #[arg(value_name = "SESSION_ID")]
-    pub session_id: Option<String>,
+    session_id: Option<String>,
 
     /// Resume the most recent recorded session (newest) without specifying an id.
     #[arg(long = "last", default_value_t = false)]
-    pub last: bool,
+    last: bool,
+
+    /// Show all sessions (disables cwd filtering).
+    #[arg(long = "all", default_value_t = false)]
+    all: bool,
 
     /// Optional image(s) to attach to the prompt sent after resuming.
     #[arg(
@@ -132,11 +178,70 @@ pub struct ResumeArgs {
         value_delimiter = ',',
         num_args = 1
     )]
-    pub images: Vec<PathBuf>,
+    images: Vec<PathBuf>,
 
     /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
+    prompt: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ResumeArgs {
+    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
+    /// If omitted, use --last to pick the most recent recorded session.
+    pub session_id: Option<String>,
+
+    /// Resume the most recent recorded session (newest) without specifying an id.
+    pub last: bool,
+
+    /// Show all sessions (disables cwd filtering).
+    pub all: bool,
+
+    /// Optional image(s) to attach to the prompt sent after resuming.
+    pub images: Vec<PathBuf>,
+
+    /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     pub prompt: Option<String>,
+}
+
+impl From<ResumeArgsRaw> for ResumeArgs {
+    fn from(raw: ResumeArgsRaw) -> Self {
+        // When --last is used without an explicit prompt, treat the positional as the prompt
+        // (clap can’t express this conditional positional meaning cleanly).
+        let (session_id, prompt) = if raw.last && raw.prompt.is_none() {
+            (None, raw.session_id)
+        } else {
+            (raw.session_id, raw.prompt)
+        };
+        Self {
+            session_id,
+            last: raw.last,
+            all: raw.all,
+            images: raw.images,
+            prompt,
+        }
+    }
+}
+
+impl Args for ResumeArgs {
+    fn augment_args(cmd: clap::Command) -> clap::Command {
+        ResumeArgsRaw::augment_args(cmd)
+    }
+
+    fn augment_args_for_update(cmd: clap::Command) -> clap::Command {
+        ResumeArgsRaw::augment_args_for_update(cmd)
+    }
+}
+
+impl FromArgMatches for ResumeArgs {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        ResumeArgsRaw::from_arg_matches(matches).map(Self::from)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = ResumeArgsRaw::from_arg_matches(matches).map(Self::from)?;
+        Ok(())
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -181,4 +286,56 @@ pub enum Color {
     Never,
     #[default]
     Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum PersonalityCliArg {
+    Friendly,
+    Pragmatic,
+}
+
+impl From<PersonalityCliArg> for Personality {
+    fn from(value: PersonalityCliArg) -> Self {
+        match value {
+            PersonalityCliArg::Friendly => Self::Friendly,
+            PersonalityCliArg::Pragmatic => Self::Pragmatic,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn resume_parses_prompt_after_global_flags() {
+        const PROMPT: &str = "echo resume-with-global-flags-after-subcommand";
+        let cli = Cli::parse_from([
+            "codex-exec",
+            "resume",
+            "--last",
+            "--json",
+            "--model",
+            "gpt-5.2-codex",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            PROMPT,
+        ]);
+
+        assert!(cli.ephemeral);
+        let Some(Command::Resume(args)) = cli.command else {
+            panic!("expected resume command");
+        };
+        let effective_prompt = args.prompt.clone().or_else(|| {
+            if args.last {
+                args.session_id.clone()
+            } else {
+                None
+            }
+        });
+        assert_eq!(effective_prompt.as_deref(), Some(PROMPT));
+    }
 }

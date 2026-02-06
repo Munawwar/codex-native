@@ -31,7 +31,6 @@ pub struct ResponsesRequestBuilder<'a> {
     instructions: Option<&'a str>,
     input: Option<&'a [ResponseItem]>,
     tools: Option<&'a [Value]>,
-    tool_choice: Option<Value>,
     parallel_tool_calls: bool,
     reasoning: Option<Reasoning>,
     include: Vec<String>,
@@ -42,33 +41,6 @@ pub struct ResponsesRequestBuilder<'a> {
     store_override: Option<bool>,
     headers: HeaderMap,
     compression: Compression,
-}
-
-fn normalize_tool_choice_for_responses(tool_choice: Value) -> Value {
-    let Value::Object(obj) = tool_choice else {
-        return tool_choice;
-    };
-
-    let tool_type = obj.get("type").and_then(Value::as_str).unwrap_or_default();
-    if tool_type != "function" {
-        return Value::Object(obj);
-    }
-
-    if let Some(Value::String(_name)) = obj.get("name") {
-        return Value::Object(obj);
-    }
-
-    let Some(Value::Object(function_obj)) = obj.get("function") else {
-        return Value::Object(obj);
-    };
-    let Some(Value::String(name)) = function_obj.get("name") else {
-        return Value::Object(obj);
-    };
-
-    let mut normalized = serde_json::Map::new();
-    normalized.insert("type".to_string(), Value::String("function".to_string()));
-    normalized.insert("name".to_string(), Value::String(name.clone()));
-    Value::Object(normalized)
 }
 
 impl<'a> ResponsesRequestBuilder<'a> {
@@ -83,11 +55,6 @@ impl<'a> ResponsesRequestBuilder<'a> {
 
     pub fn tools(mut self, tools: &'a [Value]) -> Self {
         self.tools = Some(tools);
-        self
-    }
-
-    pub fn tool_choice(mut self, tool_choice: Value) -> Self {
-        self.tool_choice = Some(tool_choice);
         self
     }
 
@@ -152,39 +119,28 @@ impl<'a> ResponsesRequestBuilder<'a> {
             .input
             .ok_or_else(|| ApiError::Stream("missing input for responses request".into()))?;
         let tools = self.tools.unwrap_or_default();
-        let tool_choice = if tools.is_empty() {
-            None
-        } else {
-            Some(normalize_tool_choice_for_responses(
-                self.tool_choice
-                    .unwrap_or_else(|| serde_json::json!("auto")),
-            ))
-        };
 
         let store = self
             .store_override
             .unwrap_or_else(|| provider.is_azure_responses_endpoint());
 
-        let text = self.text.clone();
         let req = ResponsesApiRequest {
             model,
             instructions,
             input,
             tools,
-            tool_choice,
+            tool_choice: "auto",
             parallel_tool_calls: self.parallel_tool_calls,
             reasoning: self.reasoning,
             store,
             stream: true,
             include: self.include,
             prompt_cache_key: self.prompt_cache_key,
-            text: text.clone(),
+            text: self.text,
         };
 
         let mut body = serde_json::to_value(&req)
             .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-
-        debug_responses_request(provider, &body);
 
         if store && provider.is_azure_responses_endpoint() {
             attach_item_ids(&mut body, input);
@@ -231,57 +187,10 @@ fn attach_item_ids(payload_json: &mut Value, original_items: &[ResponseItem]) {
     }
 }
 
-fn debug_responses_request(provider: &Provider, body: &Value) {
-    let debug = std::env::var("DEBUG")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !debug {
-        return;
-    }
-    let base = provider.base_url.to_ascii_lowercase();
-    let name = provider.name.to_ascii_lowercase();
-    if !base.contains("githubcopilot") && name != "github" && !name.contains("github") {
-        return;
-    }
-
-    let obj = match body.as_object() {
-        Some(obj) => obj,
-        None => return,
-    };
-
-    let has_messages = obj.get("messages").is_some();
-    let input_len = obj
-        .get("input")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let tools_len = obj
-        .get("tools")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-
-    let first_tool_kind = obj
-        .get("tools")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|tool| tool.get("type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("none");
-
-    let _ = std::panic::catch_unwind(|| {
-        eprintln!(
-            "[codex-api][responses] has_messages={} input_len={} tools_len={} first_tool_type={}",
-            has_messages, input_len, tools_len, first_tool_kind
-        );
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::provider::RetryConfig;
-    use crate::provider::WireApi;
     use codex_protocol::protocol::SubAgentSource;
     use http::HeaderValue;
     use pretty_assertions::assert_eq;
@@ -292,7 +201,6 @@ mod tests {
             name: name.to_string(),
             base_url: base_url.to_string(),
             query_params: None,
-            wire: WireApi::Responses,
             headers: HeaderMap::new(),
             retry: RetryConfig {
                 max_attempts: 1,
@@ -313,11 +221,15 @@ mod tests {
                 id: Some("m1".into()),
                 role: "assistant".into(),
                 content: Vec::new(),
+                end_turn: None,
+                phase: None,
             },
             ResponseItem::Message {
                 id: None,
                 role: "assistant".into(),
                 content: Vec::new(),
+                end_turn: None,
+                phase: None,
             },
         ];
 
@@ -340,29 +252,12 @@ mod tests {
         assert_eq!(ids, vec![Some("m1".to_string()), None]);
 
         assert_eq!(
-            request.headers.get("conversation_id"),
-            Some(&HeaderValue::from_static("conv-1"))
-        );
-        assert_eq!(
             request.headers.get("session_id"),
             Some(&HeaderValue::from_static("conv-1"))
         );
         assert_eq!(
             request.headers.get("x-openai-subagent"),
             Some(&HeaderValue::from_static("review"))
-        );
-    }
-
-    #[test]
-    fn normalize_tool_choice_for_responses_flattens_function_name() {
-        let input = serde_json::json!({
-            "type": "function",
-            "function": { "name": "add" }
-        });
-        let normalized = normalize_tool_choice_for_responses(input);
-        assert_eq!(
-            normalized,
-            serde_json::json!({ "type": "function", "name": "add" })
         );
     }
 }

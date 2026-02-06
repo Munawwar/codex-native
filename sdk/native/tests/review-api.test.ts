@@ -87,7 +87,6 @@ describe("Codex review API", () => {
       skipGitRepoCheck: true,
       outputSchemaFile: undefined,
       outputSchema: undefined,
-      fullAuto: undefined,
       review: {
         userFacingHint: "custom hint",
       },

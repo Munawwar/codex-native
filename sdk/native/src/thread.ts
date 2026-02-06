@@ -11,7 +11,12 @@ import { TurnOptions } from "./turnOptions";
 import { createOutputSchemaFile, normalizeOutputSchema } from "./outputSchemaFile";
 import { runTui, startTui } from "./tui";
 import { getNativeBinding } from "./nativeBinding";
-import type { NativeTuiRequest, NativeTuiExitInfo, ApprovalRequest, NativeUserInputItem } from "./nativeBinding";
+import type {
+  NativeTuiRequest,
+  NativeTuiExitInfo,
+  ApprovalRequest,
+  NativeUserInputItem,
+} from "./nativeBinding";
 import type { RunTuiOptions, TuiSession } from "./tui";
 import { attachLspDiagnostics } from "./lsp";
 import type { SkillDefinition, SkillMentionTrigger, SkillRegistry } from "./skills";
@@ -36,13 +41,38 @@ export type StreamedTurn = {
 export type RunStreamedResult = StreamedTurn;
 
 /** An input to send to the agent. */
+export type ByteRange = {
+  start: number;
+  end: number;
+};
+
+export type TextElement = {
+  byteRange: ByteRange;
+  placeholder?: string;
+};
+
 export type UserInput =
   | {
       type: "text";
       text: string;
+      textElements?: TextElement[];
     }
   | {
       type: "local_image";
+      path: string;
+    }
+  | {
+      type: "image";
+      url: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
       path: string;
     };
 
@@ -352,7 +382,6 @@ export class Thread {
       workspaceWriteOptions: nextThreadOptions.workspaceWriteOptions,
       workingDirectory: nextThreadOptions.workingDirectory,
       skipGitRepoCheck,
-      fullAuto: nextThreadOptions.fullAuto,
       modelProvider: this._options.modelProvider,
     };
 
@@ -411,8 +440,9 @@ export class Thread {
       ? await createOutputSchemaFile(normalizedSchema)
       : { schemaPath: undefined, cleanup: async () => {} };
     const options = this._threadOptions;
-    const { prompt, images } = normalizeInput(input);
-    const inputItems = this.buildNativeInputItems(prompt, images);
+    const { prompt, inputItems } = normalizeInput(input);
+    const dynamicTools = this._id ? undefined : options?.dynamicTools;
+    const inputItemsWithSkills = this.buildNativeInputItems(prompt, inputItems);
     const skipGitRepoCheck =
       options?.skipGitRepoCheck ??
       (typeof process !== "undefined" &&
@@ -426,8 +456,7 @@ export class Thread {
       baseUrl: this._options.baseUrl,
       apiKey: this._options.apiKey,
       threadId: this._id,
-      images: inputItems ? undefined : images,
-      inputItems,
+      inputItems: inputItemsWithSkills,
       model: options?.model,
       reasoningEffort: options?.reasoningEffort,
       reasoningSummary: options?.reasoningSummary,
@@ -441,9 +470,13 @@ export class Thread {
       outputSchemaFile: schemaFile.schemaPath,
       outputSchema: normalizedSchema,
       toolChoice: turnOptions?.toolChoice,
-      fullAuto: options?.fullAuto,
       mcp: options?.mcp,
       inheritMcp: options?.inheritMcp,
+      personality: options?.personality,
+      turnPersonality: turnOptions?.personality,
+      ephemeral: options?.ephemeral,
+      webSearchMode: options?.webSearchMode,
+      dynamicTools,
     });
     try {
       for await (const item of generator) {
@@ -538,7 +571,6 @@ export class Thread {
     assignIfUndefined("oss", this._threadOptions?.oss);
     assignIfUndefined("sandboxMode", this._threadOptions?.sandboxMode);
     assignIfUndefined("approvalMode", this._threadOptions?.approvalMode);
-    assignIfUndefined("fullAuto", this._threadOptions?.fullAuto);
     assignIfUndefined("workingDirectory", this._threadOptions?.workingDirectory);
     assignIfUndefined("baseUrl", this._options.baseUrl);
     assignIfUndefined("apiKey", this._options.apiKey);
@@ -668,10 +700,10 @@ export class Thread {
 
   private buildNativeInputItems(
     prompt: string,
-    images: string[],
+    inputItems: NativeUserInputItem[] | undefined,
   ): NativeUserInputItem[] | undefined {
     if (!prompt) {
-      return undefined;
+      return inputItems;
     }
 
     const triggers = this._skillMentionTriggers;
@@ -691,13 +723,12 @@ export class Thread {
     }
 
     if (mentioned.length === 0) {
-      return undefined;
+      return inputItems;
     }
 
-    const items: NativeUserInputItem[] = [{ type: "text", text: prompt }];
-    for (const path of images) {
-      items.push({ type: "local_image", path });
-    }
+    const items: NativeUserInputItem[] = inputItems ?? [
+      { type: "text", text: prompt, text_elements: [] },
+    ];
 
     for (const skill of mentioned) {
       items.push({
@@ -720,18 +751,44 @@ function normalizeSkillMentionTriggers(
   return filtered.length > 0 ? filtered : ["$"];
 }
 
-function normalizeInput(input: Input): { prompt: string; images: string[] } {
+function normalizeInput(input: Input): { prompt: string; inputItems: NativeUserInputItem[] | undefined } {
   if (typeof input === "string") {
-    return { prompt: input, images: [] };
+    return { prompt: input, inputItems: undefined };
   }
   const promptParts: string[] = [];
-  const images: string[] = [];
-  for (const item of input) {
-    if (item.type === "text") {
-      promptParts.push(item.text);
-    } else if (item.type === "local_image") {
-      images.push(item.path);
+  const items: NativeUserInputItem[] = input.map((item) => {
+    switch (item.type) {
+      case "text": {
+        promptParts.push(item.text);
+        const textElements = item.textElements ?? [];
+        return {
+          type: "text",
+          text: item.text,
+          text_elements: textElements.map((element) => ({
+            byte_range: {
+              start: element.byteRange.start,
+              end: element.byteRange.end,
+            },
+            placeholder: element.placeholder,
+          })),
+        };
+      }
+      case "local_image":
+        return { type: "local_image", path: item.path };
+      case "image":
+        return { type: "image", image_url: item.url };
+      case "skill":
+        return { type: "skill", name: item.name, path: item.path };
+      case "mention":
+        return { type: "mention", name: item.name, path: item.path };
+      default: {
+        const exhaustive: never = item;
+        return exhaustive;
+      }
     }
-  }
-  return { prompt: promptParts.join("\n\n"), images };
+  });
+  return {
+    prompt: promptParts.join("\n\n"),
+    inputItems: items,
+  };
 }

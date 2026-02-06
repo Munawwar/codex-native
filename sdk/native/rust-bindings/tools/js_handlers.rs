@@ -86,7 +86,7 @@ impl ToolInterceptor for JsApprovalInterceptor {
     };
 
     if !approved {
-      return Err(FunctionCallError::Denied(format!(
+      return Err(FunctionCallError::RespondToModel(format!(
         "Approval denied for tool `{}`",
         invocation.tool_name
       )));

@@ -7,4 +7,6 @@ export type TurnOptions = {
   modelProvider?: string;
   /** Optional tool choice override (passed through to the provider payload). */
   toolChoice?: unknown;
+  /** Override the personality for this turn. */
+  personality?: import("./threadOptions").Personality;
 };

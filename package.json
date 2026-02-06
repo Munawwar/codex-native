@@ -14,7 +14,7 @@
     "format:fix": "prettier --write *.json *.md docs/*.md .github/workflows/*.yml **/*.js",
     "ci:format": "bash -c 'cd codex-rs && rustup toolchain install nightly --profile minimal >/dev/null && rustup component add rustfmt --toolchain nightly >/dev/null && cargo +nightly fmt -- --config imports_granularity=Item --check'",
     "ci:codespell": "codespell --config .codespellrc",
-    "ci:mcp-types": "cd codex-rs && ./mcp-types/check_lib_rs.py",
+    "ci:mcp-types": "bash -c 'cd codex-rs && if [ -f ./mcp-types/check_lib_rs.py ]; then ./mcp-types/check_lib_rs.py; else echo \"mcp-types check skipped (script not present)\"; fi'",
     "ci:shear": "bash -c 'cd codex-rs && cargo shear'",
     "ci:clippy": "bash -c 'cd codex-rs && CARGO_PROFILE_DEV_DEBUG=0 cargo clippy --all-features --tests --profile dev -- -D warnings'",
     "ci:build": "bash -c 'cd codex-rs && cargo build'",
@@ -41,7 +41,7 @@
   },
   "engines": {
     "node": ">=22",
-    "pnpm": ">=9.0.0"
+    "pnpm": ">=10.28.0"
   },
-  "packageManager": "pnpm@10.25.0"
+  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264"
 }

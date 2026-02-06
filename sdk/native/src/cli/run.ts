@@ -206,7 +206,6 @@ async function buildRunRequest(params: {
   if (argv.baseUrl !== undefined) request.baseUrl = argv.baseUrl;
   if (argv.apiKey !== undefined) request.apiKey = argv.apiKey;
   if (argv.linuxSandboxPath !== undefined) request.linuxSandboxPath = argv.linuxSandboxPath;
-  if (argv.fullAuto !== undefined) request.fullAuto = argv.fullAuto;
   if (argv.skipGitRepoCheck !== undefined) request.skipGitRepoCheck = argv.skipGitRepoCheck;
   if (argv.cd !== undefined) request.workingDirectory = argv.cd;
   if (argv.reviewMode !== undefined) request.reviewMode = argv.reviewMode;

@@ -71,7 +71,6 @@ Provide a concise summary of findings with 2-3 key issues.`,
         model: "gpt-5-codex",
         workingDirectory: tmpDir,
         skipGitRepoCheck: true,
-        fullAuto: true,
       },
     });
 

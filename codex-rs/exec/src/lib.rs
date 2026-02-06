@@ -4,9 +4,9 @@
 // For both modes, any other output must be written to stderr.
 #![deny(clippy::print_stdout)]
 
-pub mod cli;
+mod cli;
 mod event_processor;
-pub mod event_processor_bridge;
+mod event_processor_bridge;
 mod event_processor_with_human_output;
 pub mod event_processor_with_jsonl_output;
 pub mod exec_events;
@@ -14,8 +14,10 @@ pub mod exec_events;
 pub use cli::Cli;
 pub use cli::Color;
 pub use cli::Command;
+pub use cli::PersonalityCliArg;
 pub use cli::ResumeArgs;
 pub use cli::ReviewArgs;
+use codex_cloud_requirements::cloud_requirements_loader;
 use codex_common::oss::ensure_oss_provider_ready;
 use codex_common::oss::get_default_model_for_oss_provider;
 use codex_core::AuthManager;
@@ -25,11 +27,15 @@ use codex_core::OLLAMA_OSS_PROVIDER_ID;
 use codex_core::ThreadManager;
 use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::format_config_error_with_source;
 use codex_core::git_info::get_git_repo_root;
+use codex_core::models_manager::manager::RefreshStrategy;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -41,25 +47,33 @@ use codex_protocol::approvals::ElicitationAction;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use event_processor_bridge::callback_event_processor;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Read;
+use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use supports_color::Stream;
+use tokio::sync::Mutex;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+use uuid::Uuid;
 
 use crate::cli::Command as ExecCommand;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
+use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_thread_path_by_id_str;
+use codex_core::find_thread_path_by_name_str;
 
 enum InitialOperation {
     UserTurn {
@@ -71,22 +85,42 @@ enum InitialOperation {
     },
 }
 
+#[derive(Clone)]
+struct ThreadEventEnvelope {
+    thread_id: codex_protocol::ThreadId,
+    thread: Arc<codex_core::CodexThread>,
+    event: Event,
+}
+
+enum EventProcessorMode {
+    Default,
+    Callback(Box<dyn FnMut(exec_events::ThreadEvent) + Send>),
+}
+
 pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
-    run_exec(cli, codex_linux_sandbox_exe, None).await
+    run_main_with_event_processor(cli, codex_linux_sandbox_exe, EventProcessorMode::Default).await
 }
 
-pub async fn run_with_thread_event_callback(
+pub async fn run_with_thread_event_callback<F>(
     cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
-    callback: impl FnMut(exec_events::ThreadEvent) + Send + 'static,
-) -> anyhow::Result<()> {
-    run_exec(cli, codex_linux_sandbox_exe, Some(Box::new(callback))).await
+    callback: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(exec_events::ThreadEvent) + Send + 'static,
+{
+    run_main_with_event_processor(
+        cli,
+        codex_linux_sandbox_exe,
+        EventProcessorMode::Callback(Box::new(callback)),
+    )
+    .await
 }
 
-async fn run_exec(
+async fn run_main_with_event_processor(
     cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
-    thread_callback: Option<Box<dyn FnMut(exec_events::ThreadEvent) + Send>>,
+    event_processor_mode: EventProcessorMode,
 ) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
@@ -104,6 +138,7 @@ async fn run_exec(
         cwd,
         skip_git_repo_check,
         add_dir,
+        ephemeral,
         color,
         last_message_file,
         json: json_mode,
@@ -112,7 +147,29 @@ async fn run_exec(
         output_schema: output_schema_path,
         config_overrides,
         input_items,
+        input_items_path,
+        input_items_json,
+        dynamic_tools,
+        dynamic_tools_path,
+        dynamic_tools_json,
+        turn_personality,
     } = cli;
+
+    let input_items = match (input_items, input_items_json, input_items_path) {
+        (Some(items), _, _) => Some(items),
+        (None, Some(json), _) => Some(load_json_from_str(&json, "input items")?),
+        (None, None, Some(path)) => Some(load_json_from_file(&path, "input items")?),
+        (None, None, None) => None,
+    };
+
+    let dynamic_tools = match (dynamic_tools, dynamic_tools_json, dynamic_tools_path) {
+        (Some(tools), _, _) => tools,
+        (None, Some(json), _) => load_json_from_str(&json, "dynamic tools")?,
+        (None, None, Some(path)) => load_json_from_file(&path, "dynamic tools")?,
+        (None, None, None) => Vec::new(),
+    };
+
+    let turn_personality = resolve_turn_personality(turn_personality);
 
     let (stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -149,12 +206,8 @@ async fn run_exec(
         Ok(v) => v,
         #[allow(clippy::print_stderr)]
         Err(e) => {
-            // IMPORTANT: codex_exec is used both by the standalone CLI and via the
-            // N-API binding (@codex-native/sdk). Calling std::process::exit from a
-            // libuv worker thread (N-API async task) will abort the Node process
-            // (Abort trap: 6). Bubble errors instead so callers can handle them.
             eprintln!("Error parsing -c overrides: {e}");
-            return Err(anyhow::anyhow!("Error parsing -c overrides: {e}"));
+            std::process::exit(1);
         }
     };
 
@@ -166,29 +219,51 @@ async fn run_exec(
 
     // we load config.toml here to determine project state.
     #[allow(clippy::print_stderr)]
-    let config_toml = {
-        let codex_home = match find_codex_home() {
-            Ok(codex_home) => codex_home,
-            Err(err) => {
-                eprintln!("Error finding codex home: {err}");
-                return Err(anyhow::anyhow!("Error finding codex home: {err}"));
-            }
-        };
-
-        match load_config_as_toml_with_cli_overrides(
-            &codex_home,
-            &config_cwd,
-            cli_kv_overrides.clone(),
-        )
-        .await
-        {
-            Ok(config_toml) => config_toml,
-            Err(err) => {
-                eprintln!("Error loading config.toml: {err}");
-                return Err(anyhow::anyhow!("Error loading config.toml: {err}"));
-            }
+    let codex_home = match find_codex_home() {
+        Ok(codex_home) => codex_home,
+        Err(err) => {
+            eprintln!("Error finding codex home: {err}");
+            std::process::exit(1);
         }
     };
+
+    #[allow(clippy::print_stderr)]
+    let config_toml = match load_config_as_toml_with_cli_overrides(
+        &codex_home,
+        &config_cwd,
+        cli_kv_overrides.clone(),
+    )
+    .await
+    {
+        Ok(config_toml) => config_toml,
+        Err(err) => {
+            let config_error = err
+                .get_ref()
+                .and_then(|err| err.downcast_ref::<ConfigLoadError>())
+                .map(ConfigLoadError::config_error);
+            if let Some(config_error) = config_error {
+                eprintln!(
+                    "Error loading config.toml:\n{}",
+                    format_config_error_with_source(config_error)
+                );
+            } else {
+                eprintln!("Error loading config.toml: {err}");
+            }
+            std::process::exit(1);
+        }
+    };
+
+    let cloud_auth_manager = AuthManager::shared(
+        codex_home.clone(),
+        false,
+        config_toml.cli_auth_credentials_store.unwrap_or_default(),
+    );
+    let chatgpt_base_url = config_toml
+        .chatgpt_base_url
+        .clone()
+        .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
+    // TODO(gt): Make cloud requirements failures blocking once we can fail-closed.
+    let cloud_requirements = cloud_requirements_loader(cloud_auth_manager, chatgpt_base_url);
 
     let model_provider = if oss {
         let resolved = resolve_oss_provider(
@@ -201,7 +276,7 @@ async fn run_exec(
             Some(provider)
         } else {
             return Err(anyhow::anyhow!(
-                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to either {LMSTUDIO_OSS_PROVIDER_ID} or {OLLAMA_OSS_PROVIDER_ID} in config.toml"
+                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID} in config.toml"
             ));
         }
     } else {
@@ -233,30 +308,39 @@ async fn run_exec(
         codex_linux_sandbox_exe,
         base_instructions: None,
         developer_instructions: None,
+        personality: None,
         compact_prompt: None,
         include_apply_patch_tool: None,
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
+        ephemeral: ephemeral.then_some(true),
         additional_writable_roots: add_dir,
     };
 
-    let config =
-        Config::load_with_cli_overrides_and_harness_overrides(cli_kv_overrides, overrides).await?;
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(overrides)
+        .cloud_requirements(cloud_requirements)
+        .build()
+        .await?;
+    set_default_client_residency_requirement(config.enforce_residency.value());
 
     if let Err(err) = enforce_login_restrictions(&config) {
         eprintln!("{err}");
-        return Err(anyhow::anyhow!("{err}"));
+        std::process::exit(1);
     }
 
-    let otel =
-        codex_core::otel_init::build_provider(&config, env!("CARGO_PKG_VERSION"), None, false);
-
-    #[allow(clippy::print_stderr)]
-    let otel = match otel {
-        Ok(otel) => otel,
-        Err(e) => {
+    let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        codex_core::otel_init::build_provider(&config, env!("CARGO_PKG_VERSION"), None, false)
+    })) {
+        Ok(Ok(otel)) => otel,
+        Ok(Err(e)) => {
             eprintln!("Could not create otel exporter: {e}");
-            return Err(anyhow::anyhow!("Could not create otel exporter: {e}"));
+            None
+        }
+        Err(_) => {
+            eprintln!("Could not create otel exporter: panicked during initialization");
+            None
         }
     };
 
@@ -270,16 +354,17 @@ async fn run_exec(
         .with(otel_logger_layer)
         .try_init();
 
-    let mut event_processor: Box<dyn EventProcessor> = if let Some(cb) = thread_callback {
-        callback_event_processor(cb, last_message_file.clone())
-    } else {
-        match json_mode {
+    let mut event_processor: Box<dyn EventProcessor> = match event_processor_mode {
+        EventProcessorMode::Default => match json_mode {
             true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
             _ => Box::new(EventProcessorWithHumanOutput::create_with_ansi(
                 stdout_with_ansi,
                 &config,
                 last_message_file.clone(),
             )),
+        },
+        EventProcessorMode::Callback(callback) => {
+            event_processor_bridge::callback_event_processor(callback, last_message_file.clone())
         }
     };
 
@@ -306,11 +391,14 @@ async fn run_exec(
     let default_effort = config.model_reasoning_effort;
     let default_summary = config.model_reasoning_summary;
 
-    if !skip_git_repo_check && get_git_repo_root(&default_cwd).is_none() {
+    // When --yolo (dangerously_bypass_approvals_and_sandbox) is set, also skip the git repo check
+    // since the user is explicitly running in an externally sandboxed environment.
+    if !skip_git_repo_check
+        && !dangerously_bypass_approvals_and_sandbox
+        && get_git_repo_root(&default_cwd).is_none()
+    {
         eprintln!("Not inside a trusted directory and --skip-git-repo-check was not specified.");
-        return Err(anyhow::anyhow!(
-            "Not inside a trusted directory and --skip-git-repo-check was not specified."
-        ));
+        std::process::exit(1);
     }
 
     let auth_manager = AuthManager::shared(
@@ -318,34 +406,40 @@ async fn run_exec(
         true,
         config.cli_auth_credentials_store_mode,
     );
-    let thread_manager = ThreadManager::new(
+    let thread_manager = Arc::new(ThreadManager::new(
         config.codex_home.clone(),
         auth_manager.clone(),
         SessionSource::Exec,
-    );
+    ));
     let default_model = thread_manager
         .get_models_manager()
-        .get_model(&config.model, &config)
+        .get_default_model(&config.model, &config, RefreshStrategy::OnlineIfUncached)
         .await;
 
     // Handle resume subcommand by resolving a rollout path and using explicit resume API.
     let NewThread {
-        thread_id: _,
+        thread_id: primary_thread_id,
         thread,
         session_configured,
     } = if let Some(ExecCommand::Resume(args)) = command.as_ref() {
         let resume_path = resolve_resume_path(&config, args).await?;
+        ensure_dynamic_tools_allowed_for_resume(resume_path.as_deref(), &dynamic_tools)?;
 
         if let Some(path) = resume_path {
             thread_manager
                 .resume_thread_from_rollout(config.clone(), path, auth_manager.clone())
                 .await?
         } else {
-            thread_manager.start_thread(config.clone()).await?
+            thread_manager
+                .start_thread_with_tools(config.clone(), dynamic_tools.clone())
+                .await?
         }
     } else {
-        thread_manager.start_thread(config.clone()).await?
+        thread_manager
+            .start_thread_with_tools(config.clone(), dynamic_tools.clone())
+            .await?
     };
+
     let (initial_operation, prompt_summary) = match (command, prompt, images, input_items) {
         (Some(ExecCommand::Review(review_cli)), _, _, _) => {
             let review_request = build_review_request(review_cli)?;
@@ -353,35 +447,20 @@ async fn run_exec(
             (InitialOperation::Review { review_request }, summary)
         }
         (Some(ExecCommand::Resume(args)), root_prompt, imgs, input_items) => {
-            let (items, prompt_text) = match input_items {
-                Some(items) => {
-                    let summary = summarize_prompt_from_items(&items);
-                    (items, summary)
-                }
-                None => {
-                    let prompt_arg = args
-                        .prompt
-                        .clone()
-                        .or_else(|| {
-                            if args.last {
-                                args.session_id.clone()
-                            } else {
-                                None
-                            }
-                        })
-                        .or(root_prompt);
-                    let prompt_text = resolve_prompt(prompt_arg);
-                    let mut items: Vec<UserInput> = imgs
-                        .into_iter()
-                        .chain(args.images.into_iter())
-                        .map(|path| UserInput::LocalImage { path })
-                        .collect();
-                    items.push(UserInput::Text {
-                        text: prompt_text.clone(),
-                    });
-                    (items, prompt_text)
-                }
-            };
+            let prompt_arg = args
+                .prompt
+                .clone()
+                .or_else(|| {
+                    if args.last {
+                        args.session_id.clone()
+                    } else {
+                        None
+                    }
+                })
+                .or(root_prompt);
+            let images = imgs.into_iter().chain(args.images.into_iter()).collect();
+            let (items, prompt_text) =
+                build_user_turn_items_and_summary(input_items, prompt_arg, images);
             let output_schema = load_output_schema(output_schema_path.clone());
             (
                 InitialOperation::UserTurn {
@@ -392,23 +471,8 @@ async fn run_exec(
             )
         }
         (None, root_prompt, imgs, input_items) => {
-            let (items, prompt_text) = match input_items {
-                Some(items) => {
-                    let summary = summarize_prompt_from_items(&items);
-                    (items, summary)
-                }
-                None => {
-                    let prompt_text = resolve_prompt(root_prompt);
-                    let mut items: Vec<UserInput> = imgs
-                        .into_iter()
-                        .map(|path| UserInput::LocalImage { path })
-                        .collect();
-                    items.push(UserInput::Text {
-                        text: prompt_text.clone(),
-                    });
-                    (items, prompt_text)
-                }
-            };
+            let (items, prompt_text) =
+                build_user_turn_items_and_summary(input_items, root_prompt, imgs);
             let output_schema = load_output_schema(output_schema_path);
             (
                 InitialOperation::UserTurn {
@@ -426,40 +490,47 @@ async fn run_exec(
 
     info!("Codex initialized with event: {session_configured:?}");
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ThreadEventEnvelope>();
+    let attached_threads = Arc::new(Mutex::new(HashSet::from([primary_thread_id])));
+    spawn_thread_listener(primary_thread_id, thread.clone(), tx.clone());
+
     {
         let thread = thread.clone();
         tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                tracing::debug!("Keyboard interrupt");
+                // Immediately notify Codex to abort any in-flight task.
+                thread.submit(Op::Interrupt).await.ok();
+            }
+        });
+    }
+
+    {
+        let thread_manager = Arc::clone(&thread_manager);
+        let attached_threads = Arc::clone(&attached_threads);
+        let tx = tx.clone();
+        let mut thread_created_rx = thread_manager.subscribe_thread_created();
+        tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
-                        tracing::debug!("Keyboard interrupt");
-                        // Immediately notify Codex to abort any in‑flight task.
-                        thread.submit(Op::Interrupt).await.ok();
-
-                        // Exit the inner loop and return to the main input prompt. The codex
-                        // will emit a `TurnInterrupted` (Error) event which is drained later.
-                        break;
-                    }
-                    res = thread.next_event() => match res {
-                        Ok(event) => {
-                            debug!("Received event: {event:?}");
-
-                            let is_shutdown_complete = matches!(event.msg, EventMsg::ShutdownComplete);
-                            if let Err(e) = tx.send(event) {
-                                error!("Error sending event: {e:?}");
-                                break;
+                match thread_created_rx.recv().await {
+                    Ok(thread_id) => {
+                        if attached_threads.lock().await.contains(&thread_id) {
+                            continue;
+                        }
+                        match thread_manager.get_thread(thread_id).await {
+                            Ok(thread) => {
+                                attached_threads.lock().await.insert(thread_id);
+                                spawn_thread_listener(thread_id, thread, tx.clone());
                             }
-                            if is_shutdown_complete {
-                                info!("Received shutdown event, exiting event loop.");
-                                break;
+                            Err(err) => {
+                                warn!("failed to attach listener for thread {thread_id}: {err}")
                             }
-                        },
-                        Err(e) => {
-                            error!("Error receiving event: {e:?}");
-                            break;
                         }
                     }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        warn!("thread_created receiver lagged; skipping resync");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
@@ -480,6 +551,8 @@ async fn run_exec(
                     effort: default_effort,
                     summary: default_summary,
                     final_output_json_schema: output_schema,
+                    collaboration_mode: None,
+                    personality: turn_personality,
                 })
                 .await?;
             info!("Sent prompt with event ID: {task_id}");
@@ -496,7 +569,12 @@ async fn run_exec(
     // Track whether a fatal error was reported by the server so we can
     // exit with a non-zero status for automation-friendly signaling.
     let mut error_seen = false;
-    while let Some(event) = rx.recv().await {
+    while let Some(envelope) = rx.recv().await {
+        let ThreadEventEnvelope {
+            thread_id,
+            thread,
+            event,
+        } = envelope;
         if let EventMsg::ElicitationRequest(ev) = &event.msg {
             // Automatically cancel elicitation requests in exec mode.
             thread
@@ -510,25 +588,64 @@ async fn run_exec(
         if matches!(event.msg, EventMsg::Error(_)) {
             error_seen = true;
         }
-        let shutdown: CodexStatus = event_processor.process_event(event);
+        if thread_id != primary_thread_id && matches!(&event.msg, EventMsg::TurnComplete(_)) {
+            continue;
+        }
+        let shutdown = event_processor.process_event(event);
+        if thread_id != primary_thread_id && matches!(shutdown, CodexStatus::InitiateShutdown) {
+            continue;
+        }
         match shutdown {
             CodexStatus::Running => continue,
             CodexStatus::InitiateShutdown => {
                 thread.submit(Op::Shutdown).await?;
             }
-            CodexStatus::Shutdown => {
-                break;
-            }
+            CodexStatus::Shutdown if thread_id == primary_thread_id => break,
+            CodexStatus::Shutdown => continue,
         }
     }
     event_processor.print_final_output();
     if error_seen {
-        // Never hard-exit from library code (this is invoked via N-API too).
-        // Report an error to the caller so Node can handle it without aborting.
-        return Err(anyhow::anyhow!("codex exec reported an error event"));
+        std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn spawn_thread_listener(
+    thread_id: codex_protocol::ThreadId,
+    thread: Arc<codex_core::CodexThread>,
+    tx: tokio::sync::mpsc::UnboundedSender<ThreadEventEnvelope>,
+) {
+    tokio::spawn(async move {
+        loop {
+            match thread.next_event().await {
+                Ok(event) => {
+                    debug!("Received event: {event:?}");
+
+                    let is_shutdown_complete = matches!(event.msg, EventMsg::ShutdownComplete);
+                    if let Err(err) = tx.send(ThreadEventEnvelope {
+                        thread_id,
+                        thread: Arc::clone(&thread),
+                        event,
+                    }) {
+                        error!("Error sending event: {err:?}");
+                        break;
+                    }
+                    if is_shutdown_complete {
+                        info!(
+                            "Received shutdown event for thread {thread_id}, exiting event loop."
+                        );
+                        break;
+                    }
+                }
+                Err(err) => {
+                    error!("Error receiving event: {err:?}");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 async fn resolve_resume_path(
@@ -537,25 +654,37 @@ async fn resolve_resume_path(
 ) -> anyhow::Result<Option<PathBuf>> {
     if args.last {
         let default_provider_filter = vec![config.model_provider_id.clone()];
-        match codex_core::RolloutRecorder::list_threads(
+        let filter_cwd = if args.all {
+            None
+        } else {
+            Some(config.cwd.as_path())
+        };
+        match codex_core::RolloutRecorder::find_latest_thread_path(
             &config.codex_home,
             1,
             None,
+            codex_core::ThreadSortKey::UpdatedAt,
             &[],
             Some(default_provider_filter.as_slice()),
             &config.model_provider_id,
+            filter_cwd,
         )
         .await
         {
-            Ok(page) => Ok(page.items.first().map(|it| it.path.clone())),
+            Ok(path) => Ok(path),
             Err(e) => {
                 error!("Error listing threads: {e}");
                 Ok(None)
             }
         }
     } else if let Some(id_str) = args.session_id.as_deref() {
-        let path = find_thread_path_by_id_str(&config.codex_home, id_str).await?;
-        Ok(path)
+        if Uuid::parse_str(id_str).is_ok() {
+            let path = find_thread_path_by_id_str(&config.codex_home, id_str).await?;
+            Ok(path)
+        } else {
+            let path = find_thread_path_by_name_str(&config.codex_home, id_str).await?;
+            Ok(path)
+        }
     } else {
         Ok(None)
     }
@@ -571,7 +700,7 @@ fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
                 "Failed to read output schema file {}: {err}",
                 path.display()
             );
-            return None;
+            std::process::exit(1);
         }
     };
 
@@ -582,30 +711,142 @@ fn load_output_schema(path: Option<PathBuf>) -> Option<Value> {
                 "Output schema file {} is not valid JSON: {err}",
                 path.display()
             );
-            None
+            std::process::exit(1);
         }
     }
 }
 
-fn summarize_prompt_from_items(items: &[UserInput]) -> String {
-    let mut summary = String::new();
+fn load_json_from_file<T>(path: &Path, label: &str) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let path_display = path.display();
+    let mut file = std::fs::File::open(path)
+        .map_err(|err| anyhow::anyhow!("Failed to open {label} file {path_display}: {err}"))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|err| anyhow::anyhow!("Failed to read {label} file {path_display}: {err}"))?;
+    serde_json::from_str(&contents)
+        .map_err(|err| anyhow::anyhow!("Failed to parse {label} file {path_display}: {err}"))
+}
 
-    for item in items {
-        if let UserInput::Text { text } = item {
-            if summary.is_empty() {
-                summary.push_str(text);
-            } else {
-                summary.push('\n');
-                summary.push_str(text);
-            }
+fn load_json_from_str<T>(value: &str, label: &str) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_str(value)
+        .map_err(|err| anyhow::anyhow!("Failed to parse {label} JSON: {err}"))
+}
+
+fn resolve_turn_personality(
+    turn_personality: Option<cli::PersonalityCliArg>,
+) -> Option<codex_protocol::config_types::Personality> {
+    turn_personality.map(Into::into)
+}
+
+fn ensure_dynamic_tools_allowed_for_resume(
+    resume_path: Option<&Path>,
+    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+) -> anyhow::Result<()> {
+    if resume_path.is_some() && !dynamic_tools.is_empty() {
+        anyhow::bail!("dynamic tools are only supported when starting a new thread");
+    }
+    Ok(())
+}
+
+fn build_user_turn_items_and_summary(
+    input_items: Option<Vec<UserInput>>,
+    prompt_arg: Option<String>,
+    images: Vec<PathBuf>,
+) -> (Vec<UserInput>, String) {
+    if let Some(items) = input_items {
+        (items, prompt_arg.unwrap_or_default())
+    } else {
+        let prompt_text = resolve_prompt(prompt_arg);
+        let mut items: Vec<UserInput> = images
+            .into_iter()
+            .map(|path| UserInput::LocalImage { path })
+            .collect();
+        items.push(UserInput::Text {
+            text: prompt_text.clone(),
+            // CLI input doesn't track UI element ranges, so none are available here.
+            text_elements: Vec::new(),
+        });
+        (items, prompt_text)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PromptDecodeError {
+    InvalidUtf8 { valid_up_to: usize },
+    InvalidUtf16 { encoding: &'static str },
+    UnsupportedBom { encoding: &'static str },
+}
+
+impl std::fmt::Display for PromptDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptDecodeError::InvalidUtf8 { valid_up_to } => write!(
+                f,
+                "input is not valid UTF-8 (invalid byte at offset {valid_up_to}). Convert it to UTF-8 and retry (e.g., `iconv -f <ENC> -t UTF-8 prompt.txt`)."
+            ),
+            PromptDecodeError::InvalidUtf16 { encoding } => write!(
+                f,
+                "input looked like {encoding} but could not be decoded. Convert it to UTF-8 and retry."
+            ),
+            PromptDecodeError::UnsupportedBom { encoding } => write!(
+                f,
+                "input appears to be {encoding}. Convert it to UTF-8 and retry."
+            ),
         }
     }
+}
 
-    if summary.is_empty() {
-        "[structured input]".to_string()
-    } else {
-        summary
+fn decode_prompt_bytes(input: &[u8]) -> Result<String, PromptDecodeError> {
+    let input = input.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(input);
+
+    if input.starts_with(&[0xFF, 0xFE, 0x00, 0x00]) {
+        return Err(PromptDecodeError::UnsupportedBom {
+            encoding: "UTF-32LE",
+        });
     }
+
+    if input.starts_with(&[0x00, 0x00, 0xFE, 0xFF]) {
+        return Err(PromptDecodeError::UnsupportedBom {
+            encoding: "UTF-32BE",
+        });
+    }
+
+    if let Some(rest) = input.strip_prefix(&[0xFF, 0xFE]) {
+        return decode_utf16(rest, "UTF-16LE", u16::from_le_bytes);
+    }
+
+    if let Some(rest) = input.strip_prefix(&[0xFE, 0xFF]) {
+        return decode_utf16(rest, "UTF-16BE", u16::from_be_bytes);
+    }
+
+    std::str::from_utf8(input)
+        .map(str::to_string)
+        .map_err(|e| PromptDecodeError::InvalidUtf8 {
+            valid_up_to: e.valid_up_to(),
+        })
+}
+
+fn decode_utf16(
+    input: &[u8],
+    encoding: &'static str,
+    decode_unit: fn([u8; 2]) -> u16,
+) -> Result<String, PromptDecodeError> {
+    if !input.len().is_multiple_of(2) {
+        return Err(PromptDecodeError::InvalidUtf16 { encoding });
+    }
+
+    let units: Vec<u16> = input
+        .chunks_exact(2)
+        .map(|chunk| decode_unit([chunk[0], chunk[1]]))
+        .collect();
+
+    String::from_utf16(&units).map_err(|_| PromptDecodeError::InvalidUtf16 { encoding })
 }
 
 fn resolve_prompt(prompt_arg: Option<String>) -> String {
@@ -618,19 +859,30 @@ fn resolve_prompt(prompt_arg: Option<String>) -> String {
                 eprintln!(
                     "No prompt provided. Either specify one as an argument or pipe the prompt into stdin."
                 );
-                return String::new();
+                std::process::exit(1);
             }
 
             if !force_stdin {
                 eprintln!("Reading prompt from stdin...");
             }
-            let mut buffer = String::new();
-            if let Err(e) = std::io::stdin().read_to_string(&mut buffer) {
+
+            let mut bytes = Vec::new();
+            if let Err(e) = std::io::stdin().read_to_end(&mut bytes) {
                 eprintln!("Failed to read prompt from stdin: {e}");
-                return String::new();
-            } else if buffer.trim().is_empty() {
+                std::process::exit(1);
+            }
+
+            let buffer = match decode_prompt_bytes(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to read prompt from stdin: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            if buffer.trim().is_empty() {
                 eprintln!("No prompt provided via stdin.");
-                return String::new();
+                std::process::exit(1);
             }
             buffer
         }
@@ -665,6 +917,146 @@ fn build_review_request(args: ReviewArgs) -> anyhow::Result<ReviewRequest> {
         target,
         user_facing_hint: None,
     })
+}
+
+#[cfg(test)]
+mod user_turn_items_tests {
+    use super::UserInput;
+    use super::build_user_turn_items_and_summary;
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+
+    #[test]
+    fn build_items_uses_input_items_verbatim_and_ignores_images() {
+        let input_items = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let images = vec![PathBuf::from("/tmp/should-not-be-used.png")];
+        let (items, summary) = build_user_turn_items_and_summary(
+            Some(input_items.clone()),
+            Some("prompt".to_string()),
+            images,
+        );
+        assert_eq!(items, input_items);
+        assert_eq!(summary, "prompt");
+    }
+
+    #[test]
+    fn build_items_falls_back_to_prompt_and_images() {
+        let images = vec![PathBuf::from("/tmp/example.png")];
+        let (items, summary) =
+            build_user_turn_items_and_summary(None, Some("hello".to_string()), images.clone());
+        assert_eq!(
+            items,
+            vec![
+                UserInput::LocalImage {
+                    path: images[0].clone()
+                },
+                UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                },
+            ]
+        );
+        assert_eq!(summary, "hello");
+    }
+}
+
+#[cfg(test)]
+mod cli_input_tests {
+    use super::ensure_dynamic_tools_allowed_for_resume;
+    use super::load_json_from_file;
+    use super::load_json_from_str;
+    use super::resolve_turn_personality;
+    use crate::cli::PersonalityCliArg;
+    use codex_protocol::config_types::Personality;
+    use codex_protocol::dynamic_tools::DynamicToolSpec;
+    use codex_protocol::user_input::UserInput;
+    use pretty_assertions::assert_eq;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn load_json_from_file_parses_input_items() {
+        let items = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let file = NamedTempFile::new().expect("temp file");
+        let contents = serde_json::to_string(&items).expect("serialize input items");
+        fs::write(file.path(), contents).expect("write input items");
+
+        let parsed: Vec<UserInput> =
+            load_json_from_file(file.path(), "input items").expect("parse input items");
+        assert_eq!(parsed, items);
+    }
+
+    #[test]
+    fn load_json_from_file_parses_dynamic_tools() {
+        let tools = vec![DynamicToolSpec {
+            name: "dynamic_tool".to_string(),
+            description: "example".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let file = NamedTempFile::new().expect("temp file");
+        let contents = serde_json::to_string(&tools).expect("serialize dynamic tools");
+        fs::write(file.path(), contents).expect("write dynamic tools");
+
+        let parsed: Vec<DynamicToolSpec> =
+            load_json_from_file(file.path(), "dynamic tools").expect("parse dynamic tools");
+        assert_eq!(parsed, tools);
+    }
+
+    #[test]
+    fn load_json_from_str_parses_input_items() {
+        let items = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let contents = serde_json::to_string(&items).expect("serialize input items");
+        let parsed: Vec<UserInput> =
+            load_json_from_str(&contents, "input items").expect("parse input items");
+        assert_eq!(parsed, items);
+    }
+
+    #[test]
+    fn load_json_from_str_parses_dynamic_tools() {
+        let tools = vec![DynamicToolSpec {
+            name: "dynamic_tool".to_string(),
+            description: "example".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let contents = serde_json::to_string(&tools).expect("serialize dynamic tools");
+        let parsed: Vec<DynamicToolSpec> =
+            load_json_from_str(&contents, "dynamic tools").expect("parse dynamic tools");
+        assert_eq!(parsed, tools);
+    }
+
+    #[test]
+    fn resolve_turn_personality_maps_values() {
+        assert_eq!(
+            resolve_turn_personality(Some(PersonalityCliArg::Friendly)),
+            Some(Personality::Friendly)
+        );
+        assert_eq!(resolve_turn_personality(None), None);
+    }
+
+    #[test]
+    fn dynamic_tools_require_new_thread() {
+        let tools = vec![DynamicToolSpec {
+            name: "dynamic_tool".to_string(),
+            description: "example".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = ensure_dynamic_tools_allowed_for_resume(Some(Path::new("resume")), &tools);
+        assert!(result.is_err());
+
+        let result = ensure_dynamic_tools_allowed_for_resume(None, &tools);
+        assert!(result.is_ok());
+    }
 }
 
 #[cfg(test)]
@@ -732,5 +1124,80 @@ mod tests {
         };
 
         assert_eq!(request, expected);
+    }
+
+    #[test]
+    fn decode_prompt_bytes_strips_utf8_bom() {
+        let input = [0xEF, 0xBB, 0xBF, b'h', b'i', b'\n'];
+
+        let out = decode_prompt_bytes(&input).expect("decode utf-8 with BOM");
+
+        assert_eq!(out, "hi\n");
+    }
+
+    #[test]
+    fn decode_prompt_bytes_decodes_utf16le_bom() {
+        // UTF-16LE BOM + "hi\n"
+        let input = [0xFF, 0xFE, b'h', 0x00, b'i', 0x00, b'\n', 0x00];
+
+        let out = decode_prompt_bytes(&input).expect("decode utf-16le with BOM");
+
+        assert_eq!(out, "hi\n");
+    }
+
+    #[test]
+    fn decode_prompt_bytes_decodes_utf16be_bom() {
+        // UTF-16BE BOM + "hi\n"
+        let input = [0xFE, 0xFF, 0x00, b'h', 0x00, b'i', 0x00, b'\n'];
+
+        let out = decode_prompt_bytes(&input).expect("decode utf-16be with BOM");
+
+        assert_eq!(out, "hi\n");
+    }
+
+    #[test]
+    fn decode_prompt_bytes_rejects_utf32le_bom() {
+        // UTF-32LE BOM + "hi\n"
+        let input = [
+            0xFF, 0xFE, 0x00, 0x00, b'h', 0x00, 0x00, 0x00, b'i', 0x00, 0x00, 0x00, b'\n', 0x00,
+            0x00, 0x00,
+        ];
+
+        let err = decode_prompt_bytes(&input).expect_err("utf-32le should be rejected");
+
+        assert_eq!(
+            err,
+            PromptDecodeError::UnsupportedBom {
+                encoding: "UTF-32LE"
+            }
+        );
+    }
+
+    #[test]
+    fn decode_prompt_bytes_rejects_utf32be_bom() {
+        // UTF-32BE BOM + "hi\n"
+        let input = [
+            0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, b'h', 0x00, 0x00, 0x00, b'i', 0x00, 0x00,
+            0x00, b'\n',
+        ];
+
+        let err = decode_prompt_bytes(&input).expect_err("utf-32be should be rejected");
+
+        assert_eq!(
+            err,
+            PromptDecodeError::UnsupportedBom {
+                encoding: "UTF-32BE"
+            }
+        );
+    }
+
+    #[test]
+    fn decode_prompt_bytes_rejects_invalid_utf8() {
+        // Invalid UTF-8 sequence: 0xC3 0x28
+        let input = [0xC3, 0x28];
+
+        let err = decode_prompt_bytes(&input).expect_err("invalid utf-8 should fail");
+
+        assert_eq!(err, PromptDecodeError::InvalidUtf8 { valid_up_to: 0 });
     }
 }

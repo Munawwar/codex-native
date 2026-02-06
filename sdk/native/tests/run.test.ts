@@ -253,13 +253,28 @@ describe("Codex native bridge", () => {
 
     const thread = client.startThread({ skipGitRepoCheck: true });
     await thread.run([
-      { type: "text", text: "Describe file changes" },
+      {
+        type: "text",
+        text: "Describe file changes",
+        textElements: [{ byteRange: { start: 0, end: 8 }, placeholder: "files" }],
+      },
       { type: "text", text: "Focus on impacted tests" },
     ]);
 
     expect(capturedArgs).toBeDefined();
-    // Input was passed to exec
-    expect(capturedArgs.input).toBeDefined();
+    expect(capturedArgs.input).toBe("Describe file changes\n\nFocus on impacted tests");
+    expect(capturedArgs.inputItems).toEqual([
+      {
+        type: "text",
+        text: "Describe file changes",
+        text_elements: [{ byte_range: { start: 0, end: 8 }, placeholder: "files" }],
+      },
+      {
+        type: "text",
+        text: "Focus on impacted tests",
+        text_elements: [],
+      },
+    ]);
   });
 
   it("forwards images to exec", async () => {
@@ -284,10 +299,75 @@ describe("Codex native bridge", () => {
       ]);
 
       expect(capturedArgs).toBeDefined();
-      expect(capturedArgs.input).toBeDefined();
+      expect(capturedArgs.inputItems).toEqual([
+        { type: "text", text: "describe the images", text_elements: [] },
+        { type: "local_image", path: imagePaths[0] },
+        { type: "local_image", path: imagePaths[1] },
+      ]);
+      expect(capturedArgs.images).toBeUndefined();
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("serializes mention and image input items", async () => {
+    let capturedArgs: any = null;
+    const client = new Codex({ skipGitRepoCheck: true });
+    (client as any).exec = createMockExecWithCapture("Input items applied", (args) => {
+      capturedArgs = args;
+    });
+
+    const thread = client.startThread({ skipGitRepoCheck: true });
+    await thread.run([
+      { type: "text", text: "Review these inputs" },
+      { type: "image", url: "https://example.com/image.png" },
+      { type: "mention", name: "docs", path: "app://docs" },
+      { type: "skill", name: "lint", path: "/tmp/skills/LINT.md" },
+    ]);
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs.inputItems).toEqual([
+      { type: "text", text: "Review these inputs", text_elements: [] },
+      { type: "image", image_url: "https://example.com/image.png" },
+      { type: "mention", name: "docs", path: "app://docs" },
+      { type: "skill", name: "lint", path: "/tmp/skills/LINT.md" },
+    ]);
+  });
+
+  it("passes personality, webSearchMode, and dynamicTools to exec", async () => {
+    let capturedArgs: any = null;
+    const client = new Codex({ skipGitRepoCheck: true });
+    (client as any).exec = createMockExecWithCapture("Options applied", (args) => {
+      capturedArgs = args;
+    });
+
+    const thread = client.startThread({
+      skipGitRepoCheck: true,
+      personality: "friendly",
+      ephemeral: true,
+      webSearchMode: "cached",
+      dynamicTools: [
+        {
+          name: "summarize",
+          description: "Summarize input",
+          inputSchema: { type: "object" },
+        },
+      ],
+    });
+    await thread.run("apply options", { personality: "pragmatic" });
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs.personality).toBe("friendly");
+    expect(capturedArgs.turnPersonality).toBe("pragmatic");
+    expect(capturedArgs.ephemeral).toBe(true);
+    expect(capturedArgs.webSearchMode).toBe("cached");
+    expect(capturedArgs.dynamicTools).toEqual([
+      {
+        name: "summarize",
+        description: "Summarize input",
+        inputSchema: { type: "object" },
+      },
+    ]);
   });
 
   it("runs in provided working directory", async () => {

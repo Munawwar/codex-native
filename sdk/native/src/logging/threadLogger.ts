@@ -111,6 +111,8 @@ function describeThreadItemForLog(item: ThreadItem): string {
     }
     case "mcp_tool_call":
       return `mcp ${item.server}.${item.tool} [${item.status}]`;
+    case "collab_tool_call":
+      return `collab ${item.tool} [${item.status}]`;
     case "web_search":
       return `web search "${summarizeLogText(item.query)}"`;
     case "todo_list": {

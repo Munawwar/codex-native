@@ -11,10 +11,6 @@ use codex_core::features::Feature;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::sandboxing::SandboxPermissions;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
-use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -26,9 +22,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
-use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::test_codex;
-use core_test_support::wait_for_event_with_timeout;
 use regex_lite::Regex;
 use serde_json::Value;
 use serde_json::json;
@@ -197,7 +191,6 @@ async fn shell_escalated_permissions_rejected_then_ok() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
     skip_if_no_network!(Ok(()));
-    skip_if_sandbox!(Ok(()));
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.1-codex");
@@ -470,29 +463,12 @@ time.sleep(60)
 
     let start = Instant::now();
     let output_str = tokio::time::timeout(Duration::from_secs(10), async {
-        let session_model = test.session_configured.model.clone();
-        test.codex
-            .submit(Op::UserTurn {
-                items: vec![UserInput::Text {
-                    text: "run a command with a detached grandchild".into(),
-                }],
-                final_output_json_schema: None,
-                cwd: test.cwd.path().to_path_buf(),
-                approval_policy: AskForApproval::Never,
-                sandbox_policy: SandboxPolicy::DangerFullAccess,
-                model: session_model,
-                effort: None,
-                summary: ReasoningSummary::Auto,
-            })
-            .await?;
-
-        wait_for_event_with_timeout(
-            &test.codex,
-            |event| matches!(event, EventMsg::TurnComplete(_)),
-            Duration::from_secs(15),
+        test.submit_turn_with_policies(
+            "run a command with a detached grandchild",
+            AskForApproval::Never,
+            SandboxPolicy::DangerFullAccess,
         )
-        .await;
-
+        .await?;
         let timeout_item = second_mock.single_request().function_call_output(call_id);
         timeout_item
             .get("output")

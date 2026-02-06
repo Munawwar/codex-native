@@ -41,6 +41,12 @@ fn build_config_inputs(
       TomlValue::String(summary.to_string().to_lowercase()),
     ));
   }
+  if let Some(mode) = options.web_search_mode {
+    cli_kv_overrides.push((
+      "web_search".to_string(),
+      TomlValue::String(mode.to_string()),
+    ));
+  }
 
   let cwd = options
     .working_directory
@@ -61,10 +67,12 @@ fn build_config_inputs(
     codex_linux_sandbox_exe: linux_sandbox_path,
     base_instructions: None,
     developer_instructions: None,
+    personality: options.personality,
     compact_prompt: None,
     include_apply_patch_tool: None,
     show_raw_agent_reasoning: options.oss.then_some(true),
     tools_web_search_request: None,
+    ephemeral: options.ephemeral,
     additional_writable_roots: Vec::new(),
   };
 

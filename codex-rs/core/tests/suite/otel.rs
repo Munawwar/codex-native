@@ -1,4 +1,3 @@
-use codex_core::CodexThread;
 use codex_core::config::Constrained;
 use codex_core::features::Feature;
 use codex_protocol::protocol::AskForApproval;
@@ -18,9 +17,8 @@ use core_test_support::responses::ev_reasoning_item;
 use core_test_support::responses::ev_reasoning_summary_text_delta;
 use core_test_support::responses::ev_reasoning_text_delta;
 use core_test_support::responses::ev_response_created;
-use core_test_support::responses::mount_response_once_any_post;
+use core_test_support::responses::mount_response_once;
 use core_test_support::responses::mount_sse_once;
-use core_test_support::responses::mount_sse_once_any_post;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
@@ -34,19 +32,12 @@ use tracing_test::traced_test;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_test::internal::MockWriter;
 
-async fn wait_for_turn_end(codex: &CodexThread) {
-    wait_for_event(codex, |ev| {
-        matches!(ev, EventMsg::TurnComplete(_) | EventMsg::Error(_))
-    })
-    .await;
-}
-
 #[tokio::test]
 #[traced_test]
 async fn responses_api_emits_api_request_event() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(&server, sse(vec![ev_completed("done")])).await;
+    mount_sse_once(&server, sse(vec![ev_completed("done")])).await;
 
     let TestCodex { codex, .. } = test_codex().build(&server).await.unwrap();
 
@@ -54,13 +45,14 @@ async fn responses_api_emits_api_request_event() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -84,7 +76,7 @@ async fn responses_api_emits_api_request_event() {
 async fn process_sse_emits_tracing_for_output_item() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![ev_assistant_message("id1", "hi"), ev_completed("id2")]),
     )
@@ -96,13 +88,14 @@ async fn process_sse_emits_tracing_for_output_item() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -121,12 +114,11 @@ async fn process_sse_emits_tracing_for_output_item() {
 async fn process_sse_emits_failed_event_on_parse_error() {
     let server = start_mock_server().await;
 
-    let mock = mount_sse_once_any_post(&server, "data: not-json\n\n".to_string()).await;
+    mount_sse_once(&server, "data: not-json\n\n".to_string()).await;
 
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -136,13 +128,14 @@ async fn process_sse_emits_failed_event_on_parse_error() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -155,7 +148,6 @@ async fn process_sse_emits_failed_event_on_parse_error() {
             .map(|_| Ok(()))
             .unwrap_or(Err("missing codex.sse_event".to_string()))
     });
-    drop(mock);
 }
 
 #[tokio::test]
@@ -163,12 +155,11 @@ async fn process_sse_emits_failed_event_on_parse_error() {
 async fn process_sse_records_failed_event_when_stream_closes_without_completed() {
     let server = start_mock_server().await;
 
-    let mock = mount_sse_once_any_post(&server, sse(vec![ev_assistant_message("id", "hi")])).await;
+    mount_sse_once(&server, sse(vec![ev_assistant_message("id", "hi")])).await;
 
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -178,13 +169,14 @@ async fn process_sse_records_failed_event_when_stream_closes_without_completed()
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -197,7 +189,6 @@ async fn process_sse_records_failed_event_when_stream_closes_without_completed()
             .map(|_| Ok(()))
             .unwrap_or(Err("missing codex.sse_event".to_string()))
     });
-    drop(mock);
 }
 
 #[tokio::test]
@@ -205,7 +196,7 @@ async fn process_sse_records_failed_event_when_stream_closes_without_completed()
 async fn process_sse_failed_event_records_response_error_message() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![serde_json::json!({
             "type": "response.failed",
@@ -218,7 +209,7 @@ async fn process_sse_failed_event_records_response_error_message() {
         })]),
     )
     .await;
-    let _completion_mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -230,7 +221,6 @@ async fn process_sse_failed_event_records_response_error_message() {
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -240,13 +230,14 @@ async fn process_sse_failed_event_records_response_error_message() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -267,7 +258,7 @@ async fn process_sse_failed_event_records_response_error_message() {
 async fn process_sse_failed_event_logs_parse_error() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![serde_json::json!({
             "type": "response.failed",
@@ -277,7 +268,7 @@ async fn process_sse_failed_event_logs_parse_error() {
         })]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -289,7 +280,6 @@ async fn process_sse_failed_event_logs_parse_error() {
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -299,13 +289,14 @@ async fn process_sse_failed_event_logs_parse_error() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -323,7 +314,7 @@ async fn process_sse_failed_event_logs_parse_error() {
 async fn process_sse_failed_event_logs_missing_error() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once_any_post(
+    mount_sse_once(
         &server,
         sse(vec![serde_json::json!({
             "type": "response.failed",
@@ -335,7 +326,6 @@ async fn process_sse_failed_event_logs_missing_error() {
     let TestCodex { codex, .. } = test_codex()
         .with_config(move |config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -345,13 +335,14 @@ async fn process_sse_failed_event_logs_missing_error() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -369,7 +360,7 @@ async fn process_sse_failed_event_logs_missing_error() {
 async fn process_sse_failed_event_logs_response_completed_parse_error() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![serde_json::json!({
             "type": "response.completed",
@@ -378,7 +369,7 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -399,13 +390,14 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         lines
@@ -426,7 +418,7 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
 async fn process_sse_emits_completed_telemetry() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![serde_json::json!({
             "type": "response.completed",
@@ -450,6 +442,7 @@ async fn process_sse_emits_completed_telemetry() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -489,7 +482,7 @@ async fn handle_responses_span_records_response_kind_and_tool_name() {
 
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_function_call("function-call", "nonexistent", "{\"value\":1}"),
@@ -497,7 +490,7 @@ async fn handle_responses_span_records_response_kind_and_tool_name() {
         ]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "tool handled"),
@@ -518,6 +511,7 @@ async fn handle_responses_span_records_response_kind_and_tool_name() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -569,20 +563,11 @@ async fn record_responses_sets_span_fields_for_response_events() {
         ev_completed("resp-1"),
     ]);
 
-    let _mock = mount_response_once_any_post(&server, sse_response(sse_body)).await;
-    let _followup_mock = mount_sse_once_any_post(
-        &server,
-        sse(vec![
-            ev_assistant_message("msg-2", "done"),
-            ev_completed("resp-2"),
-        ]),
-    )
-    .await;
+    mount_response_once(&server, sse_response(sse_body)).await;
 
     let TestCodex { codex, .. } = test_codex()
         .with_config(|config| {
             config.features.disable(Feature::GhostCommit);
-            config.model_provider.stream_max_retries = Some(0);
         })
         .build(&server)
         .await
@@ -592,13 +577,14 @@ async fn record_responses_sets_span_fields_for_response_events() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
         .await
         .unwrap();
 
-    wait_for_turn_end(&codex).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let logs = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
 
@@ -639,7 +625,7 @@ async fn record_responses_sets_span_fields_for_response_events() {
 async fn handle_response_item_records_tool_result_for_custom_tool_call() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_custom_tool_call(
@@ -651,7 +637,7 @@ async fn handle_response_item_records_tool_result_for_custom_tool_call() {
         ]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -672,6 +658,7 @@ async fn handle_response_item_records_tool_result_for_custom_tool_call() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -710,7 +697,7 @@ async fn handle_response_item_records_tool_result_for_custom_tool_call() {
 async fn handle_response_item_records_tool_result_for_function_call() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_function_call("function-call", "nonexistent", "{\"value\":1}"),
@@ -719,7 +706,7 @@ async fn handle_response_item_records_tool_result_for_function_call() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -740,6 +727,7 @@ async fn handle_response_item_records_tool_result_for_function_call() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -778,7 +766,7 @@ async fn handle_response_item_records_tool_result_for_function_call() {
 async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             serde_json::json!({
@@ -797,7 +785,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() 
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -818,6 +806,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() 
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -850,7 +839,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() 
 async fn handle_response_item_records_tool_result_for_local_shell_call() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("shell-call", "completed", vec!["/bin/echo", "shell"]),
@@ -859,7 +848,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_call() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -880,6 +869,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_call() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -950,7 +940,7 @@ fn tool_decision_assertion<'a>(
 #[traced_test]
 async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
     let server = start_mock_server().await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call(
@@ -963,7 +953,7 @@ async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -985,6 +975,7 @@ async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "hello".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1004,7 +995,7 @@ async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
 #[traced_test]
 async fn handle_container_exec_user_approved_records_tool_decision() {
     let server = start_mock_server().await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("user_approved_call", "completed", vec!["/bin/date"]),
@@ -1013,7 +1004,7 @@ async fn handle_container_exec_user_approved_records_tool_decision() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1034,6 +1025,7 @@ async fn handle_container_exec_user_approved_records_tool_decision() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "approved".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1064,7 +1056,7 @@ async fn handle_container_exec_user_approved_records_tool_decision() {
 async fn handle_container_exec_user_approved_for_session_records_tool_decision() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("user_approved_session_call", "completed", vec!["/bin/date"]),
@@ -1072,7 +1064,7 @@ async fn handle_container_exec_user_approved_for_session_records_tool_decision()
         ]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1093,6 +1085,7 @@ async fn handle_container_exec_user_approved_for_session_records_tool_decision()
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "persist".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1123,7 +1116,7 @@ async fn handle_container_exec_user_approved_for_session_records_tool_decision()
 async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("sandbox_retry_call", "completed", vec!["/bin/date"]),
@@ -1131,7 +1124,7 @@ async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
         ]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1152,6 +1145,7 @@ async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "retry".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1182,7 +1176,7 @@ async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
 async fn handle_container_exec_user_denies_records_tool_decision() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("user_denied_call", "completed", vec!["/bin/date"]),
@@ -1191,7 +1185,7 @@ async fn handle_container_exec_user_denies_records_tool_decision() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1211,6 +1205,7 @@ async fn handle_container_exec_user_denies_records_tool_decision() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "deny".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1241,7 +1236,7 @@ async fn handle_container_exec_user_denies_records_tool_decision() {
 async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("sandbox_session_call", "completed", vec!["/bin/date"]),
@@ -1249,7 +1244,7 @@ async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() 
         ]),
     )
     .await;
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1270,6 +1265,7 @@ async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() 
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "persist".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })
@@ -1300,7 +1296,7 @@ async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() 
 async fn handle_sandbox_error_user_denies_records_tool_decision() {
     let server = start_mock_server().await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_local_shell_call("sandbox_deny_call", "completed", vec!["/bin/date"]),
@@ -1309,7 +1305,7 @@ async fn handle_sandbox_error_user_denies_records_tool_decision() {
     )
     .await;
 
-    let _mock = mount_sse_once(
+    mount_sse_once(
         &server,
         sse(vec![
             ev_assistant_message("msg-1", "local shell done"),
@@ -1330,6 +1326,7 @@ async fn handle_sandbox_error_user_denies_records_tool_decision() {
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
                 text: "deny".into(),
+                text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
         })

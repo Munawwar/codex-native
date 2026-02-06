@@ -16,7 +16,6 @@ import {
   startResponsesTestProxy,
   SseResponseBody,
 } from "./responsesProxy";
-import { createCodexTestEnv } from "./testEnv";
 
 const codexExecPath = path.join(process.cwd(), "..", "..", "codex-rs", "target", "debug", "codex");
 
@@ -26,15 +25,9 @@ describe("Codex", () => {
       statusCode: 200,
       responseBodies: [sse(responseStarted(), assistantMessage("Hi!"), responseCompleted())],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       const result = await thread.run("Hello, world!");
@@ -54,7 +47,6 @@ describe("Codex", () => {
       });
       expect(thread.id).toEqual(expect.any(String));
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -75,15 +67,9 @@ describe("Codex", () => {
         ),
       ],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run("first input");
@@ -104,7 +90,6 @@ describe("Codex", () => {
       )?.text;
       expect(assistantText).toBe("First response");
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -125,15 +110,9 @@ describe("Codex", () => {
         ),
       ],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run("first input");
@@ -155,7 +134,6 @@ describe("Codex", () => {
       )?.text;
       expect(assistantText).toBe("First response");
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -176,15 +154,9 @@ describe("Codex", () => {
         ),
       ],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const originalThread = client.startThread();
       await originalThread.run("first input");
@@ -209,7 +181,6 @@ describe("Codex", () => {
       )?.text;
       expect(assistantText).toBe("First response");
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -227,15 +198,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         model: "gpt-test-1",
@@ -255,7 +220,6 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--model", "gpt-test-1"]);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -273,15 +237,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         modelReasoningEffort: "high",
@@ -293,7 +251,6 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--config", 'model_reasoning_effort="high"']);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -311,15 +268,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         networkAccessEnabled: true,
@@ -331,7 +282,6 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--config", "sandbox_workspace_write.network_access=true"]);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -349,15 +299,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         webSearchEnabled: true,
@@ -366,10 +310,71 @@ describe("Codex", () => {
 
       const commandArgs = spawnArgs[0];
       expect(commandArgs).toBeDefined();
-      expectPair(commandArgs, ["--config", "features.web_search_request=true"]);
+      expectPair(commandArgs, ["--config", 'web_search="live"']);
     } finally {
       restore();
-      cleanup();
+      await close();
+    }
+  });
+
+  it("passes webSearchMode to exec", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Web search cached", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, restore } = codexExecSpy();
+
+    try {
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
+
+      const thread = client.startThread({
+        webSearchMode: "cached",
+      });
+      await thread.run("test web search mode");
+
+      const commandArgs = spawnArgs[0];
+      expect(commandArgs).toBeDefined();
+      expectPair(commandArgs, ["--config", 'web_search="cached"']);
+    } finally {
+      restore();
+      await close();
+    }
+  });
+
+  it("passes webSearchEnabled false to exec", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Web search disabled", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, restore } = codexExecSpy();
+
+    try {
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
+
+      const thread = client.startThread({
+        webSearchEnabled: false,
+      });
+      await thread.run("test web search disabled");
+
+      const commandArgs = spawnArgs[0];
+      expect(commandArgs).toBeDefined();
+      expectPair(commandArgs, ["--config", 'web_search="disabled"']);
+    } finally {
+      restore();
       await close();
     }
   });
@@ -387,15 +392,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         approvalPolicy: "on-request",
@@ -407,7 +406,86 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--config", 'approval_policy="on-request"']);
     } finally {
       restore();
-      cleanup();
+      await close();
+    }
+  });
+
+  it("passes CodexOptions config overrides as TOML --config flags", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Config overrides applied", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, restore } = codexExecSpy();
+
+    try {
+      const client = new Codex({
+        codexPathOverride: codexExecPath,
+        baseUrl: url,
+        apiKey: "test",
+        config: {
+          approval_policy: "never",
+          sandbox_workspace_write: { network_access: true },
+          retry_budget: 3,
+          tool_rules: { allow: ["git status", "git diff"] },
+        },
+      });
+
+      const thread = client.startThread();
+      await thread.run("apply config overrides");
+
+      const commandArgs = spawnArgs[0];
+      expect(commandArgs).toBeDefined();
+      expectPair(commandArgs, ["--config", 'approval_policy="never"']);
+      expectPair(commandArgs, ["--config", "sandbox_workspace_write.network_access=true"]);
+      expectPair(commandArgs, ["--config", "retry_budget=3"]);
+      expectPair(commandArgs, ["--config", 'tool_rules.allow=["git status", "git diff"]']);
+    } finally {
+      restore();
+      await close();
+    }
+  });
+
+  it("lets thread options override CodexOptions config overrides", async () => {
+    const { url, close } = await startResponsesTestProxy({
+      statusCode: 200,
+      responseBodies: [
+        sse(
+          responseStarted("response_1"),
+          assistantMessage("Thread overrides applied", "item_1"),
+          responseCompleted("response_1"),
+        ),
+      ],
+    });
+
+    const { args: spawnArgs, restore } = codexExecSpy();
+
+    try {
+      const client = new Codex({
+        codexPathOverride: codexExecPath,
+        baseUrl: url,
+        apiKey: "test",
+        config: { approval_policy: "never" },
+      });
+
+      const thread = client.startThread({ approvalPolicy: "on-request" });
+      await thread.run("override approval policy");
+
+      const commandArgs = spawnArgs[0];
+      const approvalPolicyOverrides = collectConfigValues(commandArgs, "approval_policy");
+      expect(approvalPolicyOverrides).toEqual([
+        'approval_policy="never"',
+        'approval_policy="on-request"',
+      ]);
+      expect(approvalPolicyOverrides.at(-1)).toBe('approval_policy="on-request"');
+    } finally {
+      restore();
       await close();
     }
   });
@@ -425,15 +503,14 @@ describe("Codex", () => {
     });
 
     const { envs: spawnEnvs, restore } = codexExecSpy();
-    const { env: baseEnv, cleanup } = createCodexTestEnv();
     process.env.CODEX_ENV_SHOULD_NOT_LEAK = "leak";
 
     try {
       const client = new Codex({
         codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
+        baseUrl: url,
         apiKey: "test",
-        env: { ...baseEnv, CUSTOM_ENV: "custom" },
+        env: { CUSTOM_ENV: "custom" },
       });
 
       const thread = client.startThread();
@@ -446,13 +523,12 @@ describe("Codex", () => {
       }
       expect(spawnEnv.CUSTOM_ENV).toBe("custom");
       expect(spawnEnv.CODEX_ENV_SHOULD_NOT_LEAK).toBeUndefined();
-      expect(spawnEnv.OPENAI_BASE_URL).toBe(`${url}/v1`);
+      expect(spawnEnv.OPENAI_BASE_URL).toBe(url);
       expect(spawnEnv.CODEX_API_KEY).toBe("test");
       expect(spawnEnv.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeDefined();
     } finally {
       delete process.env.CODEX_ENV_SHOULD_NOT_LEAK;
       restore();
-      cleanup();
       await close();
     }
   });
@@ -470,15 +546,9 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread({
         additionalDirectories: ["../backend", "/tmp/shared"],
@@ -501,7 +571,6 @@ describe("Codex", () => {
       expect(addDirArgs).toEqual(["../backend", "/tmp/shared"]);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -519,7 +588,6 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     const schema = {
       type: "object",
@@ -531,12 +599,7 @@ describe("Codex", () => {
     } as const;
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run("structured", { outputSchema: schema });
@@ -565,7 +628,6 @@ describe("Codex", () => {
       expect(fs.existsSync(schemaPath)).toBe(false);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -580,15 +642,9 @@ describe("Codex", () => {
         ),
       ],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run([
@@ -601,7 +657,6 @@ describe("Codex", () => {
       const lastUser = payload!.json.input.at(-1);
       expect(lastUser?.content?.[0]?.text).toBe("Describe file changes\n\nFocus on impacted tests");
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -618,7 +673,6 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-images-"));
     const imagesDirectoryEntries: [string, string] = [
       path.join(tempDir, "first.png"),
@@ -629,12 +683,7 @@ describe("Codex", () => {
     });
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run([
@@ -655,7 +704,6 @@ describe("Codex", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
       restore();
-      cleanup();
       await close();
     }
   });
@@ -672,15 +720,13 @@ describe("Codex", () => {
     });
 
     const { args: spawnArgs, restore } = codexExecSpy();
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
       const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-working-dir-"));
       const client = new Codex({
         codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
+        baseUrl: url,
         apiKey: "test",
-        env,
       });
 
       const thread = client.startThread({
@@ -693,7 +739,6 @@ describe("Codex", () => {
       expectPair(commandArgs, ["--cd", workingDirectory]);
     } finally {
       restore();
-      cleanup();
       await close();
     }
   });
@@ -709,15 +754,13 @@ describe("Codex", () => {
         ),
       ],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
       const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-working-dir-"));
       const client = new Codex({
         codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
+        baseUrl: url,
         apiKey: "test",
-        env,
       });
 
       const thread = client.startThread({
@@ -727,7 +770,6 @@ describe("Codex", () => {
         /Not inside a trusted directory/,
       );
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -737,15 +779,9 @@ describe("Codex", () => {
       statusCode: 200,
       responseBodies: [sse(responseStarted(), assistantMessage("Hi!"), responseCompleted())],
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
 
       const thread = client.startThread();
       await thread.run("Hello, originator!");
@@ -758,7 +794,6 @@ describe("Codex", () => {
         expect(originatorHeader).toBe("codex_sdk_ts");
       }
     } finally {
-      cleanup();
       await close();
     }
   });
@@ -772,30 +807,47 @@ describe("Codex", () => {
         }
       })(),
     });
-    const { env, cleanup } = createCodexTestEnv();
 
     try {
-      const client = new Codex({
-        codexPathOverride: codexExecPath,
-        baseUrl: `${url}/v1`,
-        apiKey: "test",
-        env,
-      });
+      const client = new Codex({ codexPathOverride: codexExecPath, baseUrl: url, apiKey: "test" });
       const thread = client.startThread();
       await expect(thread.run("fail")).rejects.toThrow("stream disconnected before completion:");
     } finally {
-      cleanup();
       await close();
     }
   }, 10000); // TODO(pakrym): remove timeout
 });
+
+/**
+ * Given a list of args to `codex` and a `key`, collects all `--config`
+ * overrides for that key.
+ */
+function collectConfigValues(args: string[] | undefined, key: string): string[] {
+  if (!args) {
+    throw new Error("args is undefined");
+  }
+
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== "--config") {
+      continue;
+    }
+
+    const override = args[i + 1];
+    if (override?.startsWith(`${key}=`)) {
+      values.push(override);
+    }
+  }
+  return values;
+}
+
 function expectPair(args: string[] | undefined, pair: [string, string]) {
   if (!args) {
-    throw new Error("Args is undefined");
+    throw new Error("args is undefined");
   }
-  const index = args.indexOf(pair[0]);
+  const index = args.findIndex((arg, i) => arg === pair[0] && args[i + 1] === pair[1]);
   if (index === -1) {
-    throw new Error(`Pair ${pair[0]} not found in args`);
+    throw new Error(`Pair ${pair[0]} ${pair[1]} not found in args`);
   }
   expect(args[index + 1]).toBe(pair[1]);
 }

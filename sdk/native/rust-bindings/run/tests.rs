@@ -28,7 +28,11 @@ mod tests_run {
       linux_sandbox_path: None,
       reasoning_effort: None,
       reasoning_summary: None,
-      full_auto: true,
+      personality: None,
+      turn_personality: None,
+      ephemeral: None,
+      web_search_mode: None,
+      dynamic_tools: None,
       mcp: None,
       inherit_mcp: true,
     }
@@ -64,8 +68,12 @@ mod tests_run {
   }
 
   #[test]
-  fn accepts_gpt_4_1_when_provider_is_non_default() {
-    assert!(validate_model_name(Some("gpt-4.1"), false, Some("github")).is_ok());
+  fn rejects_gpt_4_1_when_provider_is_github() {
+    let error = validate_model_name(Some("gpt-4.1"), false, Some("github"))
+      .expect_err("gpt-4.1 should be rejected for github provider");
+    let message = error.to_string();
+    assert!(message.contains("Invalid model \"gpt-4.1\""));
+    assert!(message.contains("model provider \"github\""));
   }
 
   // MCP Configuration Tests
@@ -239,7 +247,11 @@ mod tests_run {
         linux_sandbox_path: None,
         reasoning_effort: None,
         reasoning_summary: None,
-        full_auto: None,
+        personality: None,
+        turn_personality: None,
+        ephemeral: None,
+        web_search_mode: None,
+        dynamic_tools: None,
         mcp: Some(serde_json::json!({
           "server1": {"command": "npx", "args": ["test"]}
         })),
@@ -275,7 +287,11 @@ mod tests_run {
         linux_sandbox_path: None,
         reasoning_effort: None,
         reasoning_summary: None,
-        full_auto: None,
+        personality: None,
+        turn_personality: None,
+        ephemeral: None,
+        web_search_mode: None,
+        dynamic_tools: None,
         mcp: None,
         inherit_mcp: None,
       };

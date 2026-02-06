@@ -1,7 +1,6 @@
 #![expect(clippy::expect_used)]
 
 use codex_utils_cargo_bin::CargoBinError;
-use codex_utils_cargo_bin::find_resource;
 use tempfile::TempDir;
 
 use codex_core::CodexThread;
@@ -147,46 +146,12 @@ pub fn load_sse_fixture_with_id_from_str(raw: &str, id: &str) -> String {
         .collect()
 }
 
-/// Same as [`load_sse_fixture`], but replaces the placeholder `__ID__` in the
-/// fixture template with the supplied identifier before parsing. This lets a
-/// single JSON template be reused by multiple tests that each need a unique
-/// `response_id`.
-pub fn load_sse_fixture_with_id(path: impl AsRef<std::path::Path>, id: &str) -> String {
-    let p = path.as_ref();
-    let full_path = match find_resource!(p) {
-        Ok(p) => p,
-        Err(err) => panic!(
-            "failed to find fixture template at {:?}: {err}",
-            path.as_ref()
-        ),
-    };
-
-    let raw = std::fs::read_to_string(full_path).expect("read fixture template");
-    let replaced = raw.replace("__ID__", id);
-    let events: Vec<serde_json::Value> =
-        serde_json::from_str(&replaced).expect("parse JSON fixture");
-    events
-        .into_iter()
-        .map(|e| {
-            let kind = e
-                .get("type")
-                .and_then(|v| v.as_str())
-                .expect("fixture event missing type");
-            if e.as_object().map(|o| o.len() == 1).unwrap_or(false) {
-                format!("event: {kind}\n\n")
-            } else {
-                format!("event: {kind}\ndata: {e}\n\n")
-            }
-        })
-        .collect()
-}
-
 pub async fn wait_for_event<F>(codex: &CodexThread, predicate: F) -> codex_core::protocol::EventMsg
 where
     F: FnMut(&codex_core::protocol::EventMsg) -> bool,
 {
     use tokio::time::Duration;
-    wait_for_event_with_timeout(codex, predicate, Duration::from_secs(2)).await
+    wait_for_event_with_timeout(codex, predicate, Duration::from_secs(1)).await
 }
 
 pub async fn wait_for_event_match<T, F>(codex: &CodexThread, matcher: F) -> T
@@ -205,9 +170,11 @@ pub async fn wait_for_event_with_timeout<F>(
 where
     F: FnMut(&codex_core::protocol::EventMsg) -> bool,
 {
+    use tokio::time::Duration;
     use tokio::time::timeout;
     loop {
-        let ev = timeout(wait_time, codex.next_event())
+        // Allow a bit more time to accommodate async startup work (e.g. config IO, tool discovery)
+        let ev = timeout(wait_time.max(Duration::from_secs(10)), codex.next_event())
             .await
             .expect("timeout waiting for event")
             .expect("stream ended unexpectedly");
@@ -246,10 +213,6 @@ pub fn format_with_current_shell_display_non_login(command: &str) -> String {
 
 pub fn stdio_server_bin() -> Result<String, CargoBinError> {
     codex_utils_cargo_bin::cargo_bin("test_stdio_server").map(|p| p.to_string_lossy().to_string())
-}
-
-pub async fn start_mock_server() -> wiremock::MockServer {
-    wiremock::MockServer::builder().start().await
 }
 
 pub mod fs_wait {

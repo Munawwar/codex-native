@@ -9,10 +9,6 @@ node_modules
 
 # build
 dist/
-diff-agent/dist/
-dist-examples/
-sdk/native/dist-examples/
-sdk/native/dist/
 bazel-*
 build/
 out/
@@ -36,7 +32,6 @@ result
 CLAUDE.md
 .claude/
 AGENTS.override.md
-.codex-pr-threads.json
 
 # caches
 .cache/
@@ -46,11 +41,6 @@ AGENTS.override.md
 .nyc_output/
 .jest/
 *.tsbuildinfo
-.fastembed_cache/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
 
 # logs
 *.log
@@ -61,7 +51,6 @@ yarn-error.log*
 # env
 .env*
 !.env.example
-.venv
 
 # package
 *.tgz
@@ -69,8 +58,6 @@ yarn-error.log*
 # ci
 .vercel/
 .netlify/
-.codex-ci/
-.codex-curated-ids.json
 
 # patches
 apply_patch/
@@ -90,7 +77,6 @@ Icon?
 # Unwanted package managers
 .yarn/
 yarn.lock
-package-lock.json
 
 # release
 package.json-e
@@ -104,3 +90,4 @@ CHANGELOG.ignore.md
 # Python bytecode files
 __pycache__/
 *.pyc
+

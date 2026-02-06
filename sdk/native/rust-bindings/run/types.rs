@@ -39,8 +39,16 @@ pub struct RunRequest {
   pub reasoning_effort: Option<String>,
   #[napi(js_name = "reasoningSummary")]
   pub reasoning_summary: Option<String>,
-  #[napi(js_name = "fullAuto")]
-  pub full_auto: Option<bool>,
+  #[napi(js_name = "personality")]
+  pub personality: Option<String>,
+  #[napi(js_name = "turnPersonality")]
+  pub turn_personality: Option<String>,
+  #[napi(js_name = "ephemeral")]
+  pub ephemeral: Option<bool>,
+  #[napi(js_name = "webSearchMode")]
+  pub web_search_mode: Option<String>,
+  #[napi(js_name = "dynamicTools")]
+  pub dynamic_tools: Option<JsonValue>,
   /// MCP servers to register, keyed by server name. Passed as JSON value.
   pub mcp: Option<JsonValue>,
   /// When false, ignores globally registered MCP servers from config.toml.
@@ -80,8 +88,16 @@ pub struct ForkRequest {
   pub reasoning_effort: Option<String>,
   #[napi(js_name = "reasoningSummary")]
   pub reasoning_summary: Option<String>,
-  #[napi(js_name = "fullAuto")]
-  pub full_auto: Option<bool>,
+  #[napi(js_name = "personality")]
+  pub personality: Option<String>,
+  #[napi(js_name = "turnPersonality")]
+  pub turn_personality: Option<String>,
+  #[napi(js_name = "ephemeral")]
+  pub ephemeral: Option<bool>,
+  #[napi(js_name = "webSearchMode")]
+  pub web_search_mode: Option<String>,
+  #[napi(js_name = "dynamicTools")]
+  pub dynamic_tools: Option<JsonValue>,
 }
 
 #[derive(Debug)]
@@ -120,8 +136,12 @@ pub struct ConversationConfigRequest {
   pub reasoning_effort: Option<String>,
   #[napi(js_name = "reasoningSummary")]
   pub reasoning_summary: Option<String>,
-  #[napi(js_name = "fullAuto")]
-  pub full_auto: Option<bool>,
+  #[napi(js_name = "personality")]
+  pub personality: Option<String>,
+  #[napi(js_name = "ephemeral")]
+  pub ephemeral: Option<bool>,
+  #[napi(js_name = "webSearchMode")]
+  pub web_search_mode: Option<String>,
 }
 
 #[napi(object)]
@@ -212,7 +232,11 @@ pub struct InternalRunRequest {
   pub linux_sandbox_path: Option<PathBuf>,
   pub reasoning_effort: Option<ReasoningEffort>,
   pub reasoning_summary: Option<ReasoningSummary>,
-  pub full_auto: bool,
+  pub personality: Option<Personality>,
+  pub turn_personality: Option<Personality>,
+  pub ephemeral: Option<bool>,
+  pub web_search_mode: Option<WebSearchMode>,
+  pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
   /// MCP servers to register, keyed by server name. Serialized as JSON for config override.
   pub mcp: Option<JsonValue>,
   /// When false, ignores globally registered MCP servers from config.toml.

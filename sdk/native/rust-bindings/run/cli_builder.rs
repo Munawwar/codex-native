@@ -42,7 +42,6 @@ pub fn build_cli(
 ) -> Cli {
   let sandbox_mode = options.sandbox_mode;
   let wants_danger = matches!(sandbox_mode, Some(SandboxModeCliArg::DangerFullAccess));
-  let cli_full_auto = options.full_auto && !wants_danger;
   let add_dir: Vec<PathBuf> = options
     .workspace_write_options
     .as_ref()
@@ -56,6 +55,7 @@ pub fn build_cli(
     Command::Resume(ResumeArgs {
       session_id: Some(id.clone()),
       last: false,
+      all: false,
       images: options.images.clone(),
       prompt: Some(options.prompt.clone()),
     })
@@ -74,6 +74,18 @@ pub fn build_cli(
       ApprovalModeCliArg::Untrusted => "untrusted",
     };
     raw_overrides.push(format!("approval_policy={approval_str}"));
+  }
+
+  if let Some(personality) = options.personality {
+    raw_overrides.push(format!("personality=\"{personality}\""));
+  }
+
+  if let Some(ephemeral) = options.ephemeral {
+    raw_overrides.push(format!("ephemeral={ephemeral}"));
+  }
+
+  if let Some(mode) = options.web_search_mode {
+    raw_overrides.push(format!("web_search=\"{mode}\""));
   }
 
   // Forward model provider selection for non-OSS runs via config overrides.
@@ -130,6 +142,12 @@ pub fn build_cli(
     }
   }
 
+  let turn_personality = options.turn_personality.and_then(|personality| match personality {
+    Personality::Friendly => Some(codex_exec::PersonalityCliArg::Friendly),
+    Personality::Pragmatic => Some(codex_exec::PersonalityCliArg::Pragmatic),
+    Personality::None => None,
+  });
+
 	  Cli {
 	    command,
 	    images: options.images.clone(),
@@ -138,14 +156,21 @@ pub fn build_cli(
 	    oss_provider: options.model_provider.clone(),
 	    sandbox_mode,
 	    config_profile: None,
-	    full_auto: cli_full_auto,
+	    full_auto: false,
 	    dangerously_bypass_approvals_and_sandbox: wants_danger,
 	    cwd: options.working_directory.clone(),
 	    skip_git_repo_check: options.skip_git_repo_check,
 	    add_dir,
+	    ephemeral: options.ephemeral.unwrap_or(false),
 	    output_schema: schema_path,
 	    config_overrides: CliConfigOverrides { raw_overrides },
 	    input_items: options.input_items.clone(),
+	    input_items_path: None,
+	    input_items_json: None,
+	    dynamic_tools: options.dynamic_tools.clone(),
+	    dynamic_tools_path: None,
+	    dynamic_tools_json: None,
+	    turn_personality,
 	    color: Color::Never,
 	    json: false,
 	    last_message_file: None,

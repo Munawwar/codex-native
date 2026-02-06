@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 
@@ -29,7 +30,7 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItem>) {
                         ResponseItem::FunctionCallOutput {
                             call_id: call_id.clone(),
                             output: FunctionCallOutputPayload {
-                                content: "aborted".to_string(),
+                                body: FunctionCallOutputBody::Text("aborted".to_string()),
                                 ..Default::default()
                             },
                         },
@@ -76,7 +77,7 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItem>) {
                             ResponseItem::FunctionCallOutput {
                                 call_id: call_id.clone(),
                                 output: FunctionCallOutputPayload {
-                                    content: "aborted".to_string(),
+                                    body: FunctionCallOutputBody::Text("aborted".to_string()),
                                     ..Default::default()
                                 },
                             },
@@ -92,59 +93,6 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItem>) {
     for (idx, output_item) in missing_outputs_to_insert.into_iter().rev() {
         items.insert(idx + 1, output_item);
     }
-}
-
-pub(crate) fn reorder_tool_outputs(items: &mut Vec<ResponseItem>) {
-    use std::collections::HashMap;
-
-    // Collect outputs indexed by call_id (preserve appearance order).
-    let mut outputs_by_call: HashMap<String, Vec<ResponseItem>> = HashMap::new();
-    for item in items.iter() {
-        match item {
-            ResponseItem::FunctionCallOutput { call_id, .. }
-            | ResponseItem::CustomToolCallOutput { call_id, .. } => {
-                outputs_by_call
-                    .entry(call_id.clone())
-                    .or_default()
-                    .push(item.clone());
-            }
-            _ => {}
-        }
-    }
-
-    let mut reordered: Vec<ResponseItem> = Vec::with_capacity(items.len());
-
-    for item in items.drain(..) {
-        let call_id = match &item {
-            ResponseItem::FunctionCall { call_id, .. } => Some(call_id.clone()),
-            ResponseItem::CustomToolCall { call_id, .. } => Some(call_id.clone()),
-            ResponseItem::LocalShellCall {
-                call_id: Some(call_id),
-                ..
-            } => Some(call_id.clone()),
-            _ => None,
-        };
-
-        match item {
-            ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. } => {
-                // Skip outputs here; they are inserted right after their call.
-            }
-            other => {
-                reordered.push(other);
-                if let Some(call_id) = call_id {
-                    if let Some(outputs) = outputs_by_call.remove(&call_id) {
-                        reordered.extend(outputs);
-                    }
-                }
-            }
-        }
-    }
-
-    for (call_id, _outputs) in outputs_by_call {
-        error_or_panic(format!("Orphan tool output for call id: {call_id}"));
-    }
-
-    *items = reordered;
 }
 
 pub(crate) fn remove_orphan_outputs(items: &mut Vec<ResponseItem>) {
