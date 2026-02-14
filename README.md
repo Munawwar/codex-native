@@ -9,6 +9,81 @@ If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="http
 
 ---
 
+## What this fork adds over the official Codex CLI
+
+This is a fork of the [official OpenAI Codex CLI](https://github.com/openai/codex) by [ScriptedAlchemy](https://github.com/ScriptedAlchemy) (Zack Jackson, creator of Module Federation). It transforms Codex from a standalone terminal tool into an **embeddable, programmable agent platform**. The fork is actively maintained and regularly syncs with upstream.
+
+### 1. Native Node.js SDK with Rust NAPI Bindings (`sdk/native/`)
+
+**Package**: `@codex-native/sdk`
+
+Embeds the Codex Rust runtime directly into Node.js via [napi-rs](https://napi.rs/) instead of spawning child processes. Key capabilities:
+
+- **Thread management** -- `startThread()`, `run()`, `runStreamed()`, `resumeThread()`, `fork()`
+- **Custom tool registration** -- Register JS functions as tools the AI can invoke, including overriding built-in tools (`shell`, `apply_patch`, `read_file`, etc.)
+- **Tool interceptors** -- Wrap built-in tools with pre/post-processing logic
+- **Structured output** -- JSON schema validation for model responses
+- **Streaming** -- Async generator-based event streaming powered by the Tokio runtime
+- **Programmatic code review** -- `codex.review()` API for diff review against branches, commits, or custom prompts
+- **Conversation forking** -- Branch from earlier messages to explore alternate paths
+- **Skills system** -- Register named skills programmatically (no SKILL.md files needed)
+- **Approval callbacks** -- JavaScript-side approval gating for sensitive operations
+- **Cross-platform** -- macOS (arm64/x64), Linux (x64/arm64, glibc/musl), Windows (x64/arm64)
+
+### 2. OpenAI Agents Framework Integration
+
+A full `ModelProvider` implementation (`CodexProvider`) for the [OpenAI Agents JS SDK](https://github.com/openai/openai-agents-js). This allows using the Codex runtime as the execution backend for the OpenAI Agents framework:
+
+```typescript
+import { CodexProvider } from "@codex-native/sdk";
+import { Agent, run } from "@openai/agents";
+
+const provider = new CodexProvider({ defaultModel: "gpt-5.1-codex" });
+const agent = new Agent({
+  name: "CodeAssistant",
+  model: provider.getModel(),
+  instructions: "Fix the failing tests",
+});
+const result = await run(agent, "Investigate the CI failure");
+```
+
+Features include buffered and streamed model responses, thread continuity, tool execution inside the Codex sandbox, and a tool registry for mapping Codex tools to the Agents framework.
+
+### 3. GitHub Copilot / OpenCode Model Provider
+
+Allows authenticating via GitHub Copilot tokens to use models (including GPT-5) through the Copilot API, without requiring a direct OpenAI API key.
+
+### 4. Enhanced Reverie (Conversation History Search)
+
+Major improvements to the Reverie system -- Codex's semantic memory for past conversations:
+
+- **Multi-vector embeddings** with max-pooling for per-message precision
+- **Query expansion** with 60+ technical synonym mappings
+- **Hybrid scoring** -- 70% semantic similarity + 30% keyword relevance
+- **Embedding-based quality filtering** replacing hardcoded pattern matching
+- **Multi-stage pipeline** -- Search → Quality Filter → Score Split → LLM Grade → Deduplicate
+- **Multi-level search** -- Project-wide, branch-specific, and file-specific tiers
+- **+35% improvement** in average search relevance (58% → 78.5%)
+
+### 5. Codex Agents Suite (`codex-agents-suite/`)
+
+A higher-level multi-agent workflow toolkit providing four turnkey workflows:
+
+- **PR Review & CI Orchestrator** -- End-to-end review, CI triage, reverie hints, optional auto-fix
+- **Diff Reviewer** -- Structured diff analysis with per-file risk scoring and LSP diagnostics
+- **Merge Conflict Solver** -- Autonomous merge with coordinator/worker/reviewer pipeline and supervisor approval
+- **CI Auto-Fix Orchestrator** -- Iterative fix-and-rerun loop with bounded concurrency
+
+### 6. LSP Integration (`sdk/native/src/lsp/`)
+
+An LSP client that collects diagnostics (type errors, lint warnings) from language servers (TypeScript, Pyright, etc.) during agent execution, enriching tool outputs with compiler/linter data.
+
+### 7. PR Worktree Automation
+
+Scripts for automated PR review workflows using git worktrees.
+
+---
+
 ## Quickstart
 
 ### Installing and running Codex CLI
